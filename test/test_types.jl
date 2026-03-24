@@ -56,14 +56,14 @@ using StableRNGs: StableRNG
             zeros(d, d),
             zeros(d, s),
             zeros(s, d),
-            [zeros(s)],
+            zeros(s, 1),
             zeros(1),
             1.0,
         )
         @test size(env.A) == (d, d)
         @test size(env.U) == (d, s)
         @test size(env.P) == (s, d)
-        @test length(env.mu_centers) == 1
+        @test size(env.mu_centers) == (s, 1)
         @test env.mu_bandwidth == 1.0
 
         cal = CalibrationConstants(1.0, 2.0, 1.5)
@@ -83,7 +83,7 @@ using StableRNGs: StableRNG
         @test !ismutable(default_params())
 
         # MatchingEnv and CalibrationConstants are immutable
-        env = MatchingEnv(zeros(8, 8), zeros(8, 2), zeros(2, 8), [zeros(2)], zeros(1), 1.0)
+        env = MatchingEnv(zeros(8, 8), zeros(8, 2), zeros(2, 8), zeros(2, 1), zeros(1), 1.0)
         @test !ismutable(env)
         cal = CalibrationConstants(1.0, 1.0, 1.0)
         @test !ismutable(cal)
@@ -217,7 +217,7 @@ using StableRNGs: StableRNG
             zeros(p.d, p.d),
             zeros(p.d, p.s),
             zeros(p.s, p.d),
-            [zeros(p.s)],
+            zeros(p.s, 1),
             zeros(1),
             1.0,
         )

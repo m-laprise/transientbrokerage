@@ -25,5 +25,5 @@ docs/site/
 # environment.
 Manifest.toml
 
-# MasOS
-*.DS_Store
+# macOS
+.DS_Store

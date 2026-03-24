@@ -95,7 +95,7 @@ struct MatchingEnv
     A::Matrix{Float64}                       # d×d interaction matrix of rank s
     U::Matrix{Float64}                       # d×s worker skill basis of A
     P::Matrix{Float64}                       # s×d projection matrix (rows ⊥ colspan(U))
-    mu_centers::Vector{Vector{Float64}}      # K_μ RBF centers in R^s
+    mu_centers::Matrix{Float64}              # s × K_μ RBF centers (columns)
     mu_weights::Vector{Float64}              # K_μ RBF amplitudes (scaled so Var(μ)/Var(f) = ρ)
     mu_bandwidth::Float64                    # calibrated RBF bandwidth h
 end
