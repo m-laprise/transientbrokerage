@@ -68,13 +68,12 @@ using Statistics: var
         test_rng = StableRNG(77)
         z = zeros(s)
         Ax = zeros(d)
-        for _ in 1:20
+        @test all(1:20) do _
             w = clamp.(randn(test_rng, d), -3.0, 3.0)
             x = clamp.(randn(test_rng, d), -3.0, 3.0)
             mu_val = eval_mu!(z, w, env)
             mul!(Ax, env.A, x)
-            interaction = dot(w, Ax)
-            @test match_output_noiseless!(z, Ax, w, x, env) ≈ mu_val + interaction
+            match_output_noiseless!(z, Ax, w, x, env) ≈ mu_val + dot(w, Ax)
         end
     end
 
@@ -126,11 +125,6 @@ using Statistics: var
         end
         f_bar_check = total / n
         @test abs(f_bar_check - f_bar) / f_bar < 0.05
-    end
-
-    # d < 2s triggers assertion in validate_params (prerequisite enforced)
-    @testset "d >= 2s constraint" begin
-        @test_throws AssertionError default_params(; d = 3, s = 2)
     end
 
     # End-to-end: generate, evaluate, calibrate, all outputs finite

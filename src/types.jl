@@ -1,7 +1,7 @@
 """
     types.jl
 
-Agent types, sub-structs, and model state for the Transient Brokerage ABM.
+Agent types, model state, and supporting structs for the Transient Brokerage ABM.
 """
 
 """Available, directly employed by a firm, or staffed through the broker."""
@@ -90,7 +90,7 @@ struct ModelParams
     seed::Int
 end
 
-"""Fixed matching function f(w,x) = μ(w) + w'Ax: interaction matrix, projection, and RBF components."""
+"""Deterministic component of the matching function mu(w) + w'Ax: interaction matrix, projection, and RBF components."""
 struct MatchingEnv
     A::Matrix{Float64}                       # d×d interaction matrix of rank s
     U::Matrix{Float64}                       # d×s worker skill basis of A
@@ -100,7 +100,7 @@ struct MatchingEnv
     mu_bandwidth::Float64                    # calibrated RBF bandwidth h
 end
 
-"""Monte Carlo calibration values: reservation wage floor, mean output, and public benchmark."""
+"""Output-scale constants derived from Monte Carlo calibration: reservation wage floor, mean output, and public benchmark."""
 struct CalibrationConstants
     r_base::Float64               # calibrated reservation wage floor
     f_bar::Float64                # mean |μ(w) + w⊤Ax|
@@ -160,7 +160,7 @@ function reset_accumulators!(a::PeriodAccumulators)
     return nothing
 end
 
-"""Betweenness, Burt's constraint, and effective size, recomputed every M periods."""
+"""Betweenness, Burt's constraint, and effective size, recomputed periodically on the combined graph."""
 mutable struct CachedNetworkMeasures
     betweenness::Vector{Float64}
     constraint::Vector{Float64}

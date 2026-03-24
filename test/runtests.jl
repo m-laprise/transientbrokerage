@@ -3,4 +3,6 @@ using Test
 @testset "TransientBrokerage" begin
     include("test_types.jl")
     include("test_matching_function.jl")
+    include("test_network.jl")
+    include("test_initialization.jl")
 end

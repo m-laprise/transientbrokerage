@@ -1,10 +1,10 @@
 """
     matching_function.jl
 
-Matching function f(w, x) = mu(w) + w'Ax + eps: generation, evaluation, and calibration.
+Matching function f(w, x) = mu(w) + w'Ax + noise: generation, evaluation, and calibration.
 """
 
-"""Squared Euclidean distance between column `j` of `M` and vector slice `z`."""
+"""Squared Euclidean distance between column `j` of matrix `M` and vector `z`."""
 @inline function _col_sqdist(M::Matrix{Float64}, j::Int, z::AbstractVector, s::Int)
     d2 = 0.0
     @inbounds for k in 1:s
