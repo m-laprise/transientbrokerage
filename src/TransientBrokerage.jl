@@ -18,6 +18,6 @@ export PeriodAccumulators, reset_accumulators!
 export CachedNetworkMeasures, ModelState
 export default_params, validate_params
 export generate_matching_function, eval_mu!
-export match_output!, match_output_noiseless!, calibrate_r_base
+export match_output!, match_output_noiseless!, calibrate_output_scale
 
 end # module

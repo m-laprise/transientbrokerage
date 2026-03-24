@@ -126,8 +126,9 @@ end
 """
     match_output_noiseless!(z, Ax, w, x, env) -> Float64
 
-Deterministic match output mu(w) + w'Ax.
-Writes into `z` (s-vector) and `Ax` (d-vector).
+Deterministic match output mu(w) + w'Ax, without noise.
+Used by `calibrate_output_scale` to compute E[ |f| ] from Monte Carlo samples
+without noise contamination. Writes into `z` (s-vector) and `Ax` (d-vector).
 """
 function match_output_noiseless!(z::AbstractVector, Ax::AbstractVector,
                                   w::AbstractVector, x::AbstractVector,
@@ -138,11 +139,11 @@ function match_output_noiseless!(z::AbstractVector, Ax::AbstractVector,
 end
 
 """
-    calibrate_r_base(env, d, rng; n_samples=10_000) -> (f_bar, r_base)
+    calibrate_output_scale(env, d, rng; n_samples=10_000) -> (f_bar, r_base)
 
 Compute f_bar = E[ |mu(w) + w'Ax| ] and r_base = 0.70 * f_bar from Monte Carlo samples.
 """
-function calibrate_r_base(env::MatchingEnv, d::Int, rng::AbstractRNG;
+function calibrate_output_scale(env::MatchingEnv, d::Int, rng::AbstractRNG;
                           n_samples::Int = 10_000)::Tuple{Float64,Float64}
     s = size(env.P, 1)
     w, x = Vector{Float64}(undef, d), Vector{Float64}(undef, d)

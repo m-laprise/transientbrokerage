@@ -88,10 +88,10 @@ using Statistics: var
         @test abs(eval_mu!(z, w, env) - eval_mu!(z, w_near, env)) < 0.5
     end
 
-    # calibrate_r_base returns positive values with r_base < f_bar
-    @testset "calibrate_r_base" begin
+    # calibrate_output_scale returns positive values with r_base < f_bar
+    @testset "calibrate_output_scale" begin
         env = generate_matching_function(d, s, rho, K_mu, StableRNG(42))
-        f_bar, r_base = calibrate_r_base(env, d, StableRNG(55))
+        f_bar, r_base = calibrate_output_scale(env, d, StableRNG(55))
         @test f_bar > 0.0
         @test r_base > 0.0
         @test r_base < f_bar
@@ -113,7 +113,7 @@ using Statistics: var
     # MC mean of |f| is close to f_bar (within 5%)
     @testset "Statistical consistency of f_bar" begin
         env = generate_matching_function(d, s, rho, K_mu, StableRNG(42))
-        f_bar, _ = calibrate_r_base(env, d, StableRNG(55))
+        f_bar, _ = calibrate_output_scale(env, d, StableRNG(55))
         check_rng = StableRNG(200)
         z = zeros(s)
         Ax = zeros(d)
@@ -143,7 +143,7 @@ using Statistics: var
         Ax = zeros(p.d)
         q = match_output!(z, Ax, w, x, env, StableRNG(3))
         @test isfinite(q)
-        f_bar, r_base = calibrate_r_base(env, p.d, StableRNG(4))
+        f_bar, r_base = calibrate_output_scale(env, p.d, StableRNG(4))
         @test isfinite(f_bar)
         @test 0.0 < r_base < f_bar
     end
