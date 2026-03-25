@@ -16,9 +16,11 @@ include("network.jl")
 include("initialization.jl")
 include("learning.jl")
 include("measures.jl")
+include("search.jl")
+include("matching.jl")
 
 export WorkerStatus, available, employed, staffed
-export Worker, Firm, StaffingAssignment, Broker
+export Worker, Firm, StaffingAssignment, Broker, ProposedMatch, effective_history_size
 export ModelParams, MatchingEnv, CalibrationConstants
 export PredictionResult, PredictionCache, PeriodTrees, PredictionQuality
 export PeriodAccumulators, reset_accumulators!
@@ -32,5 +34,9 @@ export assign_initial_employment!, initialize_model
 export predict_firm, predict_broker, build_period_trees
 export predict_and_record_firm!, predict_and_record_broker!
 export compute_prediction_quality
+export internal_search, broker_allocate!
+export compute_wage, resolve_conflicts, finalize_match!
+export record_history!, record_broker_history!
+export update_satisfaction!, penalize_no_proposal!, record_match!
 
 end # module

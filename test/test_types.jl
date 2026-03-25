@@ -50,7 +50,7 @@ using StableRNGs: StableRNG
     end
 
     # MatchingEnv, CalibrationConstants, and CachedNetworkMeasures have correct dimensions
-    @testset "Sub-struct construction" begin
+    @testset "Supporting struct construction" begin
         d, s = 8, 2
         env = MatchingEnv(
             zeros(d, d),

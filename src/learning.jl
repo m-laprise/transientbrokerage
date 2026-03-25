@@ -63,10 +63,11 @@ function predict_firm(firm::Firm, w_query::Vector{Float64},
                       q_pub::Float64, k::Int,
                       tree::Union{Nothing, KDTree},
                       cache::PredictionCache)::PredictionResult
-    if tree === nothing || firm.history_count == 0
+    n = effective_history_size(firm)
+    if tree === nothing || n == 0
         return PredictionResult(q_pub, Inf, NaN)
     end
-    k_eff = min(k, firm.history_count)
+    k_eff = min(k, n)
     _knn_query!(cache, tree, w_query, k_eff)
     return _knn_predict!(cache, firm.history_q, k_eff, q_pub)
 end
@@ -81,10 +82,11 @@ function _predict_stage1(broker::Broker, w_query::AbstractVector{Float64},
                          q_pub::Float64, k::Int,
                          tree::Union{Nothing, KDTree},
                          cache::PredictionCache)::Float64
-    if tree === nothing || broker.history_count == 0
+    n = effective_history_size(broker)
+    if tree === nothing || n == 0
         return q_pub
     end
-    k_eff = min(k, broker.history_count)
+    k_eff = min(k, n)
     _knn_query!(cache, tree, w_query, k_eff)
     return _knn_predict!(cache, broker.history_q, k_eff, q_pub).q_hat
 end
@@ -140,23 +142,24 @@ function build_period_trees(state::ModelState,
     # Firm trees
     firm_trees = Vector{Union{Nothing, KDTree}}(nothing, length(state.firms))
     for (j, firm) in enumerate(state.firms)
-        if firm.history_count > 0
-            firm_trees[j] = KDTree(@view firm.history_w[:, 1:firm.history_count])
+        n_firm = effective_history_size(firm)
+        if n_firm > 0
+            firm_trees[j] = KDTree(@view firm.history_w[:, 1:n_firm])
         end
     end
 
     # Broker Stage 1 tree
     broker = state.broker
-    broker_s1_tree = broker.history_count > 0 ?
-        KDTree(@view broker.history_w[:, 1:broker.history_count]) : nothing
+    n_broker = effective_history_size(broker)
+    broker_s1_tree = n_broker > 0 ?
+        KDTree(@view broker.history_w[:, 1:n_broker]) : nothing
 
     # Broker Stage 2: per-client trees with precomputed residuals
     broker_s2_trees = Dict{Int, KDTree}()
     broker_s2_residuals = Dict{Int, Vector{Float64}}()
     cache = PredictionCache(state.params.k_nn)
-    hist_count = broker.history_count
     for j in client_firm_indices
-        firm_mask = findall(i -> broker.history_firm_idx[i] == j, 1:hist_count)
+        firm_mask = findall(i -> broker.history_firm_idx[i] == j, 1:n_broker)
         isempty(firm_mask) && continue
         firm_w = broker.history_w[:, firm_mask]
         firm_q = @view broker.history_q[firm_mask]
@@ -179,10 +182,10 @@ end
 Predict via firm k-NN, push mean_dist and neighbor_var to `accum`, return q_hat.
 """
 function predict_and_record_firm!(accum::PeriodAccumulators,
-                                   firm::Firm, w_query::Vector{Float64},
-                                   q_pub::Float64, k::Int,
-                                   tree::Union{Nothing, KDTree},
-                                   cache::PredictionCache)::Float64
+                                  firm::Firm, w_query::Vector{Float64},
+                                  q_pub::Float64, k::Int,
+                                  tree::Union{Nothing, KDTree},
+                                  cache::PredictionCache)::Float64
     result = predict_firm(firm, w_query, q_pub, k, tree, cache)
     push!(accum.firm_mean_dists, result.mean_dist)
     push!(accum.firm_neighbor_vars, result.neighbor_var)

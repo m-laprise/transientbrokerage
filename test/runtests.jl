@@ -6,4 +6,6 @@ using Test
     include("test_network.jl")
     include("test_initialization.jl")
     include("test_learning.jl")
+    include("test_search.jl")
+    include("test_matching.jl")
 end

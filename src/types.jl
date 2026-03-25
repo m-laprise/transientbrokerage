@@ -26,7 +26,7 @@ Base.@kwdef mutable struct Firm
     employees::Set{Int} = Set{Int}()         # worker IDs
     history_w::Matrix{Float64}               # d × capacity, columns are worker types
     history_q::Vector{Float64} = Float64[]   # realized outputs from direct hires
-    history_count::Int = 0                   # active observations (≤ size(history_w, 2))
+    history_count::Int = 0                   # total writes (may exceed capacity; use effective_history_size)
     satisfaction_internal::Float64 = 0.0
     satisfaction_broker::Float64 = 0.0
     tried_internal::Bool = false
@@ -47,6 +47,16 @@ mutable struct StaffingAssignment
     bill_rate::Float64              # locked at assignment start (§9c)
     realized_q::Float64             # output drawn once at formation, repeated each period (§9g step 3.3.1)
     predicted_q::Float64            # broker's prediction q̂_b, used for per-period profit
+end
+
+"""A proposed hire with both predictions and computed wage, used for conflict resolution and finalization."""
+struct ProposedMatch
+    firm_idx::Int           # index into state.firms (not firm.id)
+    worker_id::Int
+    source::Symbol          # :internal or :broker
+    q_hat_firm::Float64     # firm's prediction (used for wage, §3.1.1)
+    q_hat_broker::Float64   # broker's prediction (drives allocation; 0.0 for internal)
+    wage::Float64           # computed before conflict resolution (§3.1)
 end
 
 """Single intermediary with a worker pool, cross-firm history, and sticky reputation."""
@@ -136,6 +146,11 @@ struct PredictionQuality
     bias::Float64
     rank_corr::Float64
 end
+
+"""Number of valid entries in a circular history buffer: min(total_writes, capacity)."""
+effective_history_size(total::Int, cap::Int) = min(total, cap)
+effective_history_size(firm::Firm) = effective_history_size(firm.history_count, size(firm.history_w, 2))
+effective_history_size(broker::Broker) = effective_history_size(broker.history_count, size(broker.history_w, 2))
 
 """Per-period counters and output vectors, reset each tick except cumulative revenue."""
 Base.@kwdef mutable struct PeriodAccumulators
