@@ -107,6 +107,36 @@ struct CalibrationConstants
     q_pub::Float64                # public benchmark
 end
 
+"""k-NN prediction output: predicted quality, epistemic uncertainty, and aleatoric uncertainty."""
+struct PredictionResult
+    q_hat::Float64        # predicted match quality
+    mean_dist::Float64    # average neighbor distance (epistemic uncertainty)
+    neighbor_var::Float64 # neighbor outcome variance (aleatoric uncertainty)
+end
+
+"""Preallocated index, distance, and weight buffers for k-NN queries."""
+mutable struct PredictionCache
+    idxs::Vector{Int}
+    dists::Vector{Float64}
+    weights::Vector{Float64}
+end
+PredictionCache(k::Int) = PredictionCache(zeros(Int, k), zeros(Float64, k), zeros(Float64, k))
+
+"""Per-period KDTrees and precomputed residuals: per-firm trees, broker Stage 1, and broker Stage 2."""
+struct PeriodTrees
+    firm_trees::Vector{Union{Nothing, KDTree}}
+    broker_s1_tree::Union{Nothing, KDTree}
+    broker_s2_trees::Dict{Int, KDTree}
+    broker_s2_residuals::Dict{Int, Vector{Float64}}
+end
+
+"""Prediction quality over a window: R-squared, bias, and rank correlation."""
+struct PredictionQuality
+    r_squared::Float64
+    bias::Float64
+    rank_corr::Float64
+end
+
 """Per-period counters and output vectors, reset each tick except cumulative revenue."""
 Base.@kwdef mutable struct PeriodAccumulators
     matches::Int = 0

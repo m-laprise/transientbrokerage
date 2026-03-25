@@ -5,4 +5,5 @@ using Test
     include("test_matching_function.jl")
     include("test_network.jl")
     include("test_initialization.jl")
+    include("test_learning.jl")
 end
