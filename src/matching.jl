@@ -2,7 +2,7 @@
     matching.jl
 
 Wage computation, conflict resolution, match finalization, satisfaction updates,
-and match recording.
+outsourcing decision, and match recording.
 """
 
 """
@@ -162,6 +162,57 @@ function penalize_no_proposal!(firm::Firm, omega::Float64)
     firm.satisfaction_broker = (1.0 - omega) * firm.satisfaction_broker +
                                omega * firm.satisfaction_internal
     return nothing
+end
+
+"""
+    broker_reputation(broker, q_pub) -> Float64
+
+Current broker reputation (§6b): the cached value from the last period that had
+clients, or q_pub if the broker has never had clients. Pure read — no mutation.
+"""
+function broker_reputation(broker::Broker, q_pub::Float64)::Float64
+    return broker.has_had_clients ? broker.last_reputation : q_pub
+end
+
+"""
+    update_broker_reputation!(broker, firms, current_broker_firms)
+
+Cache broker reputation at end of period (§6b). Computes mean broker satisfaction
+of current clients. If no clients this period, the cached value is unchanged (sticky).
+"""
+function update_broker_reputation!(broker::Broker, firms::Vector{Firm},
+                                   current_broker_firms::Set{Int})
+    isempty(current_broker_firms) && return nothing
+    total = 0.0
+    for j in current_broker_firms
+        total += firms[j].satisfaction_broker
+    end
+    broker.last_reputation = total / length(current_broker_firms)
+    broker.has_had_clients = true
+    return nothing
+end
+
+"""
+    outsourcing_decision(firm, broker, q_pub, rng) -> Symbol
+
+Firm chooses :internal or :broker based on satisfaction scores (§6b).
+Untried broker uses reputation. Ties broken randomly.
+"""
+function outsourcing_decision(firm::Firm, broker::Broker,
+                              q_pub::Float64, rng::AbstractRNG)::Symbol
+    score_int = firm.satisfaction_internal
+    score_broker = if firm.tried_broker
+        firm.satisfaction_broker
+    else
+        broker_reputation(broker, q_pub)
+    end
+    if score_int > score_broker
+        return :internal
+    elseif score_broker > score_int
+        return :broker
+    else
+        return rand(rng, (:internal, :broker))
+    end
 end
 
 """

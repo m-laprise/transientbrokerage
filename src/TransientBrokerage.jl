@@ -18,6 +18,8 @@ include("learning.jl")
 include("measures.jl")
 include("search.jl")
 include("matching.jl")
+include("step.jl")
+include("invariants.jl")
 
 export WorkerStatus, available, employed, staffed
 export Worker, Firm, StaffingAssignment, Broker, ProposedMatch, effective_history_size
@@ -38,5 +40,7 @@ export internal_search, broker_allocate!
 export compute_wage, resolve_conflicts, finalize_match!
 export record_history!, record_broker_history!
 export update_satisfaction!, penalize_no_proposal!, record_match!
+export outsourcing_decision, broker_reputation, update_broker_reputation!
+export step_period!, verify_invariants!
 
 end # module

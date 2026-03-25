@@ -203,3 +203,135 @@ using StableRNGs: StableRNG
         @test wage != r_i + beta_W * (q_hat_broker - r_i)
     end
 end
+
+@testset "Outsourcing Decision" begin
+    # Equal satisfaction: random tie-breaking produces both outcomes over many draws
+    @testset "equal satisfaction -> random choice" begin
+        firm = create_firm(1, 4, StableRNG(1))
+        firm.satisfaction_internal = 5.0
+        firm.satisfaction_broker = 5.0
+        firm.tried_broker = true
+        params = default_params(d=4, s=1, N_W=100, N_F=5)
+        state = initialize_model(params)
+        broker = state.broker
+        clients = Set{Int}()
+        outcomes = [outsourcing_decision(firm, broker, 5.0, StableRNG(i))
+                    for i in 1:100]
+        @test :internal in outcomes
+        @test :broker in outcomes
+    end
+
+    # Higher broker satisfaction leads to outsourcing
+    @testset "higher broker satisfaction -> :broker" begin
+        firm = create_firm(1, 4, StableRNG(1))
+        firm.satisfaction_internal = 3.0
+        firm.satisfaction_broker = 7.0
+        firm.tried_broker = true
+        params = default_params(d=4, s=1, N_W=100, N_F=5)
+        state = initialize_model(params)
+        dec = outsourcing_decision(firm, state.broker, 5.0, StableRNG(1))
+        @test dec == :broker
+    end
+
+    # Higher internal satisfaction leads to internal
+    @testset "higher internal satisfaction -> :internal" begin
+        firm = create_firm(1, 4, StableRNG(1))
+        firm.satisfaction_internal = 7.0
+        firm.satisfaction_broker = 3.0
+        firm.tried_broker = true
+        params = default_params(d=4, s=1, N_W=100, N_F=5)
+        state = initialize_model(params)
+        dec = outsourcing_decision(firm, state.broker, 5.0, StableRNG(1))
+        @test dec == :internal
+    end
+
+    # Untried broker uses cached reputation
+    @testset "untried broker uses reputation" begin
+        params = default_params(d=4, s=1, N_W=100, N_F=5)
+        state = initialize_model(params)
+        firm = state.firms[1]
+        firm.tried_broker = false
+        firm.satisfaction_internal = 3.0
+        # Cache a high reputation via update_broker_reputation!
+        state.firms[2].satisfaction_broker = 10.0
+        update_broker_reputation!(state.broker, state.firms, Set{Int}([2]))
+        dec = outsourcing_decision(firm, state.broker, 5.0, StableRNG(1))
+        @test dec == :broker
+    end
+
+    # update_broker_reputation! caches value; broker_reputation reads it back;
+    # sticky: retains value when broker loses all clients
+    @testset "broker reputation sticky with update" begin
+        params = default_params(d=4, s=1, N_W=100, N_F=5)
+        state = initialize_model(params)
+        broker = state.broker
+        # Update with clients -> caches last_reputation
+        state.firms[1].satisfaction_broker = 8.0
+        update_broker_reputation!(broker, state.firms, Set{Int}([1]))
+        @test broker.has_had_clients == true
+        @test broker.last_reputation == 8.0
+        @test broker_reputation(broker, 5.0) == 8.0
+        # Change client satisfaction, re-update -> cache updates
+        state.firms[1].satisfaction_broker = 6.0
+        update_broker_reputation!(broker, state.firms, Set{Int}([1]))
+        @test broker.last_reputation == 6.0
+        # No clients this period -> cache unchanged (sticky)
+        update_broker_reputation!(broker, state.firms, Set{Int}())
+        @test broker_reputation(broker, 5.0) == 6.0
+    end
+
+    # Broker that has never had clients defaults to q_pub
+    @testset "never-had-clients defaults to q_pub" begin
+        params = default_params(d=4, s=1, N_W=100, N_F=5)
+        state = initialize_model(params)
+        broker = state.broker
+        broker.has_had_clients = false
+        @test broker_reputation(broker, 3.14) == 3.14
+    end
+
+    # Negative satisfaction: no floor applied
+    @testset "negative satisfaction allowed" begin
+        firm = create_firm(1, 4, StableRNG(1))
+        firm.satisfaction_broker = -5.0
+        firm.tried_broker = true
+        firm.satisfaction_internal = -3.0
+        params = default_params(d=4, s=1, N_W=100, N_F=5)
+        state = initialize_model(params)
+        # Internal is higher (-3 > -5), so should pick internal
+        dec = outsourcing_decision(firm, state.broker, 5.0, StableRNG(1))
+        @test dec == :internal
+    end
+
+    # Channel switching: decision flips when satisfaction trajectory crosses
+    @testset "channel switching when trajectories cross" begin
+        firm = create_firm(1, 4, StableRNG(1))
+        firm.tried_broker = true
+        firm.satisfaction_internal = 6.0
+        firm.satisfaction_broker = 4.0
+        params = default_params(d=4, s=1, N_W=100, N_F=5)
+        state = initialize_model(params)
+        # Initially internal wins
+        dec1 = outsourcing_decision(firm, state.broker, 5.0, StableRNG(1))
+        @test dec1 == :internal
+        # After good broker experience, broker wins
+        firm.satisfaction_broker = 8.0
+        dec2 = outsourcing_decision(firm, state.broker, 5.0, StableRNG(1))
+        @test dec2 == :broker
+    end
+
+    # Known analytic EWMA trajectory
+    @testset "satisfaction matches analytic EWMA trajectory" begin
+        firm = create_firm(1, 4, StableRNG(1))
+        firm.satisfaction_internal = 5.0
+        omega = 0.3
+        # Period 1: q=10, cost=2 -> s = 0.7*5 + 0.3*8 = 5.9
+        update_satisfaction!(firm, :internal, 10.0, omega; cost_above_ri=2.0)
+        @test firm.satisfaction_internal ≈ 5.9
+        # Period 2: q=4, cost=1 -> s = 0.7*5.9 + 0.3*3 = 4.13 + 0.9 = 5.03
+        update_satisfaction!(firm, :internal, 4.0, omega; cost_above_ri=1.0)
+        @test firm.satisfaction_internal ≈ 5.03
+        # Period 3: q=7, cost=0 -> s = 0.7*5.03 + 0.3*7 = 3.521 + 2.1 = 5.621
+        update_satisfaction!(firm, :internal, 7.0, omega; cost_above_ri=0.0)
+        @test firm.satisfaction_internal ≈ 5.621
+    end
+end
