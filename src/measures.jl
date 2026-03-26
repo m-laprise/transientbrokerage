@@ -75,10 +75,78 @@ end
     compute_betweenness(G, node) -> Float64
 
 Normalized Freeman betweenness centrality for a single node.
+Uses a parallel Brandes algorithm (thread-per-source-chunk) that scales with
+`Threads.nthreads()`.
 """
 function compute_betweenness(G::SimpleGraph, node::Int)::Float64
-    bc = betweenness_centrality(G)
-    return bc[node]
+    n = nv(G)
+    n <= 2 && return 0.0
+    norm = 1.0 / ((n - 1) * (n - 2))
+
+    nt = Threads.nthreads()
+    partials = zeros(nt)
+
+    Threads.@threads for tid in 1:nt
+        # Thread-local BFS buffers
+        sigma = Vector{Float64}(undef, n)
+        dist = Vector{Int}(undef, n)
+        delta = Vector{Float64}(undef, n)
+        pred = [Int[] for _ in 1:n]
+        queue = Vector{Int}(undef, n)
+        stack = Vector{Int}(undef, n)
+
+        # Partition sources across threads
+        local_sum = 0.0
+        for s in tid:nt:n
+            # Initialize
+            fill!(sigma, 0.0)
+            fill!(dist, -1)
+            fill!(delta, 0.0)
+            for i in 1:n
+                empty!(pred[i])
+            end
+            sigma[s] = 1.0
+            dist[s] = 0
+            q_head = 1
+            q_tail = 1
+            queue[1] = s
+            s_top = 0
+
+            # BFS
+            while q_head <= q_tail
+                v = queue[q_head]
+                q_head += 1
+                s_top += 1
+                stack[s_top] = v
+                for w in neighbors(G, v)
+                    if dist[w] < 0
+                        q_tail += 1
+                        queue[q_tail] = w
+                        dist[w] = dist[v] + 1
+                    end
+                    if dist[w] == dist[v] + 1
+                        sigma[w] += sigma[v]
+                        push!(pred[w], v)
+                    end
+                end
+            end
+
+            # Back-propagation
+            while s_top > 0
+                w = stack[s_top]
+                s_top -= 1
+                for v in pred[w]
+                    delta[v] += (sigma[v] / sigma[w]) * (1.0 + delta[w])
+                end
+                if w == node && w != s
+                    local_sum += delta[w]
+                end
+            end
+        end
+        partials[tid] = local_sum
+    end
+
+    return sum(partials) * norm
 end
 
 """

@@ -166,9 +166,7 @@ function step_period!(state::ModelState)
     # Runs after entry/exit so workers hired by entrant firms are also removed.
     pool = state.broker.pool
     for wid in collect(pool)
-        if state.workers[wid].status != available
-            delete!(pool, wid)
-        end
+        state.workers[wid].status == available || delete!(pool, wid)
     end
     P = ceil(Int, params.pool_target_frac * params.N_W)
     n_gap = P - length(pool)

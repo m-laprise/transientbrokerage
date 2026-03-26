@@ -109,6 +109,9 @@ When `verify=true`, calls `verify_invariants!` each period.
 """
 function run_simulation(params::ModelParams; verify::Bool = false,
                         r_squared_window::Int = 5)
+    if Threads.nthreads() == 1
+        @warn "Running single-threaded; start Julia with --threads=auto for faster betweenness computation"
+    end
     state = initialize_model(params)
     T = params.T
 

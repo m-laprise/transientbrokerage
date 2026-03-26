@@ -1,8 +1,7 @@
 module TransientBrokerage
 
 using Graphs: SimpleGraph, watts_strogatz, neighbors, degree, vertices,
-              edges, src, dst, add_edge!, has_edge, ne, nv,
-              betweenness_centrality, star_graph
+              edges, src, dst, add_edge!, has_edge, ne, nv, star_graph
 using StableRNGs: StableRNG
 using LinearAlgebra: dot, norm, Diagonal, qr, mul!
 using Random: AbstractRNG, randn!

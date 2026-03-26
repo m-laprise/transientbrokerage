@@ -5,16 +5,21 @@ Run the base model (no staffing) for T=1000 periods across multiple parameter
 configurations and seeds. Produce time-series figures to characterize the dynamics
 and identify time scales before writing behavioral tests.
 
-Usage: julia --project scripts/explore_base_model.jl
+Usage: julia --project --threads=auto scripts/explore_base_model.jl
 """
+
+Threads.nthreads() == 1 && @warn "Running single-threaded; start Julia with --threads=auto for faster betweenness computation"
 
 using TransientBrokerage
 using CairoMakie
 using DataFrames
 using Statistics: mean
+using JLD2
 
 const OUTDIR = joinpath(@__DIR__, "..", "data", "figures", "exploration")
+const DATADIR = joinpath(@__DIR__, "..", "data", "sims", "exploration")
 mkpath(OUTDIR)
+mkpath(DATADIR)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -72,7 +77,7 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
     function plot_metric!(ax, metric_fn; label="", color=COL_INTERNAL)
         seed_vals = [rolling_mean(metric_fn(mdf), window) for mdf in mdfs]
         for sv in seed_vals
-            lines!(ax, periods, sv; color=(color, 0.3), linewidth=0.5)
+            lines!(ax, periods, sv; color=(color, 0.45), linewidth=0.8)
         end
         ensemble = [mean(filter(!isnan, [sv[t] for sv in seed_vals])) for t in eachindex(periods)]
         lines!(ax, periods, ensemble; color=color, linewidth=2.5, label=label)
@@ -125,10 +130,14 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
     ax10 = Axis(fig[5, 2]; title="Broker Reputation", xlabel="Period", ylabel="Reputation")
     plot_metric!(ax10, mdf -> mdf.broker_reputation; color=COL_BROKER)
 
-    # Footer
-    Label(fig[6, 1:2],
-          "Thin lines: individual seeds ($n_seeds). Thick line: ensemble mean. Rolling window: $window periods.",
-          fontsize=11, color=:gray40, halign=:center)
+    # Footer: reading guide and interpretation
+    footer = """Thin lines: individual seeds ($n_seeds). Thick line: ensemble mean. Rolling window: $window periods.
+Blue = firm/internal channel. Red = broker channel. Other colors for standalone metrics.
+Key dynamics: Outsourcing rate shows whether firms prefer the broker over internal search. R² measures prediction accuracy \
+(broker's two-stage learning vs firm's single-history). Betweenness captures the broker's structural position in the combined \
+worker-firm-broker network. Access fraction shows what share of brokered matches introduce workers the firm could not have found \
+through its own referral network."""
+    Label(fig[6, 1:2], footer; fontsize=13, color=:gray20, halign=:center)
 
     save(joinpath(OUTDIR, filename), fig)
     println("  Saved: $filename")
@@ -168,15 +177,29 @@ configs = [
      kwargs=(d=8,  s=2, rho=0.50, eta=0.10)),
 ]
 
+RERUN = "--rerun" in ARGS  # pass --rerun to force re-simulation
+
 println("Running base model exploration (T=$T, $N_SEEDS seeds per config, $(length(configs)) configs)")
+println("Data cache: $DATADIR")
+RERUN && println("  --rerun: forcing re-simulation of all configs")
 println()
 
 for (i, c) in enumerate(configs)
     println("[$i/$(length(configs))] $(c.label)")
-    mdfs = run_ensemble(; base_params_kwargs=c.kwargs, T=T, n_seeds=N_SEEDS)
+    datafile = joinpath(DATADIR, "$(c.tag).jld2")
+    if !RERUN && isfile(datafile)
+        println("  Loading cached data: $datafile")
+        mdfs = JLD2.load(datafile, "mdfs")
+    else
+        mdfs = run_ensemble(; base_params_kwargs=c.kwargs, T=T, n_seeds=N_SEEDS)
+        JLD2.save(datafile, "mdfs", mdfs, "label", c.label,
+                  "kwargs", Dict(pairs(c.kwargs)), "T", T, "n_seeds", N_SEEDS)
+        println("  Saved data: $datafile")
+    end
     plot_ensemble(mdfs, c.label, "$(c.tag).png")
 end
 
 println()
-println("All figures saved to: $OUTDIR")
+println("Figures: $OUTDIR")
+println("Data: $DATADIR")
 println("Done.")

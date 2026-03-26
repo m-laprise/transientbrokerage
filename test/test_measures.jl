@@ -1,6 +1,6 @@
 using Test
 using TransientBrokerage
-using Graphs: SimpleGraph, add_edge!, star_graph, nv, ne
+using Graphs: SimpleGraph, add_edge!, star_graph, nv, ne, watts_strogatz, betweenness_centrality
 
 @testset "Network Measures" begin
 
@@ -114,6 +114,37 @@ using Graphs: SimpleGraph, add_edge!, star_graph, nv, ne
         add_edge!(G, 2, 3); add_edge!(G, 4, 5)
         es = compute_effective_size(G, 1)
         @test es ≈ 3.75
+    end
+
+    # Parallel Brandes matches Graphs.jl reference on non-trivial graphs
+    @testset "betweenness matches Graphs.jl reference" begin
+        # Hand-built bridge graph (same as above)
+        G1 = SimpleGraph(5)
+        add_edge!(G1, 1, 2); add_edge!(G1, 1, 3)
+        add_edge!(G1, 1, 4); add_edge!(G1, 1, 5)
+        add_edge!(G1, 2, 3); add_edge!(G1, 4, 5)
+        ref1 = betweenness_centrality(G1)
+        for v in 1:nv(G1)
+            @test compute_betweenness(G1, v) ≈ ref1[v] atol=1e-12
+        end
+
+        # Watts-Strogatz small-world (realistic topology)
+        G2 = watts_strogatz(100, 6, 0.1; seed=42)
+        ref2 = betweenness_centrality(G2)
+        for v in [1, 25, 50, 75, 100]
+            @test compute_betweenness(G2, v) ≈ ref2[v] atol=1e-12
+        end
+
+        # Combined graph from actual model state
+        params = default_params(d=4, s=1, N_W=50, N_F=5)
+        state = initialize_model(params)
+        G3, broker_node = build_combined_graph(state)
+        ref3 = betweenness_centrality(G3)
+        @test compute_betweenness(G3, broker_node) ≈ ref3[broker_node] atol=1e-12
+        # Also spot-check a few worker and firm nodes
+        for v in [1, 10, 30, params.N_W + 1, params.N_W + 3]
+            @test compute_betweenness(G3, v) ≈ ref3[v] atol=1e-12
+        end
     end
 
     # update_cached_network_measures! produces finite non-zero values
