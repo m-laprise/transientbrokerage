@@ -1,19 +1,20 @@
 """
     step.jl
 
-Main simulation loop: one period of the base model (§8 steps 0-4).
-Entry/exit (step 5) and network measures (step 6) are added in later phases.
+Main simulation loop: one period of the model (§8 steps 0-5).
+Network measures (step 6) are added in a later phase.
 """
 
 """
     step_period!(state)
 
-Execute one period of the simulation. Base model steps:
+Execute one period of the simulation. Steps:
 0. Referral pools
 1. Vacancy management and outsourcing decisions
 2. Candidate generation and evaluation (internal search + broker allocation)
 3. Match formation (wage setting, conflict resolution, finalization)
 4. Learning and state updates (satisfaction, reputation, broker recruitment)
+5. Entry/exit
 """
 function step_period!(state::ModelState)
     state.period += 1
@@ -159,6 +160,14 @@ function step_period!(state::ModelState)
             push!(state.broker.pool, wid)
         end
     end
+
+    # ── Step 5: Entry/exit ──
+    # Rebuild avail (matching may have changed it)
+    empty!(avail)
+    for w in state.workers
+        w.status == available && push!(avail, w.id)
+    end
+    process_entry_exit!(state, avail)
 
     return nothing
 end

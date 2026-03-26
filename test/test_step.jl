@@ -116,6 +116,41 @@ using StableRNGs: StableRNG
         @test s1.accum.outsourcing_rate == s2.accum.outsourcing_rate
     end
 
+    # 100 periods with entry/exit: invariants hold throughout
+    @testset "100 periods with entry/exit and invariants" begin
+        params = default_params()
+        state = initialize_model(params)
+        @test begin
+            all_pass = true
+            for _ in 1:100
+                step_period!(state)
+                try
+                    verify_invariants!(state)
+                catch e
+                    all_pass = false
+                    @error "Invariant failed at period $(state.period)" exception=e
+                end
+            end
+            all_pass
+        end
+    end
+
+    # After 100 periods with entry/exit, some firms should be recent entrants
+    @testset "entrant firms have fresh state" begin
+        params = default_params()
+        state = initialize_model(params)
+        for _ in 1:100
+            step_period!(state)
+        end
+        # At least some firms should have id > N_F (entrants)
+        @test any(f.id > params.N_F for f in state.firms)
+        # Entrant firms with no matches yet should have empty history
+        entrants = [f for f in state.firms if f.id > params.N_F && f.hire_count == 0]
+        if !isempty(entrants)
+            @test all(f.history_count == 0 for f in entrants)
+        end
+    end
+
     # No-proposal penalty fires during step_period! when broker can't serve a client
     @testset "no-proposal penalty wiring" begin
         params = default_params()

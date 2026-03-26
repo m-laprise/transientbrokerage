@@ -18,6 +18,7 @@ include("learning.jl")
 include("measures.jl")
 include("search.jl")
 include("matching.jl")
+include("entry_exit.jl")
 include("step.jl")
 include("invariants.jl")
 
@@ -32,7 +33,7 @@ export generate_matching_function, eval_mu!
 export match_output!, match_output_noiseless!, calibrate_output_scale
 export build_social_network, compute_referral_pool!, compute_all_referral_pools!
 export compute_reservation_wage, create_firm, create_broker
-export assign_initial_employment!, initialize_model
+export sample_by_proximity, assign_initial_employment!, initialize_model
 export predict_firm, predict_broker, build_period_trees
 export predict_and_record_firm!, predict_and_record_broker!
 export compute_prediction_quality
@@ -41,6 +42,7 @@ export compute_wage, resolve_conflicts, finalize_match!
 export record_history!, record_broker_history!
 export update_satisfaction!, penalize_no_proposal!, record_match!
 export outsourcing_decision, broker_reputation, update_broker_reputation!
+export exit_firm!, enter_firm!, process_entry_exit!
 export step_period!, verify_invariants!
 
 end # module

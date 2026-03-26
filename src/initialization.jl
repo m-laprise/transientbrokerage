@@ -54,6 +54,34 @@ function create_broker(id::Int, params::ModelParams, workers::Vector{Worker},
 end
 
 """
+    sample_by_proximity(rng, candidates, nc, workers, firm_type, wts, n_hire) -> Vector{Int}
+
+Draw `n_hire` workers from `candidates[1:nc]` with probability proportional to
+exp(-||w_i - x_j||^2). Both `candidates` and `wts` are caller-owned buffers;
+`wts` is resized to `nc` internally.
+"""
+function sample_by_proximity(rng::AbstractRNG, candidates::Vector{Int}, nc::Int,
+                             workers::Vector{Worker}, firm_type::Vector{Float64},
+                             wts::Vector{Float64}, n_hire::Int)::Vector{Int}
+    resize!(wts, nc)
+    total = 0.0
+    @inbounds for (i, wid) in enumerate(@view(candidates[1:nc]))
+        d2 = 0.0
+        wtype = workers[wid].type
+        for k in eachindex(wtype)
+            δ = wtype[k] - firm_type[k]
+            d2 += δ * δ
+        end
+        v = exp(-d2)
+        wts[i] = v
+        total += v
+    end
+    @views wts[1:nc] ./= total
+    return sample(rng, @view(candidates[1:nc]), Weights(@view(wts[1:nc])),
+                  n_hire; replace=false)
+end
+
+"""
     assign_initial_employment!(firms, workers, rng)
 
 Assign 3-5 workers per firm, sampling by type proximity (softmax weighting).
@@ -69,23 +97,8 @@ function assign_initial_employment!(firms::Vector{Firm}, workers::Vector{Worker}
         resize!(candidates, length(avail))
         copyto!(candidates, avail)
         nc = length(candidates)
-        resize!(wts, nc)
-        total = 0.0
-        @inbounds for (i, c) in enumerate(candidates)
-            d2 = 0.0
-            wtype = workers[c].type
-            ftype = firm.type
-            for k in eachindex(wtype)
-                δ = wtype[k] - ftype[k]
-                d2 += δ * δ
-            end
-            v = exp(-d2)
-            wts[i] = v
-            total += v
-        end
-        @views wts[1:nc] ./= total
         n_hire = min(n_initial, nc)
-        chosen = sample(rng, candidates, Weights(@view(wts[1:nc])), n_hire; replace=false)
+        chosen = sample_by_proximity(rng, candidates, nc, workers, firm.type, wts, n_hire)
         for wid in chosen
             workers[wid].status = employed
             workers[wid].employer_id = firm.id

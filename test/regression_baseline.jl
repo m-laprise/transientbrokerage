@@ -12,27 +12,28 @@ using TransientBrokerage
     params = default_params()
     state = initialize_model(params)
 
-    # Frozen values: (matches, broker_history_count, broker_pool_size)
+    # Frozen values: (matches, broker_history_count, broker_pool_size, next_firm_id)
     # Generated with --check-bounds=yes (Pkg.test default)
-    # Regenerated after fixing order-dependence in outsourcing reputation (prev_broker_firms)
+    # Regenerated after refactoring entry/exit to share available set across entries
     expected = [
-        (8,  4,  25),  # period 1
-        (12, 16, 30),  # period 2
-        (9,  16, 35),  # period 3
-        (12, 19, 40),  # period 4
-        (5,  19, 45),  # period 5
-        (13, 21, 50),  # period 6
-        (10, 23, 55),  # period 7
-        (10, 26, 60),  # period 8
-        (8,  32, 65),  # period 9
-        (10, 37, 70),  # period 10
+        (8,   4,  25, 106),  # period 1
+        (13, 17,  30, 112),  # period 2
+        (14, 17,  35, 116),  # period 3
+        (15, 19,  40, 121),  # period 4
+        (10, 22,  45, 127),  # period 5
+        (7,  28,  50, 131),  # period 6
+        (16, 43,  55, 137),  # period 7
+        (6,  44,  60, 138),  # period 8
+        (10, 45,  65, 143),  # period 9
+        (10, 46,  70, 153),  # period 10
     ]
 
-    for (t, (exp_matches, exp_hist, exp_pool)) in enumerate(expected)
+    for (t, (exp_matches, exp_hist, exp_pool, exp_next_id)) in enumerate(expected)
         step_period!(state)
         @test state.period == t
         @test state.accum.matches == exp_matches
         @test state.broker.history_count == exp_hist
         @test length(state.broker.pool) == exp_pool
+        @test state.next_firm_id == exp_next_id
     end
 end
