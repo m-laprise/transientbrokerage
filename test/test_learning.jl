@@ -283,9 +283,9 @@ end
         @test pq.rank_corr ≈ 1.0
     end
 
-    # Fewer than 5 observations should return NaN (insufficient data)
+    # Fewer than 5 observations returns NaN (insufficient for stable R-squared)
     @testset "too few observations returns NaN" begin
-        pq = compute_prediction_quality([1.0, 2.0], [1.0, 2.0])
+        pq = compute_prediction_quality([1.0, 2.0, 3.0, 4.0], [1.0, 2.0, 3.0, 4.0])
         @test isnan(pq.r_squared)
         @test isnan(pq.bias)
         @test isnan(pq.rank_corr)

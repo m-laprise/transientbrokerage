@@ -25,7 +25,10 @@ using DataFrames: DataFrame, nrow, names, eltype
                          :effective_size, :placement_revenue,
                          :cumulative_placement_revenue,
                          :access_count, :assessment_count,
-                         :firm_r_squared, :broker_r_squared]
+                         :firm_r_squared, :broker_r_squared,
+                         :firm_r_squared_rolling, :broker_r_squared_rolling,
+                         :firm_bias_rolling, :broker_bias_rolling,
+                         :firm_rank_corr_rolling, :broker_rank_corr_rolling]
         @test all(col in Symbol.(names(mdf)) for col in expected_cols)
     end
 
