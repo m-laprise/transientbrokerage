@@ -28,7 +28,7 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
         :mu_b => 0.25,
         :c_emp_frac => 0.15,
         :p_vac => 0.10,
-        :n_recruit_frac => 0.005,
+        :pool_target_frac => 0.20,
         :n_candidates_frac => 0.01,
         :network_measure_interval => 10,
         :T => 200,
@@ -57,7 +57,7 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
         defaults[:mu_b],
         defaults[:c_emp_frac],
         defaults[:p_vac],
-        defaults[:n_recruit_frac],
+        defaults[:pool_target_frac],
         defaults[:n_candidates_frac],
         defaults[:network_measure_interval],
         defaults[:T],
@@ -92,7 +92,7 @@ function validate_params(p::ModelParams)
     @assert 0.0 < p.mu_b < 1.0 "mu_b must be in (0, 1), got $(p.mu_b)"
     @assert 0.0 < p.c_emp_frac < 1.0 "c_emp_frac must be in (0, 1), got $(p.c_emp_frac)"
     @assert 0.0 < p.p_vac <= 1.0 "p_vac must be in (0, 1], got $(p.p_vac)"
-    @assert 0.0 < p.n_recruit_frac <= 1.0 "n_recruit_frac must be in (0, 1], got $(p.n_recruit_frac)"
+    @assert 0.0 < p.pool_target_frac <= 1.0 "pool_target_frac must be in (0, 1], got $(p.pool_target_frac)"
     @assert 0.0 < p.n_candidates_frac <= 1.0 "n_candidates_frac must be in (0, 1], got $(p.n_candidates_frac)"
     @assert p.network_measure_interval >= 1 "network_measure_interval must be ≥ 1, got $(p.network_measure_interval)"
     @assert p.T >= 1 "T must be ≥ 1, got $(p.T)"

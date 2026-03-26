@@ -14,18 +14,18 @@ using TransientBrokerage
 
     # Frozen values: (matches, broker_history_count, broker_pool_size, next_firm_id)
     # Generated with --check-bounds=yes (Pkg.test default)
-    # Regenerated after refactoring entry/exit to share available set across entries
+    # Regenerated after fixed-target pool mechanics (pool_target_frac=0.20, placed workers leave)
     expected = [
-        (8,   4,  25, 106),  # period 1
-        (13, 17,  30, 112),  # period 2
-        (14, 17,  35, 116),  # period 3
-        (15, 19,  40, 121),  # period 4
-        (10, 22,  45, 127),  # period 5
-        (7,  28,  50, 131),  # period 6
-        (16, 43,  55, 137),  # period 7
-        (6,  44,  60, 138),  # period 8
-        (10, 45,  65, 143),  # period 9
-        (10, 46,  70, 153),  # period 10
+        (8,   4, 200, 105),  # period 1
+        (14,  4, 200, 112),  # period 2
+        (6,   4, 200, 116),  # period 3
+        (18,  5, 200, 119),  # period 4
+        (7,  12, 200, 122),  # period 5
+        (10, 22, 200, 131),  # period 6
+        (10, 31, 200, 139),  # period 7
+        (10, 34, 200, 146),  # period 8
+        (6,  34, 200, 150),  # period 9
+        (9,  34, 200, 156),  # period 10
     ]
 
     for (t, (exp_matches, exp_hist, exp_pool, exp_next_id)) in enumerate(expected)

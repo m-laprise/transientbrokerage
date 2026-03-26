@@ -35,14 +35,14 @@ end
 """
     create_broker(id, params, workers, rng) -> Broker
 
-Create the broker with a seed pool of ceil(0.02 * N_W) available workers
+Create the broker with a pool of P = ceil(pool_target_frac * N_W) available workers
 and preallocated history arrays.
 """
 function create_broker(id::Int, params::ModelParams, workers::Vector{Worker},
                        rng::AbstractRNG)::Broker
-    n_seed = ceil(Int, 0.02 * params.N_W)
+    P = ceil(Int, params.pool_target_frac * params.N_W)
     available_ids = [w.id for w in workers if w.status == available]
-    seed_pool = Set(sample(rng, available_ids, min(n_seed, length(available_ids)); replace=false))
+    seed_pool = Set(sample(rng, available_ids, min(P, length(available_ids)); replace=false))
     cap = 5000
     Broker(id=id,
            pool=seed_pool,

@@ -1,7 +1,7 @@
 """
     step.jl
 
-Main simulation loop: one period of the model (§8 steps 0-6).
+Main simulation loop: one period of the model (§8 steps 0-7).
 """
 
 """
@@ -12,9 +12,10 @@ Execute one period of the simulation. Steps:
 1. Vacancy management and outsourcing decisions
 2. Candidate generation and evaluation (internal search + broker allocation)
 3. Match formation (wage setting, conflict resolution, finalization)
-4. Learning and state updates (satisfaction, reputation, broker recruitment)
+4. Reputation update
 5. Entry/exit
-6. Network measures (every M periods)
+6. Broker pool maintenance (remove non-available, top up to target P)
+7. Network measures (every M periods)
 """
 function step_period!(state::ModelState)
     state.period += 1
@@ -149,25 +150,8 @@ function step_period!(state::ModelState)
         end
     end
 
-    # ── Step 4: Learning and state updates ──
-    # 4.3 Cache broker reputation for next period's outsourcing decisions
+    # ── Step 4: Reputation update ──
     update_broker_reputation!(state.broker, state.firms, current_broker_firms)
-
-    # 4.4 Broker pool recruitment
-    n_recruit = ceil(Int, params.n_recruit_frac * params.N_W)
-    eligible = Int[]
-    for w in state.workers
-        if w.status == available && w.id ∉ state.broker.pool
-            push!(eligible, w.id)
-        end
-    end
-    if !isempty(eligible)
-        n_draw = min(n_recruit, length(eligible))
-        recruited = sample(rng, eligible, n_draw; replace=false)
-        for wid in recruited
-            push!(state.broker.pool, wid)
-        end
-    end
 
     # ── Step 5: Entry/exit ──
     # Rebuild avail (matching may have changed it)
@@ -177,7 +161,34 @@ function step_period!(state::ModelState)
     end
     process_entry_exit!(state, avail)
 
-    # ── Step 6: Network measures (every M periods) ──
+    # ── Step 6: Broker pool maintenance ──
+    # Remove non-available workers, top up to target P.
+    # Runs after entry/exit so workers hired by entrant firms are also removed.
+    pool = state.broker.pool
+    for wid in collect(pool)
+        if state.workers[wid].status != available
+            delete!(pool, wid)
+        end
+    end
+    P = ceil(Int, params.pool_target_frac * params.N_W)
+    n_gap = P - length(pool)
+    if n_gap > 0
+        eligible = Int[]
+        for w in state.workers
+            if w.status == available && w.id ∉ pool
+                push!(eligible, w.id)
+            end
+        end
+        if !isempty(eligible)
+            n_draw = min(n_gap, length(eligible))
+            recruited = sample(rng, eligible, n_draw; replace=false)
+            for wid in recruited
+                push!(pool, wid)
+            end
+        end
+    end
+
+    # ── Step 7: Network measures (every M periods) ──
     if state.period % params.network_measure_interval == 0
         update_cached_network_measures!(state)
     end

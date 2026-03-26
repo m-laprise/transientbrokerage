@@ -92,7 +92,7 @@ struct ModelParams
     mu_b::Float64                # staffing value-capture rate
     c_emp_frac::Float64          # employment cost as fraction of r_base
     p_vac::Float64               # per-period vacancy probability (structural constant, fixed at 0.10)
-    n_recruit_frac::Float64      # broker recruitment fraction (0.005; n_recruit = ⌈frac · N_W⌉)
+    pool_target_frac::Float64    # broker pool target as fraction of N_W (0.20; P = ⌈frac · N_W⌉)
     n_candidates_frac::Float64   # candidates as fraction of N_W (0.01)
     network_measure_interval::Int # M
     T::Int                       # total periods

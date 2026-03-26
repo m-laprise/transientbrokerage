@@ -76,22 +76,23 @@ using StableRNGs: StableRNG
         @test firm.hire_count == 1
     end
 
-    # Brokered match adds to broker history and pool
+    # Brokered match records to broker history; placed worker NOT added to pool
     @testset "finalize_match! broker match updates broker" begin
         params = default_params(d=4, s=1, N_W=100, N_F=10)
         state = initialize_model(params)
-        avail_w = findfirst(w -> w.status == available, state.workers)
-        worker = state.workers[avail_w]
+        # Pick an available worker that is in the pool
+        pool_w = first(w for w in state.workers if w.status == available && w.id in state.broker.pool)
         old_broker_count = state.broker.history_count
 
-        match = ProposedMatch(1, avail_w, :broker, 5.0, 6.0,
-                              compute_wage(5.0, worker.reservation_wage, params.beta_W))
+        match = ProposedMatch(1, pool_w.id, :broker, 5.0, 6.0,
+                              compute_wage(5.0, pool_w.reservation_wage, params.beta_W))
         z_buf = zeros(params.s)
         Ax_buf = zeros(params.d)
         finalize_match!(match, state, z_buf, Ax_buf)
 
         @test state.broker.history_count == old_broker_count + 1
-        @test avail_w in state.broker.pool
+        # Worker is now employed; pool removal happens during step 4.4 maintenance
+        @test state.workers[pool_w.id].status == employed
     end
 
     # Circular buffer wraps correctly, effective_history_size stays capped

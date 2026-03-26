@@ -8,8 +8,9 @@ Debug-time state consistency checks. Disable in production runs for performance.
     verify_invariants!(state)
 
 Assert that the simulation state is internally consistent. Checks worker
-conservation, no double-employment, status consistency, finite satisfaction,
-and reservation wage floor. Intended for use in test runs; disable in production.
+conservation, no double-employment, status consistency, broker pool (all members
+available, size <= target P), finite satisfaction, and reservation wage floor.
+Intended for use in test runs; disable in production.
 """
 function verify_invariants!(state::ModelState)
     N_W = state.params.N_W
@@ -52,9 +53,14 @@ function verify_invariants!(state::ModelState)
         @assert 1 <= j <= length(state.firms) "Open vacancy index $j out of bounds"
     end
 
-    # Broker pool non-empty after first period
+    # Broker pool: non-empty, all members available, size <= target P
     if state.period > 1
         @assert !isempty(state.broker.pool) "Broker pool empty after period 1"
+    end
+    P = ceil(Int, state.params.pool_target_frac * state.params.N_W)
+    @assert length(state.broker.pool) <= P "Broker pool size $(length(state.broker.pool)) > target $P"
+    for wid in state.broker.pool
+        @assert state.workers[wid].status == available "Pool member $wid has status=$(state.workers[wid].status)"
     end
 
     # Staffing assignment consistency

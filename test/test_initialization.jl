@@ -66,7 +66,7 @@ using Graphs: nv, is_connected
     end
 
     @testset "broker" begin
-        expected_pool = ceil(Int, 0.02 * params.N_W)
+        expected_pool = ceil(Int, params.pool_target_frac * params.N_W)
         @test length(state.broker.pool) == expected_pool
         @test all(state.workers[wid].status == available for wid in state.broker.pool)
         @test state.broker.last_reputation == state.cal.q_pub

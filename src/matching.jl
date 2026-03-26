@@ -81,11 +81,10 @@ function finalize_match!(match::ProposedMatch, state::ModelState,
     record_history!(firm, worker.type, q_realized)
     firm.hire_count += 1
 
-    # Broker-specific: record to broker history, add worker to pool
+    # Broker-specific: record to broker history (placed worker removed from pool during step 4.4)
     if match.source == :broker
         record_broker_history!(state.broker, worker.type, firm.type,
                                match.firm_idx, q_realized)
-        push!(state.broker.pool, match.worker_id)
     end
 
     # Satisfaction update (§6a)
