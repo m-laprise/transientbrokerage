@@ -152,7 +152,7 @@ effective_history_size(total::Int, cap::Int) = min(total, cap)
 effective_history_size(firm::Firm) = effective_history_size(firm.history_count, size(firm.history_w, 2))
 effective_history_size(broker::Broker) = effective_history_size(broker.history_count, size(broker.history_w, 2))
 
-"""Per-period counters and output vectors, reset each tick except cumulative revenue."""
+"""Per-period counters, output vectors, and prediction pairs. All fields reset each tick except cumulative revenue totals."""
 Base.@kwdef mutable struct PeriodAccumulators
     matches::Int = 0
     new_staffing::Int = 0
@@ -172,6 +172,11 @@ Base.@kwdef mutable struct PeriodAccumulators
     firm_neighbor_vars::Vector{Float64} = Float64[]
     broker_mean_dists::Vector{Float64} = Float64[]
     broker_neighbor_vars::Vector{Float64} = Float64[]
+    # Prediction/outcome pairs for R-squared computation
+    firm_predicted::Vector{Float64} = Float64[]
+    firm_realized::Vector{Float64} = Float64[]
+    broker_predicted::Vector{Float64} = Float64[]
+    broker_realized::Vector{Float64} = Float64[]
     # Revenue accumulators
     placement_revenue::Float64 = 0.0         # Π_b from placement fees this period
     staffing_revenue::Float64 = 0.0          # Π_b from staffing profit this period
@@ -199,6 +204,10 @@ function reset_accumulators!(a::PeriodAccumulators)
     empty!(a.firm_neighbor_vars)
     empty!(a.broker_mean_dists)
     empty!(a.broker_neighbor_vars)
+    empty!(a.firm_predicted)
+    empty!(a.firm_realized)
+    empty!(a.broker_predicted)
+    empty!(a.broker_realized)
     a.placement_revenue = 0.0
     a.staffing_revenue = 0.0
     # cumulative fields are NOT reset

@@ -11,5 +11,6 @@ using Test
     include("test_entry_exit.jl")
     include("test_measures.jl")
     include("test_step.jl")
+    include("test_integration.jl")
     include("regression_baseline.jl")
 end

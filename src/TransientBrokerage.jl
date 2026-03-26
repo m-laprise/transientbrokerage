@@ -10,6 +10,7 @@ using StatsBase: median, sample, Weights, corspearman
 using Statistics: var, mean
 using MultivariateStats: fit, predict, PCA
 using NearestNeighbors: KDTree, knn!
+using DataFrames: DataFrame
 
 include("types.jl")
 include("parameters.jl")
@@ -23,6 +24,8 @@ include("matching.jl")
 include("entry_exit.jl")
 include("step.jl")
 include("invariants.jl")
+include("simulation.jl")
+include("diagnostics.jl")
 
 export WorkerStatus, available, employed, staffed
 export Worker, Firm, StaffingAssignment, Broker, ProposedMatch, effective_history_size
@@ -48,5 +51,6 @@ export update_satisfaction!, penalize_no_proposal!, record_match!
 export outsourcing_decision, broker_reputation, update_broker_reputation!
 export exit_firm!, enter_firm!, process_entry_exit!
 export step_period!, verify_invariants!
+export collect_period_metrics, run_simulation, diagnostic_summary
 
 end # module

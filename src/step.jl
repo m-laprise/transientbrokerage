@@ -121,6 +121,14 @@ function step_period!(state::ModelState)
             state.accum.cumulative_placement_revenue += params.alpha * match.wage
         end
 
+        # Prediction/outcome pairs for R-squared
+        push!(state.accum.firm_predicted, match.q_hat_firm)
+        push!(state.accum.firm_realized, q)
+        if match.source == :broker
+            push!(state.accum.broker_predicted, match.q_hat_broker)
+            push!(state.accum.broker_realized, q)
+        end
+
         # Access vs assessment classification
         in_ref = match.source == :broker &&
                  match.worker_id in state.firms[match.firm_idx].referral_pool
