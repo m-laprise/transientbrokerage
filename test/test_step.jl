@@ -177,4 +177,28 @@ using StableRNGs: StableRNG
             @test any_changed
         end
     end
+
+    # Network measures are computed at the correct interval
+    @testset "network measures computed every M periods" begin
+        params = default_params(network_measure_interval=5)
+        state = initialize_model(params)
+        @test isnan(state.cached_network.betweenness)
+        for _ in 1:4
+            step_period!(state)
+        end
+        # Not yet at interval
+        @test isnan(state.cached_network.betweenness)
+        # Period 5 triggers computation
+        step_period!(state)
+        @test state.cached_network.betweenness > 0.0
+        # Record value, run 4 more periods, verify unchanged
+        b5 = state.cached_network.betweenness
+        for _ in 6:9
+            step_period!(state)
+        end
+        @test state.cached_network.betweenness == b5
+        # Period 10 recomputes (value may differ due to entry/exit)
+        step_period!(state)
+        @test state.cached_network.betweenness > 0.0
+    end
 end

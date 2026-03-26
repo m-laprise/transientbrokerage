@@ -175,7 +175,7 @@ function initialize_model(params::ModelParams)::ModelState
 
     # 13. Accumulators and cached network measures
     accum = PeriodAccumulators()
-    cached_network = CachedNetworkMeasures(Float64[], Float64[], Float64[])
+    cached_network = CachedNetworkMeasures(NaN, NaN, NaN)
 
     return ModelState(params=params, rng=rng, period=0, env=env, cal=cal,
                       workers=workers, firms=firms, broker=broker, G_S=G_S,

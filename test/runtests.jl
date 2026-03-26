@@ -9,6 +9,7 @@ using Test
     include("test_search.jl")
     include("test_matching.jl")
     include("test_entry_exit.jl")
+    include("test_measures.jl")
     include("test_step.jl")
     include("regression_baseline.jl")
 end

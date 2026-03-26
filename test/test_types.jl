@@ -71,10 +71,10 @@ using StableRNGs: StableRNG
         @test cal.f_bar == 2.0
         @test cal.q_pub == 1.5
 
-        cnm = CachedNetworkMeasures(Float64[], Float64[], Float64[])
-        @test isempty(cnm.betweenness)
-        @test isempty(cnm.constraint)
-        @test isempty(cnm.effective_size)
+        cnm = CachedNetworkMeasures(NaN, NaN, NaN)
+        @test isnan(cnm.betweenness)
+        @test isnan(cnm.constraint)
+        @test isnan(cnm.effective_size)
     end
 
     # Params and environment are immutable; state containers are mutable

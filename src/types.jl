@@ -205,11 +205,11 @@ function reset_accumulators!(a::PeriodAccumulators)
     return nothing
 end
 
-"""Betweenness, Burt's constraint, and effective size, recomputed periodically on the combined graph."""
+"""Broker's network position measures, recomputed every M periods on the combined graph."""
 mutable struct CachedNetworkMeasures
-    betweenness::Vector{Float64}
-    constraint::Vector{Float64}
-    effective_size::Vector{Float64}
+    betweenness::Float64      # Freeman betweenness centrality (normalized)
+    constraint::Float64       # Burt's network constraint (low = spanning structural holes)
+    effective_size::Float64   # Burt's effective size (non-redundant contacts)
 end
 
 """Complete simulation state: all agents, network, environment, and accumulators."""

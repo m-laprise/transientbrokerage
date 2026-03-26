@@ -1,8 +1,7 @@
 """
     step.jl
 
-Main simulation loop: one period of the model (§8 steps 0-5).
-Network measures (step 6) are added in a later phase.
+Main simulation loop: one period of the model (§8 steps 0-6).
 """
 
 """
@@ -15,6 +14,7 @@ Execute one period of the simulation. Steps:
 3. Match formation (wage setting, conflict resolution, finalization)
 4. Learning and state updates (satisfaction, reputation, broker recruitment)
 5. Entry/exit
+6. Network measures (every M periods)
 """
 function step_period!(state::ModelState)
     state.period += 1
@@ -168,6 +168,11 @@ function step_period!(state::ModelState)
         w.status == available && push!(avail, w.id)
     end
     process_entry_exit!(state, avail)
+
+    # ── Step 6: Network measures (every M periods) ──
+    if state.period % params.network_measure_interval == 0
+        update_cached_network_measures!(state)
+    end
 
     return nothing
 end

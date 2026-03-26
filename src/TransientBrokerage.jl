@@ -1,6 +1,8 @@
 module TransientBrokerage
 
-using Graphs: SimpleGraph, watts_strogatz, neighbors, degree, vertices
+using Graphs: SimpleGraph, watts_strogatz, neighbors, degree, vertices,
+              edges, src, dst, add_edge!, has_edge, ne, nv,
+              betweenness_centrality, star_graph
 using StableRNGs: StableRNG
 using LinearAlgebra: dot, norm, Diagonal, qr, mul!
 using Random: AbstractRNG, randn!
@@ -37,6 +39,8 @@ export sample_by_proximity, assign_initial_employment!, initialize_model
 export predict_firm, predict_broker, build_period_trees
 export predict_and_record_firm!, predict_and_record_broker!
 export compute_prediction_quality
+export build_combined_graph, compute_betweenness, compute_burt_constraint
+export compute_effective_size, update_cached_network_measures!
 export internal_search, broker_allocate!
 export compute_wage, resolve_conflicts, finalize_match!
 export record_history!, record_broker_history!
