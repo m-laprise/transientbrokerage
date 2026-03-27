@@ -62,6 +62,21 @@ function step_period!(state::ModelState)
     # ── Step 2: Candidate generation and evaluation ──
     models = build_period_models(state, params.lambda)
 
+    # Holdout evaluation: random workers at each firm, noiseless truth (no selection bias)
+    d = params.d
+    for (j, firm) in enumerate(state.firms)
+        fm = models.firm_models[j]
+        bm = models.broker_model
+        for _ in 1:3
+            w = clamp.(firm.type .+ randn(rng, d), -3.0, 3.0)
+            q_true = match_output_noiseless(w, firm.type, state.env)
+            push!(state.accum.firm_holdout_pred, predict_ridge(fm, w))
+            push!(state.accum.firm_holdout_real, q_true)
+            push!(state.accum.broker_holdout_pred, predict_ridge(bm, vcat(w, firm.type, w .* firm.type)))
+            push!(state.accum.broker_holdout_real, q_true)
+        end
+    end
+
     proposals = ProposedMatch[]
 
     # 2.1 Internal searches

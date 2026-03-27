@@ -41,7 +41,7 @@ function enter_firm!(state::ModelState, firm_idx::Int, avail::Set{Int},
     new_firm.satisfaction_internal = q_pub
     new_firm.satisfaction_broker = q_pub
 
-    n_initial = rand(rng, 3:5)
+    n_initial = rand(rng, 6:10)
     nc = length(avail)
     n_hire = min(n_initial, nc)
     if n_hire > 0

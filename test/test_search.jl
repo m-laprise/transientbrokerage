@@ -112,14 +112,17 @@ end
         end
         models = build_period_models(state, lambda)
         wid = first(state.broker.pool)
-        # Via vcat (what predict_broker used to do)
-        wx = vcat(state.workers[wid].type, state.firms[1].type)
-        q_vcat = predict_ridge(models.broker_model, wx)
+        w = state.workers[wid].type
+        x = state.firms[1].type
+        # Via vcat
+        wxi = vcat(w, x, w .* x)
+        q_vcat = predict_ridge(models.broker_model, wxi)
         # Via pre-filled buffer (what broker_allocate! does internally)
-        wx_buf = Vector{Float64}(undef, 2d)
-        wx_buf[1:d] .= state.workers[wid].type
-        wx_buf[d+1:2d] .= state.firms[1].type
-        q_buf = predict_ridge(models.broker_model, wx_buf)
+        wxi_buf = Vector{Float64}(undef, 3d)
+        wxi_buf[1:d] .= w
+        wxi_buf[d+1:2d] .= x
+        @views wxi_buf[2d+1:3d] .= wxi_buf[1:d] .* wxi_buf[d+1:2d]
+        q_buf = predict_ridge(models.broker_model, wxi_buf)
         @test q_vcat == q_buf
     end
 end

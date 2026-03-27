@@ -128,7 +128,7 @@ function assign_initial_employment!(firms::Vector{Firm}, workers::Vector{Worker}
     candidates = collect(avail)
     wts = Vector{Float64}(undef, length(workers))
     for firm in firms
-        n_initial = rand(rng, 3:5)
+        n_initial = rand(rng, 6:10)
         resize!(candidates, length(avail))
         copyto!(candidates, avail)
         nc = length(candidates)
@@ -205,7 +205,7 @@ function initialize_model(params::ModelParams)::ModelState
     # 10. Broker with seed pool and seeded history from 5 random existing matches
     broker = create_broker(1, params, workers, rng)
     employed_pairs = [(wid, j) for (j, firm) in enumerate(firms) for wid in firm.employees]
-    seed_pairs = sample(rng, employed_pairs, min(5, length(employed_pairs)); replace=false)
+    seed_pairs = sample(rng, employed_pairs, min(10, length(employed_pairs)); replace=false)
     for (wid, j) in seed_pairs
         q = match_output(workers[wid].type, firms[j].type, env, rng)
         record_broker_history!(broker, workers[wid].type, firms[j].type, j, q)

@@ -91,7 +91,7 @@ using StableRNGs: StableRNG
         @test p.rho == 0.50
         @test p.K_mu == 10
         @test p.N_W == 1000
-        @test p.N_F == 100
+        @test p.N_F == 50
         @test p.eta == 0.05
         @test p.beta_W == 0.50
         @test p.lambda == 1.0
@@ -102,7 +102,7 @@ using StableRNGs: StableRNG
         @test p.L == 4
         @test p.mu_b == 0.25
         @test p.c_emp_frac == 0.15
-        @test p.p_vac == 0.30
+        @test p.p_vac == 0.50
         @test p.pool_target_frac == 0.20
         @test p.n_candidates_frac == 0.015
         @test p.network_measure_interval == 10

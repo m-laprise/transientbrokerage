@@ -71,7 +71,8 @@ end
     build_period_models(state, lambda) -> PeriodModels
 
 Fit ridge regression models for all firms (seeded with >= 3 observations)
-and for the broker (pooled across firms, features = [w; x], seeded with >= 5 observations).
+and for the broker (pooled across firms, features = [w; x; w.*x] to capture
+the interaction w'x plus linear effects).
 """
 function build_period_models(state::ModelState, lambda::Float64)::PeriodModels
     # Firm models: q ≈ beta'w + c
@@ -80,11 +81,13 @@ function build_period_models(state::ModelState, lambda::Float64)::PeriodModels
         fit_ridge(@view(firm.history_w[:, 1:n]), @view(firm.history_q[1:n]), lambda)
     end for firm in state.firms]
 
-    # Broker model: q ≈ beta'[w; x] + c
+    # Broker model: q ≈ beta'[w; x; w.*x] + c
     broker = state.broker
     n_b = effective_history_size(broker)
-    WX = vcat(@view(broker.history_w[:, 1:n_b]), @view(broker.history_x[:, 1:n_b]))
-    broker_model = fit_ridge(WX, @view(broker.history_q[1:n_b]), lambda)
+    W = @view(broker.history_w[:, 1:n_b])
+    X = @view(broker.history_x[:, 1:n_b])
+    WXI = vcat(W, X, W .* X)
+    broker_model = fit_ridge(WXI, @view(broker.history_q[1:n_b]), lambda)
 
     return PeriodModels(firm_models, broker_model)
 end

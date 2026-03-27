@@ -42,8 +42,8 @@ using StableRNGs: StableRNG
 
         @test new_firm.id == old_next_id
         @test state.next_firm_id == old_next_id + 1
-        @test 3 <= length(new_firm.employees) <= 5
-        @test 3 <= new_firm.history_count <= 5  # seeded from initial hires
+        @test 6 <= length(new_firm.employees) <= 10
+        @test 6 <= new_firm.history_count <= 10  # seeded from initial hires
         @test new_firm.satisfaction_internal == state.cal.q_pub
         @test new_firm.satisfaction_broker == state.cal.q_pub
         @test new_firm.tried_internal == false

@@ -37,8 +37,8 @@ using Graphs: nv, is_connected
         @test all(length(f.type) == params.d for f in state.firms)
     end
 
-    @testset "initial employment: 3-5 per firm, no double-counting" begin
-        @test all(3 <= length(f.employees) <= 5 for f in state.firms)
+    @testset "initial employment: 6-10 per firm, no double-counting" begin
+        @test all(6 <= length(f.employees) <= 10 for f in state.firms)
         all_employed = reduce(union, (f.employees for f in state.firms))
         total_assigned = sum(length(f.employees) for f in state.firms)
         @test length(all_employed) == total_assigned
@@ -73,13 +73,13 @@ using Graphs: nv, is_connected
         @test size(state.broker.history_x) == (params.d, 5000)
         @test length(state.broker.history_q) == 5000
         @test length(state.broker.history_firm_idx) == 5000
-        @test state.broker.history_count == 5  # seeded from 5 random initial matches
+        @test state.broker.history_count == 10  # seeded from 10 random initial matches
     end
 
     @testset "firm history and satisfaction" begin
         @test all(size(f.history_w) == (params.d, 200) for f in state.firms)
         @test all(length(f.history_q) == 200 for f in state.firms)
-        @test all(3 <= f.history_count <= 5 for f in state.firms)
+        @test all(6 <= f.history_count <= 10 for f in state.firms)
         @test all(f.satisfaction_internal == state.cal.q_pub for f in state.firms)
         @test all(f.satisfaction_broker == state.cal.q_pub for f in state.firms)
     end

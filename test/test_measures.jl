@@ -6,7 +6,7 @@ using Graphs: SimpleGraph, add_edge!, star_graph, nv, ne, watts_strogatz, betwee
 
     # Combined graph has correct node count and edge structure
     @testset "build_combined_graph structure" begin
-        params = default_params(d=4, N_W=50, N_F=5)
+        params = default_params(d=4, N_W=200, N_F=5)
         state = initialize_model(params)
         G, broker_node = build_combined_graph(state)
 
@@ -136,7 +136,7 @@ using Graphs: SimpleGraph, add_edge!, star_graph, nv, ne, watts_strogatz, betwee
         end
 
         # Combined graph from actual model state
-        params = default_params(d=4, N_W=50, N_F=5)
+        params = default_params(d=4, N_W=200, N_F=5)
         state = initialize_model(params)
         G3, broker_node = build_combined_graph(state)
         ref3 = betweenness_centrality(G3)
@@ -149,7 +149,7 @@ using Graphs: SimpleGraph, add_edge!, star_graph, nv, ne, watts_strogatz, betwee
 
     # update_cached_network_measures! produces finite non-zero values
     @testset "update_cached_network_measures!" begin
-        params = default_params(d=4, N_W=50, N_F=5)
+        params = default_params(d=4, N_W=200, N_F=5)
         state = initialize_model(params)
         # Run a few periods to build some history
         for _ in 1:5

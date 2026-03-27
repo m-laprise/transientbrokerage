@@ -143,11 +143,16 @@ Base.@kwdef mutable struct PeriodAccumulators
     access_count::Int = 0
     assessment_count::Int = 0
     outsourcing_rate::Float64 = 0.0
-    # Prediction/outcome pairs for R-squared computation
+    # Prediction/outcome pairs from actual matches (subject to selection bias)
     firm_predicted::Vector{Float64} = Float64[]
     firm_realized::Vector{Float64} = Float64[]
     broker_predicted::Vector{Float64} = Float64[]
     broker_realized::Vector{Float64} = Float64[]
+    # Holdout prediction/outcome pairs (random workers, no selection, noiseless truth)
+    firm_holdout_pred::Vector{Float64} = Float64[]
+    firm_holdout_real::Vector{Float64} = Float64[]
+    broker_holdout_pred::Vector{Float64} = Float64[]
+    broker_holdout_real::Vector{Float64} = Float64[]
     # Revenue accumulators
     placement_revenue::Float64 = 0.0         # Π_b from placement fees this period
     staffing_revenue::Float64 = 0.0          # Π_b from staffing profit this period
@@ -175,6 +180,10 @@ function reset_accumulators!(a::PeriodAccumulators)
     empty!(a.firm_realized)
     empty!(a.broker_predicted)
     empty!(a.broker_realized)
+    empty!(a.firm_holdout_pred)
+    empty!(a.firm_holdout_real)
+    empty!(a.broker_holdout_pred)
+    empty!(a.broker_holdout_real)
     a.placement_revenue = 0.0
     a.staffing_revenue = 0.0
     # cumulative fields are NOT reset

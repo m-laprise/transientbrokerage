@@ -14,18 +14,19 @@ using TransientBrokerage
 
     # Frozen values: (matches, broker_history_count, broker_pool_size, next_firm_id)
     # Generated with --check-bounds=yes (Pkg.test default)
-    # d=4, ridge regression, firm+broker history seeded at init
+    # N_F=50, p_vac=0.50, 6-10 initial workers, broker seeded with 10
+    # Holdout evaluation in step.jl consumes RNG for random worker draws
     expected = [
-        (31, 27, 200, 107),  # period 1
-        (23, 29, 200, 110),  # period 2
-        (35, 30, 200, 118),  # period 3
-        (27, 38, 200, 122),  # period 4
-        (16, 40, 200, 124),  # period 5
-        (15, 42, 200, 126),  # period 6
-        (9,  43, 200, 132),  # period 7
-        (24, 45, 200, 137),  # period 8
-        (19, 46, 200, 144),  # period 9
-        (12, 48, 200, 150),  # period 10
+        (22, 19, 200, 54),  # period 1
+        (29, 25, 200, 56),  # period 2
+        (20, 36, 200, 57),  # period 3
+        (27, 48, 200, 58),  # period 4
+        (25, 70, 200, 62),  # period 5
+        (20, 84, 200, 63),  # period 6
+        (21, 94, 200, 64),  # period 7
+        (19, 109, 200, 68),  # period 8
+        (26, 123, 200, 70),  # period 9
+        (25, 137, 200, 73),  # period 10
     ]
 
     for (t, (exp_matches, exp_hist, exp_pool, exp_next_id)) in enumerate(expected)

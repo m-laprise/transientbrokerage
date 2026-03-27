@@ -102,7 +102,7 @@ Workers are connected through a fixed social network $G_S$ (§4) that channels r
 
 #### Firms
 
-There are $N_F$ firms (default 100). Each firm $j$ is characterized by:
+There are $N_F$ firms (default 50). Each firm $j$ is characterized by:
 
 - **Type** $x_j \in \mathbb{R}^d$: a fixed vector of observable characteristics assigned at initialization. Types determine productive compatibility with workers through the matching function (§1).
   - Firm types are sampled along a smooth 1D curve embedded in $\mathbb{R}^d$: each dimension $k$ follows $x_k(t) = 2 \sin(2\pi f_k t + \phi_k) + \epsilon_k$ where $t \in [0, 1]$ is evenly spaced across firms, $f_k \in [1, 3]$ and $\phi_k \in [0, 2\pi]$ are random per-dimension parameters, and $\epsilon_k \sim N(0, 0.04)$ adds small perturbation. Clipped to $[-3, 3]^d$. Nearby firms on the curve have similar types; distant firms are dissimilar. The curve parameters are stored and reused for entrant firms (§4).
@@ -218,7 +218,7 @@ Both firms and the broker learn from experience using ridge regression, fitted e
 
 #### 2a. Firm $j$'s prediction
 
-A firm's history $\mathcal{H}_j^t = \{(w_m, q_{mj})\}_{m=1}^{n_j}$ records the workers the firm has directly employed and their realized match outputs. Histories are seeded at initialization: each firm's 3-5 initial employees produce observed match outputs that are recorded immediately (§12c). Firms therefore always have at least 3 observations.
+A firm's history $\mathcal{H}_j^t = \{(w_m, q_{mj})\}_{m=1}^{n_j}$ records the workers the firm has directly employed and their realized match outputs. Histories are seeded at initialization: each firm's 6-10 initial employees produce observed match outputs that are recorded immediately (§12c). Firms therefore always have at least 6 observations.
 
 Firm $j$ knows its own type $x_j$. For a fixed firm, $f(w, x_j) = \mu(w) + w^\top x_j + \varepsilon$ is the sum of a nonlinear function $\mu(w)$ and a linear function $w^\top x_j$. The firm fits a ridge regression model on its history:
 
@@ -232,23 +232,25 @@ The linear model captures the interaction component $w^\top x_j$ well (it is exa
 
 The broker's history $\mathcal{H}_b^t = \{(w_m, x_m, q_m)\}_{m=1}^{n_b}$ records all placements the broker has mediated across all client firms and their realized match outputs. The broker's history is seeded at initialization with 5 random observations from existing worker-firm matches (§12c).
 
-Unlike a firm, the broker observes the same worker types producing different outcomes at different firms, and different worker types at the same firm. The broker fits a single pooled ridge regression on concatenated worker and firm type features:
+Unlike a firm, the broker observes the same worker types producing different outcomes at different firms, and different worker types at the same firm. The broker fits a single pooled ridge regression on concatenated worker type, firm type, and elementwise interaction features:
 
-$$\hat{q}_b(w', x_j) = \hat{\beta}_w^\top w' + \hat{\beta}_x^\top x_j + \hat{c}_b$$
+$$\hat{q}_b(w', x_j) = \hat{\beta}_w^\top w' + \hat{\beta}_x^\top x_j + \hat{\beta}_{wx}^\top (w' \odot x_j) + \hat{c}_b$$
 
-where $[\hat{\beta}_w; \hat{\beta}_x; \hat{c}_b]$ are fitted on $\{([w_m; x_m], q_m)\}$ with regularization $\lambda$. The model dimension is $2d$ (worker type features plus firm type features), refitted each period.
+where $[\hat{\beta}_w; \hat{\beta}_x; \hat{\beta}_{wx}; \hat{c}_b]$ are fitted on $\{([w_m; x_m; w_m \odot x_m], q_m)\}$ with regularization $\lambda$. The feature vector is $[w; x; w \odot x]$, where $\odot$ denotes elementwise multiplication, giving $3d$ features total. The interaction features $w \odot x$ allow the model to capture the bilinear interaction $w^\top x$ that drives the match-specific component (§1c), while the separate $w$ and $x$ blocks capture linear main effects. Refitted each period.
 
-The broker's pooled model has two advantages over the firm's model:
+The broker's pooled model has three advantages over the firm's model:
 
 1. **More data.** The broker accumulates observations across all client firms, giving it far more data points than any individual firm. With $n_b \gg n_j$, the broker's coefficient estimates have lower variance.
 
 2. **Richer features.** By including both $w$ and $x$ as features, the broker's model captures how worker-firm interactions vary across firms. The coefficient $\hat{\beta}_x$ estimates how firm characteristics affect match output — information no individual firm can learn from its own-hire data alone.
 
+3. **Interaction features.** The elementwise products $w \odot x$ give the broker's linear model the capacity to learn the bilinear interaction $w^\top x$ directly, rather than relying on the linear terms alone. A firm does not need these features (its type $x_j$ is fixed, so $w^\top x_j$ is already linear in $w$), but the broker, fitting across firms with varying $x$, benefits from explicitly representing the worker-firm interaction.
+
 #### 2c. The asymmetry between firms and the broker
 
 The firm learns "what kind of worker works well here" from a small, firm-specific sample. It cannot distinguish general quality from firm-specific fit.
 
-The broker learns "what kind of worker works well, and at which kind of firm" from a large cross-market sample. Its richer feature set ($[w; x]$) and larger data volume produce better predictions, especially at higher $d$ where individual firms cannot estimate $d+1$ regression parameters from their sparse histories.
+The broker learns "what kind of worker works well, and at which kind of firm" from a large cross-market sample. Its richer feature set ($[w; x; w \odot x]$, with $3d$ features) and larger data volume produce better predictions, especially at higher $d$ where individual firms cannot estimate $d+1$ regression parameters from their sparse histories.
 
 As firm $j$ accumulates more hires, its regression estimates improve and the broker's data advantage narrows. The broker's advantage is largest when firms have few observations and $d$ is high (more parameters to estimate from limited data).
 
@@ -256,7 +258,7 @@ As firm $j$ accumulates more hires, its regression estimates improve and the bro
 
 A constant, scalar **public benchmark** $\bar{q}_{\text{pub}} = E[f(w,x)]$ is computed once at initialization from a Monte Carlo sample of clustered worker-firm pairs (matching the initialization distribution; §12c). This is the unconditional mean match output.
 
-The benchmark initializes satisfaction indices (§6a) and broker reputation (§6b). It is not used as a prediction fallback — firms and the broker are always seeded with enough history to fit a regression model from period 1.
+The benchmark initializes satisfaction indices (§6a) and broker reputation (§6b).
 
 ### 3. Wage Determination
 
@@ -317,13 +319,13 @@ The broker maintains a **pool** $\text{Pool}^t$ of workers it can propose for ma
 
 **Firm turnover**. Firms exit independently each period with probability $\eta$ (the entry/exit rate; default 0.05), yielding an expected firm lifetime of 20 quarters (5 years), consistent with U.S. establishment survival rates (Knaup, 2005; Bureau of Labor Statistics, 2024b).
 
-Exiting firms are replaced by entrants with fresh types sampled from the firm curve at a random position $t \sim U[0,1]$, an initial workforce of 3–5 employees sampled by type-proximity (seeding their referral network), and empty experience histories.
+Exiting firms are replaced by entrants with fresh types sampled from the firm curve at a random position $t \sim U[0,1]$, an initial workforce of 6–10 employees sampled by type-proximity (seeding their referral network), and empty experience histories.
 
 The worker population $N_W$ is fixed for the duration of the simulation: workers change status (available or employed) but never enter or leave the population. When a firm exits, its workers return to the available pool, retaining their positions in $G_S$.
 
 ### 5. Search
 
-Each firm without an open vacancy generates one with probability $p_{\text{vac}}$ per period. A vacancy that goes unfilled persists to the next period; the firm does not draw a new vacancy while one is already open. This keeps firm history growth tractable and ensures the outsourcing decision is made at most once per firm per period. The default $p_{\text{vac}} = 0.30$ produces approximately 30 vacancies per period across 100 firms, ensuring sufficient hiring activity for regression learning.
+Each firm without an open vacancy generates one with probability $p_{\text{vac}}$ per period. A vacancy that goes unfilled persists to the next period; the firm does not draw a new vacancy while one is already open. This keeps firm history growth tractable and ensures the outsourcing decision is made at most once per firm per period. The default $p_{\text{vac}} = 0.50$ produces approximately 25 vacancies per period across 50 firms, ensuring sufficient hiring activity for regression learning.
 
 A firm with a vacancy fills it either through internal search (§5a) or by outsourcing to the broker (§5b); the choice between the two channels is governed by a satisfaction-based decision rule described in §6. 
 
@@ -529,7 +531,7 @@ Each period proceeds through six steps. The pseudocode below specifies the exact
 > 5.1. &emsp;for each firm $j$:
 > &emsp;&emsp;With probability $\eta$: firm exits
 > &emsp;&emsp;&emsp;All employees of $j$ return to available pool
-> &emsp;&emsp;&emsp;Firm $j$ is replaced by entrant $j'$ with: fresh type $x_{j'}$ sampled from firm curve at random $t \sim U[0,1]$; initial workforce drawn from $\{3,4,5\}$ uniformly, preferring type-proximity to $x_{j'}$; empty history $\mathcal{H}_{j'} = \emptyset$; all satisfaction indices initialized at $\bar{q}\_\text{pub}$
+> &emsp;&emsp;&emsp;Firm $j$ is replaced by entrant $j'$ with: fresh type $x_{j'}$ sampled from firm curve at random $t \sim U[0,1]$; initial workforce drawn from $\{6,7,8,9,10\}$ uniformly, preferring type-proximity to $x_{j'}$; empty history $\mathcal{H}_{j'} = \emptyset$; all satisfaction indices initialized at $\bar{q}\_\text{pub}$
 >
 > **6. NETWORK MEASURES** (computed every $M$ periods, default $M = 10$):
 > 6.1. &emsp;Construct combined graph (§4):
@@ -567,30 +569,29 @@ where $p_{bj}$ is the proportion of the broker's ties invested in node $j$. Low 
 
 **Effective size.** The number of non-redundant contacts in the broker's ego network (Burt, 1992): $\text{ES}_b = |N(b)| - \sum_j p_{bj} \sum_{q \neq b} p_{bq}\, m_{jq}$ where $m_{jq} = 1$ if $j$ and $q$ are connected.
 
-**Broker prediction quality.** Three measures are computed over a rolling window of the last 50 brokered placements (or all placements if fewer than 50 have occurred). The 50-placement window is long enough for stable estimates but short enough to reflect recent prediction quality as the broker's data accumulates. The same measures are computed for each firm over its last 50 direct hires, enabling firm-vs-broker comparisons.
+**Prediction quality: selected-sample vs. holdout evaluation.** Prediction quality is evaluated in two distinct ways that measure different things. Understanding the distinction is important because agents select candidates based on noisy predictions, which introduces a systematic winner's curse (selection bias) into the selected-sample metrics.
 
-- *$R^2$* $= 1 - \text{MSE}/\text{Var}(q)$, where $\text{MSE} = \frac{1}{n}\sum(\hat{q} - q)^2$ and $\text{Var}(q)$ is the variance of realized output in the window. The primary measure of prediction quality. Bridges directly to the analytic benchmark (§13b), which derives convergence rates in MSE. $R^2 = 1$ is perfect prediction; $R^2 = 0$ means no better than predicting the population mean; $R^2 < 0$ means worse than the mean.
+**Winner's curse / selection bias.** Both firms and the broker hire the candidate with the highest *predicted* match quality from their candidate pool ($\arg\max_i \hat{q}_{ij}$). When predictions are noisy, the selected candidate's prediction $\hat{q}_{i^*j}$ is systematically inflated relative to the true match quality $f(w_{i^*}, x_j)$, because the selection picks up positive noise realizations. This is the classic winner's curse: the winning bid in an auction overestimates the item's value. In the model, this bias is economically real. Wages are set from predicted surplus (§3a), so the winner's curse inflates wages relative to realized productivity, reducing the firm's realized profit margin. It is not merely a measurement artifact: it affects the economics of every hire through the surplus-sharing wage formula.
 
-- *Bias* $= \frac{1}{n}\sum(\hat{q} - q)$. Tracks systematic over- or underprediction. Positive bias means the agent overestimates match quality, which inflates bill rates (§9c) and drives the recognition gap (§7a). $R^2$ can be high while bias is large if predictions track the shape of $f$ but are shifted.
+**Holdout $R^2$ (model quality).** Each period, a sample of random available workers is evaluated against each firm (and by the broker against a random firm) using noiseless true match quality $f(w, x)$ as the target. These workers are *not* selected by the agent's model. They are drawn at random, so the evaluation is free of selection bias. Holdout $R^2$ measures pure model quality: how well the agent's regression model approximates the true matching function. It is the cleanest measure of informational advantage because it is uncontaminated by the winner's curse or by variation in candidate pool composition.
 
-- *Rank correlation* (Spearman's $\rho_S$). Measures whether the agent ranks candidates correctly, independent of level or scale. This is the measure most relevant to allocation quality: the greedy heuristic (§5b) only needs the ordering to be correct. High rank correlation with low $R^2$ indicates good candidate selection but miscalibrated pricing.
+**Selected-sample metrics.** Three metrics are computed over a rolling window of the last 50 actual hires (brokered placements for the broker, direct hires for firms):
 
-The three measures decompose prediction quality into components that map to distinct model mechanisms:
+- *Selected $R^2$* $= 1 - \text{MSE}/\text{Var}(q)$, where $\text{MSE} = \frac{1}{n}\sum(\hat{q} - q)^2$ and $\text{Var}(q)$ is the variance of realized output in the window. Because hired workers are those with the highest predictions, this sample is subject to the winner's curse: predictions are systematically inflated relative to outcomes, depressing $R^2$ and inflating bias. Selected $R^2$ measures **wage accuracy** — how well the prediction used for wage-setting matches the realized outcome. It is the metric most relevant to the economics of the firm's profit margin.
 
-| $R^2$ | Bias | Rank corr. | Interpretation |
-|-------|------|------------|----------------|
-| High | Low | High | Good predictions overall |
-| High | High | High | Tracks shape of $f$ but shifted; bill rates systematically off |
-| Low | Low | High | Ranks correctly but noisy; allocation good, pricing noisy |
-| Low | High | Low | Poor predictions; early-period regime |
+- *Bias* $= \frac{1}{n}\sum(\hat{q} - q)$. Tracks systematic over- or underprediction. Positive bias is expected in the selected sample due to the winner's curse: the agent selects candidates whose predictions benefited from positive noise. This bias inflates wages (through the surplus-sharing formula, §3a) and drives the recognition gap (§7a). $R^2$ can be high while bias is large if predictions track the shape of $f$ but are shifted.
 
-**Prediction quality.** Prediction accuracy is tracked via (predicted, realized) outcome pairs accumulated each period. Three metrics are computed over a rolling window:
+- *Selected rank correlation* (Spearman's $\rho_S$). Measures whether the agent ranks hired candidates correctly by realized output, independent of level or scale. This is the measure most relevant to **hiring decision quality**: did the agent pick the right candidates from the pool? The rank correlation is less affected by the winner's curse than $R^2$ because it is invariant to monotone transformations of the prediction scale. High rank correlation with low $R^2$ indicates good candidate selection but miscalibrated pricing.
 
-- *R-squared* ($R^2 = 1 - \text{MSE}/\text{Var}(\text{realized})$). Overall prediction accuracy. Positive means the model predicts better than the unconditional mean.
-- *Bias* ($\bar{e} = \text{mean}(\hat{q} - q)$). Systematic over- or under-prediction.
-- *Rank correlation* (Spearman's $\rho_S$). Whether the agent ranks candidates correctly. Most relevant to allocation quality: the greedy heuristic (§5b) only needs the ordering to be correct.
+**Summary of the three prediction quality metrics:**
 
-The broker-firm gap in R-squared and rank correlation makes the informational advantage visible. Under Model 1 staffing, prediction quality should stop improving for locked-in firms whose histories freeze (§9f).
+| Metric | What it measures | Selection bias? | Primary use |
+|--------|-----------------|-----------------|-------------|
+| Holdout $R^2$ | Model quality (approximation of $f$) | None (random sample, noiseless truth) | Informational advantage |
+| Selected rank correlation | Hiring decision quality (correct ordering) | Mild (order is more robust than level) | Allocation effectiveness |
+| Selected $R^2$ | Wage accuracy (prediction vs. realized outcome) | Strong (winner's curse inflates predictions) | Profit margin, surplus sharing |
+
+The broker-firm gap in holdout $R^2$ is the purest measure of the informational advantage. The gap in selected rank correlation shows whether the advantage translates into better hiring decisions. The gap in selected $R^2$ shows whether it affects wage accuracy. Under Model 1 staffing, prediction quality should stop improving for locked-in firms whose histories freeze (§9f).
 
 **Access vs. assessment decomposition.** For each brokered placement, record whether worker $i^*$ was in $R_j^t$ (the client firm's referral pool, computed at step 0). If yes: assessment value (the firm could have found this worker but the broker predicted match output better). If no: access value (the firm could not have found this worker through its own network).
 
@@ -871,7 +872,7 @@ Parameters are organized into five categories reflecting their role in the analy
 | $k_S$ | Social network mean degree | 6 | Fixed network topology parameter (§4) | Base |
 | $p_{\text{rewire}}$ | Social network rewiring | 0.1 | Fixed network topology parameter (§4) | Base |
 | $\omega$ | Satisfaction recency weight (§6a) | 0.3 | Fixed; standard EWMA weight | Base |
-| $p_{\text{vac}}$ | Per-period vacancy probability (§5) | 0.30 | ~30 vacancies/period across 100 firms | Base |
+| $p_{\text{vac}}$ | Per-period vacancy probability (§5) | 0.50 | ~25 vacancies/period across 50 firms | Base |
 | $L$ | Fee amortization period | 4 | Expected useful duration of a hire for per-period cost comparisons (§6a). M1 reuses as staffing assignment length (§9). | Base |
 
 **Calibration parameters.** Set during model development to ensure the DGP is well-behaved across the parameter space. Constant in production runs.
@@ -906,7 +907,7 @@ In the table, $\bar{f}$ denotes the mean absolute match output $E[|f(w,x)|]$, co
 | Symbol | Meaning | Default | Scale check | Model |
 |--------|---------|---------|-------------|-------|
 | $N_W$ | Worker population | 1000 | {500, 1000, 2000} | Base |
-| $N_F$ | Firm population | 100 | {50, 100, 200} | Base |
+| $N_F$ | Firm population | 50 | {25, 50, 100} | Base |
 | $T$ | Simulation length (periods) | 200 | {100, 200, 400} | Base |
 | $T_{\text{burn}}$ | Burn-in periods (discarded) | 20 | — | Base |
 | $M$ | Network measure interval | 10 | — | Base |

@@ -45,27 +45,32 @@ function rolling_prediction_quality(rp::RollingPairs)::PredictionQuality
 end
 
 """
-    collect_period_metrics(state, firm_rolling, broker_rolling) -> NamedTuple
+    collect_period_metrics(state, firm_rolling, broker_rolling, firm_holdout_rolling, broker_holdout_rolling) -> NamedTuple
 
 Extract one row of metrics from the current state after `step_period!`.
-Includes both per-period and rolling-window R-squared.
+Selected-sample metrics reflect prediction quality on actual matches (subject to winner's curse).
+Holdout metrics reflect model quality on random workers with noiseless truth (no selection bias).
 """
 function collect_period_metrics(state::ModelState,
                                 firm_rolling::RollingPairs,
-                                broker_rolling::RollingPairs)
+                                broker_rolling::RollingPairs,
+                                firm_holdout_rolling::RollingPairs,
+                                broker_holdout_rolling::RollingPairs)
     a = state.accum
     b = state.broker
     cn = state.cached_network
 
-    # Per-period R-squared
-    firm_pq = compute_prediction_quality(a.firm_predicted, a.firm_realized)
-    broker_pq = compute_prediction_quality(a.broker_predicted, a.broker_realized)
-
-    # Accumulate into rolling buffers
+    # Selected-sample rolling metrics
     push_period!(firm_rolling, a.firm_predicted, a.firm_realized)
     push_period!(broker_rolling, a.broker_predicted, a.broker_realized)
     firm_rpq = rolling_prediction_quality(firm_rolling)
     broker_rpq = rolling_prediction_quality(broker_rolling)
+
+    # Holdout rolling metrics
+    push_period!(firm_holdout_rolling, a.firm_holdout_pred, a.firm_holdout_real)
+    push_period!(broker_holdout_rolling, a.broker_holdout_pred, a.broker_holdout_real)
+    firm_hpq = rolling_prediction_quality(firm_holdout_rolling)
+    broker_hpq = rolling_prediction_quality(broker_holdout_rolling)
 
     return (
         period = state.period,
@@ -89,14 +94,27 @@ function collect_period_metrics(state::ModelState,
         cumulative_placement_revenue = a.cumulative_placement_revenue,
         access_count = a.access_count,
         assessment_count = a.assessment_count,
-        firm_r_squared = firm_pq.r_squared,
-        broker_r_squared = broker_pq.r_squared,
+        # Selected-sample metrics (actual matches, subject to winner's curse)
         firm_r_squared_rolling = firm_rpq.r_squared,
         broker_r_squared_rolling = broker_rpq.r_squared,
         firm_bias_rolling = firm_rpq.bias,
         broker_bias_rolling = broker_rpq.bias,
         firm_rank_corr_rolling = firm_rpq.rank_corr,
         broker_rank_corr_rolling = broker_rpq.rank_corr,
+        # Holdout metrics (random workers, noiseless truth, no selection bias)
+        firm_r_squared_holdout = firm_hpq.r_squared,
+        broker_r_squared_holdout = broker_hpq.r_squared,
+        firm_bias_holdout = firm_hpq.bias,
+        broker_bias_holdout = broker_hpq.bias,
+        firm_rank_corr_holdout = firm_hpq.rank_corr,
+        broker_rank_corr_holdout = broker_hpq.rank_corr,
+        # Broker-firm gaps (broker minus firm; positive = broker advantage)
+        gap_r_squared_holdout = broker_hpq.r_squared - firm_hpq.r_squared,
+        gap_rank_corr_selected = broker_rpq.rank_corr - firm_rpq.rank_corr,
+        gap_r_squared_selected = broker_rpq.r_squared - firm_rpq.r_squared,
+        # Market state
+        n_available = count(w -> w.status == available, state.workers),
+        avg_firm_size = mean(length(f.employees) for f in state.firms),
     )
 end
 
@@ -117,17 +135,21 @@ function run_simulation(params::ModelParams; verify::Bool = false,
 
     firm_rolling = RollingPairs(r_squared_window)
     broker_rolling = RollingPairs(r_squared_window)
+    firm_holdout_rolling = RollingPairs(r_squared_window)
+    broker_holdout_rolling = RollingPairs(r_squared_window)
 
     step_period!(state)
     verify && verify_invariants(state)
-    first_row = collect_period_metrics(state, firm_rolling, broker_rolling)
+    first_row = collect_period_metrics(state, firm_rolling, broker_rolling,
+                                       firm_holdout_rolling, broker_holdout_rolling)
     rows = Vector{typeof(first_row)}(undef, T)
     rows[1] = first_row
 
     for t in 2:T
         step_period!(state)
         verify && verify_invariants(state)
-        rows[t] = collect_period_metrics(state, firm_rolling, broker_rolling)
+        rows[t] = collect_period_metrics(state, firm_rolling, broker_rolling,
+                                          firm_holdout_rolling, broker_holdout_rolling)
     end
 
     mdf = DataFrame(rows)

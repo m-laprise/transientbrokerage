@@ -25,10 +25,13 @@ using DataFrames: DataFrame, nrow, names, eltype
                          :effective_size, :placement_revenue,
                          :cumulative_placement_revenue,
                          :access_count, :assessment_count,
-                         :firm_r_squared, :broker_r_squared,
                          :firm_r_squared_rolling, :broker_r_squared_rolling,
                          :firm_bias_rolling, :broker_bias_rolling,
-                         :firm_rank_corr_rolling, :broker_rank_corr_rolling]
+                         :firm_rank_corr_rolling, :broker_rank_corr_rolling,
+                         :firm_r_squared_holdout, :broker_r_squared_holdout,
+                         :firm_bias_holdout, :broker_bias_holdout,
+                         :firm_rank_corr_holdout, :broker_rank_corr_holdout,
+                         :n_available, :avg_firm_size]
         @test all(col in Symbol.(names(mdf)) for col in expected_cols)
     end
 
@@ -54,12 +57,13 @@ using DataFrames: DataFrame, nrow, names, eltype
         @test all(isfinite.(mdf.effective_size[M:end]))
     end
 
-    # R-squared is NaN early (few matches), eventually finite
-    @testset "R-squared becomes finite" begin
+    # Holdout R-squared should be finite after a few periods
+    @testset "holdout R-squared becomes finite" begin
         _, mdf = run_simulation(params)
-        # Firm R-squared should be finite for at least some periods after burn-in
-        post_burn = mdf.firm_r_squared[params.T_burn+1:end]
+        post_burn = mdf.firm_r_squared_holdout[params.T_burn+1:end]
         @test any(isfinite.(post_burn))
+        post_burn_b = mdf.broker_r_squared_holdout[params.T_burn+1:end]
+        @test any(isfinite.(post_burn_b))
     end
 
     # Outsourcing rate always in [0, 1]

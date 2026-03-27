@@ -146,7 +146,7 @@ using StableRNGs: StableRNG
         # Entrant firms start with seeded history from initial hires
         entrants = [f for f in state.firms if f.id > params.N_F && f.hire_count == 0]
         if !isempty(entrants)
-            @test all(3 <= f.history_count <= 5 for f in entrants)
+            @test all(6 <= f.history_count <= 10 for f in entrants)
         end
     end
 
