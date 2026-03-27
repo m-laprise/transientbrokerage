@@ -17,15 +17,18 @@ end
 """
     generate_matching_function(d, s, rho, K_mu, rng) -> MatchingEnv
 
-Build a rank-s interaction matrix A, orthogonal projection P, and RBF-based
-general quality function mu with variance calibrated so Var(mu)/Var(f) = rho.
+Build a diagonal rank-s interaction matrix A, orthogonal projection P, and
+RBF-based general quality function mu with variance calibrated so
+Var(mu)/Var(f) = rho. A = I_d[:,1:s] * I_d[:,1:s]' so the interaction
+reduces to w[1:s]'x[1:s] (first s dimensions interact directly).
 """
 function generate_matching_function(d::Int, s::Int, rho::Float64,
                                      K_mu::Int, rng::AbstractRNG)
-    # Interaction matrix A = UV' of rank s
-    U = Matrix(qr(randn(rng, d, s) ./ sqrt(d)).Q)[:, 1:s]
-    V = Matrix(qr(randn(rng, d, s) ./ sqrt(d)).Q)[:, 1:s]
-    A = U * V'
+    # Interaction matrix A: diagonal, rank s.
+    # U = V = first s coordinate axes, so A[i,i] = 1 for i <= s, 0 elsewhere.
+    U = zeros(d, s)
+    for i in 1:s; U[i, i] = 1.0; end
+    A = U * U'
 
     # Projection P ∈ R^{s×d}, rows orthonormal and ⊥ colspan(U)
     P_raw = randn(rng, s, d)
@@ -35,9 +38,9 @@ function generate_matching_function(d::Int, s::Int, rho::Float64,
     P = Matrix(qr(P_raw').Q)'[1:s, :]
     @assert norm(P * U) < 1e-10 "P must be orthogonal to U"
 
-    # RBF centers (s × K_mu, columns) and raw weights
+    # RBF centers (s × K_mu, columns) and non-negative raw weights (squared for mu >= 0)
     mu_centers = randn(rng, s, K_mu)
-    mu_weights_raw = randn(rng, K_mu)
+    mu_weights_raw = randn(rng, K_mu) .^ 2
 
     # Project MC worker samples for bandwidth and variance calibration
     n_cal = 10_000
@@ -93,8 +96,8 @@ end
 """
     eval_mu!(z, w, env) -> Float64
 
-General worker quality mu(w) = sum_l a_l * exp(- ||Pw - c_l||^2 / 2h^2).
-Writes the projection Pw into `z` (pre-allocated s-vector).
+Non-negative general worker quality mu(w) = sum_l a_l * exp(- ||Pw - c_l||^2 / 2h^2),
+where all a_l >= 0. Writes the projection Pw into `z` (pre-allocated s-vector).
 """
 function eval_mu!(z::AbstractVector, w::AbstractVector, env::MatchingEnv)::Float64
     mul!(z, env.P, w)
@@ -127,8 +130,8 @@ end
     match_output_noiseless!(z, Ax, w, x, env) -> Float64
 
 Deterministic match output mu(w) + w'Ax, without noise.
-Used by `calibrate_output_scale` to compute E[ |f| ] from Monte Carlo samples
-without noise contamination. Writes into `z` (s-vector) and `Ax` (d-vector).
+Used by `calibrate_output_scale` to compute E[f] and E[|f|] from Monte Carlo
+samples without noise contamination. Writes into `z` (s-vector) and `Ax` (d-vector).
 """
 function match_output_noiseless!(z::AbstractVector, Ax::AbstractVector,
                                   w::AbstractVector, x::AbstractVector,
@@ -139,21 +142,35 @@ function match_output_noiseless!(z::AbstractVector, Ax::AbstractVector,
 end
 
 """
-    calibrate_output_scale(env, d, rng; n_samples=10_000) -> (f_bar, r_base)
+    calibrate_output_scale(env, d, firm_types, rng; n_samples=10_000) -> (f_bar, f_mean, r_base)
 
-Compute f_bar = E[ |mu(w) + w'Ax| ] and r_base = 0.70 * f_bar from Monte Carlo samples.
+Monte Carlo calibration using clustered worker-firm pairs. Workers are drawn as
+perturbations of randomly selected firm types (sigma_w = 1.0), matching the
+initialization distribution. Returns:
+- f_bar = E[|f|] (output magnitude, used for r_base)
+- f_mean = E[f] (mean output, used for q_pub)
+- r_base = 0.70 * f_bar (reservation wage floor)
 """
-function calibrate_output_scale(env::MatchingEnv, d::Int, rng::AbstractRNG;
-                          n_samples::Int = 10_000)::Tuple{Float64,Float64}
+function calibrate_output_scale(env::MatchingEnv, d::Int,
+                          firm_types::Vector{Vector{Float64}},
+                          rng::AbstractRNG;
+                          n_samples::Int = 10_000)::Tuple{Float64,Float64,Float64}
     s = size(env.P, 1)
-    w, x = Vector{Float64}(undef, d), Vector{Float64}(undef, d)
+    n_firms = length(firm_types)
+    w = Vector{Float64}(undef, d)
     z, Ax = Vector{Float64}(undef, s), Vector{Float64}(undef, d)
-    total = 0.0
+    total_abs = 0.0
+    total_raw = 0.0
     for _ in 1:n_samples
-        randn!(rng, w); clamp!(w, -3.0, 3.0)
-        randn!(rng, x); clamp!(x, -3.0, 3.0)
-        total += abs(match_output_noiseless!(z, Ax, w, x, env))
+        x = firm_types[rand(rng, 1:n_firms)]
+        for k in 1:d
+            w[k] = clamp(x[k] + randn(rng), -3.0, 3.0)
+        end
+        val = match_output_noiseless!(z, Ax, w, x, env)
+        total_abs += abs(val)
+        total_raw += val
     end
-    f_bar = total / n_samples
-    return (f_bar, 0.70 * f_bar)
+    f_bar = total_abs / n_samples
+    f_mean = total_raw / n_samples
+    return (f_bar, f_mean, 0.70 * f_bar)
 end

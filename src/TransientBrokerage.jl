@@ -36,6 +36,7 @@ export default_params, validate_params
 export generate_matching_function, eval_mu!
 export match_output!, match_output_noiseless!, calibrate_output_scale
 export build_social_network, compute_referral_pool!, compute_all_referral_pools!
+export FirmCurve, generate_firm_curve, sample_firm_type, generate_firm_types
 export compute_reservation_wage, create_firm, create_broker
 export sample_by_proximity, assign_initial_employment!, initialize_model
 export predict_firm, predict_broker, build_period_trees

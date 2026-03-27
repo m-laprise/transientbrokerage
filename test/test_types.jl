@@ -112,7 +112,7 @@ using StableRNGs: StableRNG
         @test p.L == 4
         @test p.mu_b == 0.25
         @test p.c_emp_frac == 0.15
-        @test p.p_vac == 0.10
+        @test p.p_vac == 0.20
         @test p.pool_target_frac == 0.20
         @test p.n_candidates_frac == 0.01
         @test p.network_measure_interval == 10

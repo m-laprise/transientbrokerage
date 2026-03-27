@@ -71,7 +71,13 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
     periods = mdfs[1].period
 
     # Supertitle spanning both columns
-    Label(fig[0, 1:2], suptitle; fontsize=18, font=:bold, halign=:center)
+    Label(fig[0, 1:2], suptitle; fontsize=22, font=:bold, halign=:center)
+
+    # Shared axis styling
+    title_fs = 16
+    label_fs = 14
+    tick_fs = 12
+    legend_fs = 13
 
     # Helper: plot all seeds as thin lines, mean as thick
     function plot_metric!(ax, metric_fn; label="", color=COL_INTERNAL)
@@ -84,60 +90,65 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
     end
 
     # Row 1
-    ax1 = Axis(fig[1, 1]; title="Outsourcing Rate", ylabel="Rate")
+    ax1 = Axis(fig[1, 1]; title="Share of vacancies sent to broker", ylabel="Rate",
+               titlesize=title_fs, ylabelsize=label_fs, xticklabelsize=tick_fs, yticklabelsize=tick_fs)
     plot_metric!(ax1, mdf -> mdf.outsourcing_rate)
 
-    ax2 = Axis(fig[1, 2]; title="Prediction Quality (R², rolling)", ylabel="R²")
+    ax2 = Axis(fig[1, 2]; title="Predicted vs realized match quality (R²)", ylabel="R²",
+               titlesize=title_fs, ylabelsize=label_fs, xticklabelsize=tick_fs, yticklabelsize=tick_fs)
     plot_metric!(ax2, mdf -> mdf.broker_r_squared_rolling; label="Broker", color=COL_BROKER)
     plot_metric!(ax2, mdf -> mdf.firm_r_squared_rolling; label="Firm", color=COL_INTERNAL)
-    axislegend(ax2; position=:rb)
+    axislegend(ax2; position=:rb, labelsize=legend_fs)
 
     # Row 2
-    ax3 = Axis(fig[2, 1]; title="Broker Betweenness Centrality", ylabel="Betweenness")
+    ax3 = Axis(fig[2, 1]; title="Broker betweenness in combined network", ylabel="Betweenness",
+               titlesize=title_fs, ylabelsize=label_fs, xticklabelsize=tick_fs, yticklabelsize=tick_fs)
     plot_metric!(ax3, mdf -> mdf.betweenness; color=COL_BROKER)
 
-    ax4 = Axis(fig[2, 2]; title="Mean Match Output by Channel", ylabel="Mean Output")
+    ax4 = Axis(fig[2, 2]; title="Realized output of matches by channel", ylabel="Mean output",
+               titlesize=title_fs, ylabelsize=label_fs, xticklabelsize=tick_fs, yticklabelsize=tick_fs)
     plot_metric!(ax4, mdf -> mdf.q_direct_mean; label="Internal", color=COL_INTERNAL)
     plot_metric!(ax4, mdf -> mdf.q_placed_mean; label="Brokered", color=COL_BROKER)
-    axislegend(ax4; position=:rb)
+    axislegend(ax4; position=:rb, labelsize=legend_fs)
 
     # Row 3
-    ax5 = Axis(fig[3, 1]; title="Access Fraction (brokered matches)", ylabel="Fraction")
+    ax5 = Axis(fig[3, 1]; title="Access share of brokered matches", ylabel="Fraction",
+               titlesize=title_fs, ylabelsize=label_fs, xticklabelsize=tick_fs, yticklabelsize=tick_fs)
     plot_metric!(ax5, access_fraction; color=:darkorange)
 
-    ax6 = Axis(fig[3, 2]; title="Broker Pool & History Size", ylabel="Count")
+    ax6 = Axis(fig[3, 2]; title="Broker pool and history sizes", ylabel="Count",
+               titlesize=title_fs, ylabelsize=label_fs, xticklabelsize=tick_fs, yticklabelsize=tick_fs)
     plot_metric!(ax6, mdf -> Float64.(mdf.broker_pool_size); label="Pool", color=:teal)
     plot_metric!(ax6, mdf -> Float64.(mdf.broker_history_size); label="History", color=:darkorange)
-    axislegend(ax6; position=:rb)
+    axislegend(ax6; position=:rb, labelsize=legend_fs)
 
-    # Row 4: Bias and rank correlation
-    ax7 = Axis(fig[4, 1]; title="Prediction Bias (rolling)", ylabel="Bias")
+    # Row 4
+    ax7 = Axis(fig[4, 1]; title="Prediction bias (predicted minus realized)", ylabel="Bias",
+               titlesize=title_fs, ylabelsize=label_fs, xticklabelsize=tick_fs, yticklabelsize=tick_fs)
     plot_metric!(ax7, mdf -> mdf.broker_bias_rolling; label="Broker", color=COL_BROKER)
     plot_metric!(ax7, mdf -> mdf.firm_bias_rolling; label="Firm", color=COL_INTERNAL)
-    axislegend(ax7; position=:rb)
+    axislegend(ax7; position=:rb, labelsize=legend_fs)
 
-    ax8 = Axis(fig[4, 2]; title="Rank Correlation (rolling)", ylabel="Spearman ρ")
+    ax8 = Axis(fig[4, 2]; title="Rank correlation: predicted vs realized quality", ylabel="Spearman ρ",
+               titlesize=title_fs, ylabelsize=label_fs, xticklabelsize=tick_fs, yticklabelsize=tick_fs)
     plot_metric!(ax8, mdf -> mdf.broker_rank_corr_rolling; label="Broker", color=COL_BROKER)
     plot_metric!(ax8, mdf -> mdf.firm_rank_corr_rolling; label="Firm", color=COL_INTERNAL)
-    axislegend(ax8; position=:rb)
+    axislegend(ax8; position=:rb, labelsize=legend_fs)
 
     # Row 5
-    ax9 = Axis(fig[5, 1]; title="Matches per Period", xlabel="Period", ylabel="Count")
+    ax9 = Axis(fig[5, 1]; title="Matches formed per period by channel", xlabel="Period", ylabel="Count",
+               titlesize=title_fs, ylabelsize=label_fs, xlabelsize=label_fs, xticklabelsize=tick_fs, yticklabelsize=tick_fs)
     plot_metric!(ax9, mdf -> Float64.(mdf.n_direct); label="Internal", color=COL_INTERNAL)
     plot_metric!(ax9, mdf -> Float64.(mdf.n_placed); label="Brokered", color=COL_BROKER)
-    axislegend(ax9; position=:rb)
+    axislegend(ax9; position=:rb, labelsize=legend_fs)
 
-    ax10 = Axis(fig[5, 2]; title="Broker Reputation", xlabel="Period", ylabel="Reputation")
+    ax10 = Axis(fig[5, 2]; title="Broker reputation (mean client satisfaction)", xlabel="Period", ylabel="Reputation",
+                titlesize=title_fs, ylabelsize=label_fs, xlabelsize=label_fs, xticklabelsize=tick_fs, yticklabelsize=tick_fs)
     plot_metric!(ax10, mdf -> mdf.broker_reputation; color=COL_BROKER)
 
-    # Footer: reading guide and interpretation
-    footer = """Thin lines: individual seeds ($n_seeds). Thick line: ensemble mean. Rolling window: $window periods.
-Blue = firm/internal channel. Red = broker channel. Other colors for standalone metrics.
-Key dynamics: Outsourcing rate shows whether firms prefer the broker over internal search. R² measures prediction accuracy \
-(broker's two-stage learning vs firm's single-history). Betweenness captures the broker's structural position in the combined \
-worker-firm-broker network. Access fraction shows what share of brokered matches introduce workers the firm could not have found \
-through its own referral network."""
-    Label(fig[6, 1:2], footer; fontsize=13, color=:gray20, halign=:center)
+    # Footer
+    footer = "Thin lines: individual seeds ($n_seeds). Thick lines: ensemble mean. All time series smoothed with a $window-period rolling window. R² and rank correlation computed over rolling 5-period prediction/outcome pairs. Betweenness recomputed every $(mdfs[1].period[2] <= 10 ? 10 : "M") periods."
+    Label(fig[6, 1:2], footer; fontsize=14, color=:gray15, halign=:center, padding=(20, 20, 0, 0))
 
     save(joinpath(OUTDIR, filename), fig)
     println("  Saved: $filename")

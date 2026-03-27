@@ -17,8 +17,8 @@ using Graphs: nv, is_connected
     @testset "calibration constants are positive" begin
         @test state.cal.r_base > 0
         @test state.cal.f_bar > 0
-        @test state.cal.q_pub > 0
-        @test state.cal.q_pub == state.cal.f_bar
+        @test isfinite(state.cal.q_pub)
+        @test state.cal.q_pub != state.cal.f_bar  # q_pub = E[f], f_bar = E[|f|]
         @test state.cal.r_base ≈ 0.70 * state.cal.f_bar
     end
 

@@ -221,6 +221,13 @@ mutable struct CachedNetworkMeasures
     effective_size::Float64   # Burt's effective size (non-redundant contacts)
 end
 
+"""Smooth 1D curve in R^d for generating firm types. Stored so entrant firms can sample from the same curve."""
+struct FirmCurve
+    freqs::Vector{Float64}     # per-dimension frequencies in [1, 3]
+    phases::Vector{Float64}    # per-dimension phases in [0, 2π]
+    amplitude::Float64         # sinusoid amplitude (default 2.0)
+end
+
 """Complete simulation state: all agents, network, environment, and accumulators."""
 Base.@kwdef mutable struct ModelState
     params::ModelParams
@@ -228,6 +235,7 @@ Base.@kwdef mutable struct ModelState
     period::Int = 0
     env::MatchingEnv
     cal::CalibrationConstants
+    firm_curve::FirmCurve
     workers::Vector{Worker}
     firms::Vector{Firm}
     broker::Broker                # single broker (v9 simplification)

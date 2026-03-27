@@ -18,17 +18,23 @@ end
 """
     _knn_predict!(cache, qs, k_eff, fallback) -> PredictionResult
 
-Gaussian-weighted k-NN prediction from preallocated cache buffers.
+Adaptive-bandwidth Gaussian-weighted k-NN prediction. Uses the k-th neighbor
+distance as bandwidth so the kernel scales to local data density. Falls back
+to `fallback` when all weights are near zero.
 `cache.idxs` and `cache.dists` must be filled by a prior `_knn_query!` call.
 """
 function _knn_predict!(cache::PredictionCache, qs::AbstractVector{Float64},
                        k_eff::Int, fallback::Float64)::PredictionResult
+    # Adaptive bandwidth: k-th neighbor distance (furthest neighbor)
+    @inbounds h = cache.dists[k_eff]
+    inv2h2 = h > 1e-12 ? 1.0 / (2.0 * h * h) : 0.5  # fallback bandwidth=1 if all neighbors at same point
+
     # Pass 1: compute weights, weight sum, distance sum, outcome mean
     w_sum = 0.0
     dist_sum = 0.0
     q_mean = 0.0
     @inbounds for m in 1:k_eff
-        wt = exp(-cache.dists[m]^2 / 2)
+        wt = exp(-cache.dists[m]^2 * inv2h2)
         cache.weights[m] = wt
         w_sum += wt
         dist_sum += cache.dists[m]

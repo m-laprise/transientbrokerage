@@ -95,6 +95,7 @@ using StableRNGs: StableRNG
     end
 
     # process_entry_exit! runs without error and maintains invariants
+    # (pool maintenance runs after entry/exit in step_period!, so clean pool here)
     @testset "process_entry_exit! maintains invariants" begin
         state = initialize_model(params)
         for _ in 1:10
@@ -102,6 +103,10 @@ using StableRNGs: StableRNG
         end
         avail = make_avail(state)
         process_entry_exit!(state, avail)
+        # Clean pool (normally done in step 6 of step_period!)
+        for wid in collect(state.broker.pool)
+            state.workers[wid].status == available || delete!(state.broker.pool, wid)
+        end
         verify_invariants!(state)
     end
 

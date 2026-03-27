@@ -110,7 +110,8 @@ end
 
         state = initialize_model(default_params(d=d, s=1, N_W=100, N_F=n_firms))
         state_mock = ModelState(params=state.params, rng=state.rng, env=state.env,
-                                cal=state.cal, workers=state.workers,
+                                cal=state.cal, firm_curve=state.firm_curve,
+                                workers=state.workers,
                                 firms=firms, broker=broker, G_S=state.G_S,
                                 next_firm_id=n_firms+1,
                                 cached_network=state.cached_network)
@@ -208,7 +209,8 @@ end
         broker = make_broker_with_history(d, firms, 20, rng)
         state = initialize_model(default_params(d=d, s=1, N_W=100, N_F=n_firms))
         state_mock = ModelState(params=state.params, rng=state.rng, env=state.env,
-                                cal=state.cal, workers=state.workers,
+                                cal=state.cal, firm_curve=state.firm_curve,
+                                workers=state.workers,
                                 firms=firms, broker=broker, G_S=state.G_S,
                                 next_firm_id=n_firms+1,
                                 cached_network=state.cached_network)
@@ -246,7 +248,8 @@ end
         broker = make_broker_with_history(d, firms, 30, rng)
         state = initialize_model(default_params(d=d, s=1, N_W=100, N_F=2))
         state_mock = ModelState(params=state.params, rng=state.rng, env=state.env,
-                                cal=state.cal, workers=state.workers,
+                                cal=state.cal, firm_curve=state.firm_curve,
+                                workers=state.workers,
                                 firms=firms, broker=broker, G_S=state.G_S,
                                 next_firm_id=3,
                                 cached_network=state.cached_network)

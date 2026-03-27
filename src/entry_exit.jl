@@ -35,7 +35,8 @@ function enter_firm!(state::ModelState, firm_idx::Int, avail::Set{Int},
     rng = state.rng
     q_pub = state.cal.q_pub
 
-    new_firm = create_firm(state.next_firm_id, state.params.d, rng)
+    new_type = sample_firm_type(state.firm_curve, rand(rng), state.params.d, rng)
+    new_firm = create_firm(state.next_firm_id, new_type, state.params.d)
     state.next_firm_id += 1
     new_firm.satisfaction_internal = q_pub
     new_firm.satisfaction_broker = q_pub
