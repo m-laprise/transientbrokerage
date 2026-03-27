@@ -11,15 +11,14 @@ Construct a `ModelParams` with baseline defaults, overriding any field via keywo
 """
 function default_params(; seed::Int = 42, kwargs...)::ModelParams
     defaults = Dict{Symbol,Any}(
-        :d => 8,
-        :s => 2,
+        :d => 4,
         :rho => 0.50,
         :K_mu => 10,
         :N_W => 1000,
         :N_F => 100,
         :eta => 0.05,
         :beta_W => 0.50,
-        :k_nn => 10,
+        :lambda => 1.0,
         :k_S => 6,
         :p_rewire => 0.1,
         :omega => 0.3,
@@ -27,12 +26,12 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
         :L => 4,
         :mu_b => 0.25,
         :c_emp_frac => 0.15,
-        :p_vac => 0.20,
+        :p_vac => 0.30,
         :pool_target_frac => 0.20,
-        :n_candidates_frac => 0.01,
+        :n_candidates_frac => 0.015,
         :network_measure_interval => 10,
         :T => 200,
-        :T_burn => 20,
+        :T_burn => 30,
         :seed => seed,
     )
     for (k, v) in kwargs
@@ -41,14 +40,13 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
     end
     p = ModelParams(
         defaults[:d],
-        defaults[:s],
         defaults[:rho],
         defaults[:K_mu],
         defaults[:N_W],
         defaults[:N_F],
         defaults[:eta],
         defaults[:beta_W],
-        defaults[:k_nn],
+        defaults[:lambda],
         defaults[:k_S],
         defaults[:p_rewire],
         defaults[:omega],
@@ -74,15 +72,14 @@ end
 Assert that all parameter values satisfy model constraints. Throws on violation.
 """
 function validate_params(p::ModelParams)
-    @assert p.s >= 1 "s must be ≥ 1, got $(p.s)"
-    @assert p.d >= 2 * p.s "d must be ≥ 2s (P⊥U constraint), got d=$(p.d), s=$(p.s)"
+    @assert p.d >= 2 "d must be ≥ 2, got $(p.d)"
     @assert 0.0 <= p.rho <= 1.0 "rho must be in [0, 1], got $(p.rho)"
     @assert p.K_mu >= 1 "K_mu must be ≥ 1, got $(p.K_mu)"
     @assert p.N_W >= 1 "N_W must be ≥ 1, got $(p.N_W)"
     @assert p.N_F >= 1 "N_F must be ≥ 1, got $(p.N_F)"
     @assert 0.0 < p.eta < 1.0 "eta must be in (0, 1), got $(p.eta)"
     @assert 0.0 < p.beta_W < 1.0 "beta_W must be in (0, 1), got $(p.beta_W)"
-    @assert p.k_nn >= 1 "k_nn must be ≥ 1, got $(p.k_nn)"
+    @assert p.lambda > 0.0 "lambda must be > 0, got $(p.lambda)"
     @assert p.k_S >= 2 "k_S must be ≥ 2 (even degree for Watts-Strogatz), got $(p.k_S)"
     @assert iseven(p.k_S) "k_S must be even for Watts-Strogatz, got $(p.k_S)"
     @assert 0.0 <= p.p_rewire <= 1.0 "p_rewire must be in [0, 1], got $(p.p_rewire)"

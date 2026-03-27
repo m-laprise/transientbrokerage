@@ -17,9 +17,8 @@ using Graphs: nv, is_connected
     @testset "calibration constants are positive" begin
         @test state.cal.r_base > 0
         @test state.cal.f_bar > 0
-        @test isfinite(state.cal.q_pub)
-        @test state.cal.q_pub != state.cal.f_bar  # q_pub = E[f], f_bar = E[|f|]
-        @test state.cal.r_base ≈ 0.70 * state.cal.f_bar
+        @test state.cal.q_pub == state.cal.f_bar  # both are E[f]
+        @test state.cal.r_base ≈ 0.60 * state.cal.f_bar
     end
 
     @testset "correct agent counts" begin
@@ -74,13 +73,13 @@ using Graphs: nv, is_connected
         @test size(state.broker.history_x) == (params.d, 5000)
         @test length(state.broker.history_q) == 5000
         @test length(state.broker.history_firm_idx) == 5000
-        @test state.broker.history_count == 0
+        @test state.broker.history_count == 5  # seeded from 5 random initial matches
     end
 
     @testset "firm history and satisfaction" begin
         @test all(size(f.history_w) == (params.d, 200) for f in state.firms)
         @test all(length(f.history_q) == 200 for f in state.firms)
-        @test all(f.history_count == 0 for f in state.firms)
+        @test all(3 <= f.history_count <= 5 for f in state.firms)
         @test all(f.satisfaction_internal == state.cal.q_pub for f in state.firms)
         @test all(f.satisfaction_broker == state.cal.q_pub for f in state.firms)
     end
@@ -100,5 +99,46 @@ using Graphs: nv, is_connected
 
     @testset "next_firm_id set correctly" begin
         @test state.next_firm_id == params.N_F + 1
+    end
+end
+
+@testset "Firm Curve" begin
+    using StableRNGs: StableRNG
+
+    d = 4
+
+    # Nearby positions on the curve produce similar firm types
+    @testset "nearby positions produce similar types" begin
+        curve = generate_firm_curve(d, StableRNG(42))
+        t1 = sample_firm_type(curve, 0.50, d, StableRNG(1))
+        t2 = sample_firm_type(curve, 0.51, d, StableRNG(2))
+        t_far = sample_firm_type(curve, 0.90, d, StableRNG(3))
+        near_dist = sum((t1 .- t2).^2)
+        far_dist = sum((t1 .- t_far).^2)
+        @test near_dist < far_dist
+    end
+
+    # Firm types are within [-3, 3]
+    @testset "firm types clamped" begin
+        curve = generate_firm_curve(d, StableRNG(42))
+        types = generate_firm_types(curve, 100, d, StableRNG(1))
+        @test all(all(-3.0 .<= t .<= 3.0) for t in types)
+    end
+
+    # Curve amplitude fills a reasonable range (not all near zero)
+    @testset "curve fills type space" begin
+        curve = generate_firm_curve(d, StableRNG(42))
+        types = generate_firm_types(curve, 100, d, StableRNG(1))
+        max_abs = maximum(maximum(abs.(t)) for t in types)
+        @test max_abs > 1.0  # amplitude 2.0 should reach beyond 1
+    end
+
+    # Deterministic with fixed seed
+    @testset "deterministic" begin
+        c1 = generate_firm_curve(d, StableRNG(42))
+        c2 = generate_firm_curve(d, StableRNG(42))
+        t1 = sample_firm_type(c1, 0.5, d, StableRNG(1))
+        t2 = sample_firm_type(c2, 0.5, d, StableRNG(1))
+        @test t1 == t2
     end
 end

@@ -14,18 +14,18 @@ using TransientBrokerage
 
     # Frozen values: (matches, broker_history_count, broker_pool_size, next_firm_id)
     # Generated with --check-bounds=yes (Pkg.test default)
-    # Regenerated after calibration with actual firm types and entrant firms on curve
+    # d=4, ridge regression, firm+broker history seeded at init
     expected = [
-        (26, 12, 200, 105),  # period 1
-        (21, 14, 200, 110),  # period 2
-        (11, 16, 200, 117),  # period 3
-        (18, 17, 200, 120),  # period 4
-        (13, 18, 200, 126),  # period 5
-        (10, 18, 200, 128),  # period 6
-        (14, 18, 200, 135),  # period 7
-        (14, 19, 200, 142),  # period 8
-        (9,  20, 200, 148),  # period 9
-        (18, 29, 200, 152),  # period 10
+        (31, 27, 200, 107),  # period 1
+        (23, 29, 200, 110),  # period 2
+        (35, 30, 200, 118),  # period 3
+        (27, 38, 200, 122),  # period 4
+        (16, 40, 200, 124),  # period 5
+        (15, 42, 200, 126),  # period 6
+        (9,  43, 200, 132),  # period 7
+        (24, 45, 200, 137),  # period 8
+        (19, 46, 200, 144),  # period 9
+        (12, 48, 200, 150),  # period 10
     ]
 
     for (t, (exp_matches, exp_hist, exp_pool, exp_next_id)) in enumerate(expected)

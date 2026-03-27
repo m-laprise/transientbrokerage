@@ -54,6 +54,8 @@ function enter_firm!(state::ModelState, firm_idx::Int, avail::Set{Int},
             state.workers[wid].employer_id = new_firm.id
             push!(new_firm.employees, wid)
             delete!(avail, wid)
+            q = match_output(state.workers[wid].type, new_firm.type, state.env, rng)
+            record_history!(new_firm, state.workers[wid].type, q)
         end
     end
 

@@ -91,8 +91,8 @@ The model has three agent types: workers, firms, and a broker. This section desc
 There are $N_W$ workers (default 1000). The worker population is fixed: workers change status but never enter or leave the simulation. Each worker $i$ is characterized by:
 
 - **Type** $w_i \in \mathbb{R}^d$: a fixed vector of observable characteristics assigned at initialization. Types determine productive compatibility with firms through the matching function (§1).
-  - $d$ is the dimensionality of the type space (default 8).
-  - Each worker draws a reference firm uniformly at random, then $w_i = x_{j(i)} + \epsilon_i$ where $\epsilon_i \sim N(0, I_d)$, clipped to $[-3, 3]^d$. Workers cluster around firm types in the type space, creating natural neighborhoods where k-NN prediction is informative.
+  - $d$ is the dimensionality of the type space (default 4).
+  - Each worker draws a reference firm uniformly at random, then $w_i = x_{j(i)} + \epsilon_i$ where $\epsilon_i \sim N(0, I_d)$, clipped to $[-3, 3]^d$. Workers cluster around firm types in the type space, creating natural neighborhoods where ridge regression predictions are informative.
 - **Reservation wage** $r_i$: the minimum compensation the worker requires to accept employment (§3b). Fixed at initialization.
 - **State**: one of two discrete states in the base model:
   - *Available*: not employed by any firm; can be proposed for new matches.
@@ -148,180 +148,115 @@ The matching function $f: \mathbb{R}^d \times \mathbb{R}^d \to \mathbb{R}$ is un
 
 The deterministic portion of match quality has two components:
 
-$$f(w, x) = \mu(w) + w^\top A x$$
+$$f(w, x) = \mu(w) + w^\top x$$
 
-- The first is the output of $\mu: \mathbb{R}^d \to \mathbb{R}$, which maps worker types to general worker quality (§1b).
-- The second is $w^\top Ax$, $\mathbb{R}^d \times \mathbb{R}^d \to \mathbb{R}$, which maps worker types and firm types to a match-specific worker-firm interaction (§1c).
+- The first is the output of $\mu: \mathbb{R}^d \to \mathbb{R}$, which maps worker types to general worker quality (§1b). It is non-negative and nonlinear.
+- The second is $w^\top x$, a dot product that captures match-specific worker-firm interaction (§1c). It is linear in both arguments.
 
 #### 1b. General worker quality
 
 General worker quality is the analogue of the "worker effect" in the AKM decomposition of observed wages (Abowd, Kramarz & Margolis, 1999). It captures portable human capital such as general ability, conscientiousness, reliability.
 
-Here, it is formalized as a weighted sum of radial basis functions (RBFs) defined on a low-dimensional projection of the worker type space:
+Here, it is formalized as a weighted sum of radial basis functions (RBFs) defined on the full $d$-dimensional worker type space:
 
-$$\mu(w) = \sum_{l=1}^{K_\mu} a_l \exp \left(-\frac{ \|P w - c_l\|^2}{2h^2}\right)$$
+$$\mu(w) = \sum_{l=1}^{K_\mu} a_l \exp \left(-\frac{ \|w - c_l\|^2}{2h^2}\right)$$
 
 Components:
-- $P \in \mathbb{R}^{s \times d}$ with orthonormal rows projects worker types onto $s$ "core competency" dimensions ($s < d$; default $s = 2$),
-- $c_l \in \mathbb{R}^s$ are RBF centers,
+- $c_l \in \mathbb{R}^d$ are RBF centers,
 - $a_l \geq 0$ are non-negative random weights (drawn as $N(0,1)^2$, then jointly scaled so that $\text{Var}(\mu) = \rho \cdot \text{Var}(f)$; see §1d). Non-negativity ensures $\mu(w) \geq 0$: all workers have non-negative general quality,
-- $h$ is the bandwidth,
+- $h$ is the bandwidth (set to the median pairwise distance among a Monte Carlo sample of worker types),
 - $K_\mu$ is the number of centers (default 10).
 
-General worker quality depends on a few core competencies, which are linear combinations of the $d$ observable skill dimensions. The projection $P$ identifies which combinations matter: a worker's position in the resulting $s$-dimensional competency space determines their baseline productivity.
+The nonlinear RBF landscape means the relationship between worker types and worker quality is complex: there can be multiple "quality archetypes" (local maxima of $\mu$ near different RBF centers). $K_\mu$ controls the topological complexity; $h$ controls the spatial scale of variation. Both are calibration parameters (§12b).
 
-The nonlinear RBF landscape means the relationship between worker types and worker quality is complex: there can be multiple "quality archetypes" in the competency space (local maxima of $\mu$ near different RBF centers). It also implies that dense local data will be required to estimate the function accurately in a neighborhood.
+Because $\mu$ is nonlinear and operates on the full $d$-dimensional type space, it cannot be learned by linear regression. Agents using linear models (§2a) can capture the linear interaction $w^\top x$ but not $\mu$. The parameter $\rho$ (§1d) controls how much this unlearnable component contributes to total output variance.
 
-Two parameters control the complexity of the quality landscape:
-
-- $K_\mu$ (number of RBF centers) controls the **topological complexity**: how many distinct quality peaks exist in the competency space.
-- $h$ (bandwidth) controls the **spatial scale** of variation: how sharply each peak is defined.
-
-The default for $h$ is the median pairwise distance in $\{Pw_i\}$.
-
-- Because $Pw \sim N(0, I_s)$, this median grows with $\sqrt{s}$, so $h$ automatically rescales when $s$ changes.
-  - at any $s$, a center has roughly 50% of workers within one bandwidth.
-- The landscape's qualitative character (the number of distinguishable peaks and the degree of smoothness) stays comparable across $s$ values without adjusting $K_\mu$.
-- $K_\mu$ and $h$ are calibration parameters (§12b), set during model development and held constant in production runs.
-
-Smoothness also governs **cross-worker mutual information**: for an observation of worker $i$ to be informative about a nearby worker $i'$, $\mu$ must be smooth enough that $\mu(w_i) \approx \mu(w_{i'})$ when $w_i \approx w_{i'}$.
-
-The relative importance of this general worker quality within the overall match function is controlled by the parameter $\rho$ (which scales the weights $a_l$), defined in §1d.
+The relative importance of general worker quality within the overall match function is controlled by the parameter $\rho$ (which scales the weights $a_l$), defined in §1d.
 
 #### 1c. Match-specific interaction
 
-The match-specific interaction $w^\top A x$ captures how well a particular worker-firm pairing works together, beyond the worker's baseline productivity. It is governed by a diagonal rank-$s$ matrix:
+The match-specific interaction $w^\top x$ captures how well a particular worker-firm pairing works together, beyond the worker's baseline productivity. It is a dot product in the full $d$-dimensional type space: each worker skill dimension interacts independently with the corresponding firm characteristic dimension.
 
-- $A \in \mathbb{R}^{d \times d}$ with $A_{ii} = 1$ for $i \leq s$ and $A_{ij} = 0$ otherwise.
+For firm $j$ with fixed type $x_j$, the interaction $w^\top x_j$ is linear in the worker type $w$. This means a firm can learn to predict the interaction component from its hiring history using linear regression — the natural predictor for a linear function.
 
-  - The first $s$ dimensions of the type space are the *interacting dimensions*: worker skill $w_i$ pairs directly with the corresponding firm characteristic $x_i$. The interaction reduces to $w_{1:s}^\top x_{1:s}$.
-  - The remaining $d - 2s$ dimensions are *noise dimensions*: they do not affect the interaction but can influence general quality $\mu$ through the projection $P$ (§1b).
-  - The diagonal structure means each skill dimension interacts independently with the corresponding firm dimension, making the matching function learnable by k-NN with moderate data.
+#### 1d. Variance decomposition and the role of $\rho$
 
-For firm $j$, the interaction reduces to $w_{1:s}^\top x_{j,1:s}$: a dot product in the $s$-dimensional skill subspace.
-
-#### 1d. Variance decomposition and the type space
-
-Two structural features govern how the two components relate: the variance parameter $\rho$ controls their relative importance, and an orthogonality constraint ensures they operate on separate dimensions of the type space.
-
-Using a single rank parameter $s$ for both $P$ and $A$ gives the two components equal structural complexity: each operates on $s$ dimensions of the type space.
+The parameter $\rho$ controls the relative importance of general quality $\mu(w)$ versus the match-specific interaction $w^\top x$:
 
 **The worker quality share $\rho$.** The parameter $\rho = \frac{\text{Var}(\mu)}{\text{Var}(f)}$ controls what fraction of total match quality variance is general (transferable across firms) vs. firm-specific.
 
 - Default $\rho = 0.50$. The default gives equal weight to both components, placing the baseline in a regime where the broker's cross-market pooling advantage (which operates on $\mu$) and the firm's own-data advantage (which operates on the interaction) are both substantive.
   - For reference, AKM estimates attribute roughly 30% of total observed wage variation to worker effects (Card, Heining & Kline, 2013), but the mapping to $\rho$ is loose: AKM's denominator includes firm effects, measurement error, and transitory shocks that do not exist in the model.
-- At $\rho = 0$, the model reduces to $f(w,x) = w^\top A x$.
+- At $\rho = 0$, the model reduces to $f(w,x) = w^\top x + \varepsilon$.
 - At $\rho = 1$, the model reduces to $f(w,x) = \mu(w)$.
 
 This parameter directly controls the broker's informational advantage and is a primary axis of the phase diagram (§11). The phase diagram sweeps $\rho$ across its full range.
 
-**Orthogonality ($P \perp U$).** The projection $P$ (§1b) determines which skill dimensions drive general worker quality; the matrix $A = U\Sigma V'$ (§1c) determines which skill dimensions drive match-specific fit. The two are constructed to operate on disjoint subspaces: the rows of $P$ lie in the orthogonal complement of the column space of $U$ ($P \perp U$, $PU = 0$) (§12c).
+Both $\mu(w)$ and $w^\top x$ operate on the full $d$-dimensional type space. There is no subspace partitioning or orthogonality constraint — the nonlinear and linear components share all dimensions.
 
-Under this constraint, the $d$-dimensional type space partitions into three subspaces:
+The weights $a_l$ are jointly scaled at initialization so that $\text{Var}(\mu) / \text{Var}(f) = \rho$, where $\text{Var}(f) = \text{Var}(\mu) + \text{Var}(w^\top x) + 1$ (the last term is noise variance). This calibration is exact on the Monte Carlo sample used at initialization and approximate for the simulation population.
 
-- $s$ worker quality dimensions (row space of $P$),
-- $s$ firm-worker fit dimensions (column space of $U$),
-- $d - 2s$ noise dimensions.
-  - They do not affect match output.
-  - These represent observable worker characteristics (credentials, certifications, years of experience) that happen to carry no signal for this particular matching problem.
+Because $\mu$ is nonlinear and the interaction $w^\top x$ is linear, agents using linear models (§2a) can learn the interaction component but not $\mu$. The parameter $\rho$ therefore controls *how much of match quality is learnable by linear regression*:
 
-This orthogonality is a modeling assumption, not an empirical claim. It provides a clean test of the model's central mechanism: the broker's advantage comes from pooling data to estimate $\mu$, with no confounding from shared dimensions. Robustness checks with random $P$ (not orthogonal to $U$) verify that the results hold.
-
-**Low-rank constraint.** The low-rank constraint on $A$ (rank $s < d$) serves two roles in the model:
-
-1. **Orthogonality partition.** Rank $s < d$ creates a well-defined $s$-dimensional column space for $U$, which enables the orthogonality constraint $P \perp U$: a full-rank $A$ would occupy all of $\mathbb{R}^d$, leaving no subspace for $P$ to operate on independently.
-
-2. **Noise dimensions.** Rank $s$ at fixed $d$ produces $d - 2s$ noise dimensions. Since agents cannot know which dimensions matter, $k$-NN must operate in all $d$ dimensions. Increasing $d$ at fixed $s$ degrades $k$-NN performance, because distances become dominated by noise, and more observations are needed to find informative neighbors.
-
-Because all firm-specific interaction vectors $\beta_j = Ax_j$ lie in the same $s$-dimensional column space of $A$, the interaction structure is in principle partially transferable across firms. However, exploiting this would require structural knowledge of $A$ that no agent possesses (§2b).
+- At **low $\rho$** (interaction dominates), the matching function is mostly linear. Both firms and the broker can learn it well with ridge regression. The broker's advantage is modest — just more data for the same linear model.
+- At **high $\rho$** ($\mu$ dominates), the matching function has a large nonlinear component that linear regression cannot capture. Neither firms nor the broker can predict the $\mu$ component accurately, but the broker's larger dataset helps average over $\mu$-induced noise, producing more stable linear coefficient estimates.
+- At **moderate $\rho$**, the linear interaction is substantial (regression captures it) and $\mu$ adds structure that the broker's pooled data helps navigate. The broker's advantage is largest in this regime.
 
 #### 1e. What controls the difficulty of the matching problem
 
-Various features of the matching environment control the difficulty of the learning problem and, consequently, the emergence and size of the broker's informational advantage:
+- **$d$ (type dimensionality).** Higher $d$ means each agent's regression model has more parameters to estimate from the same amount of data. Individual firms suffer more than the broker because they have fewer observations per parameter. $d$ is the primary difficulty axis.
 
-- **$d - 2s$ (noise dimensions / market opacity).** Under $P \perp U$, only $2s$ of $d$ type-space dimensions carry signal; the remaining $d - 2s$ are noise. Since $k$-NN operates in all $d$ dimensions, increasing $d - 2s$ degrades prediction accuracy for all agents — but individual firms suffer more than the broker pooling across firms. The quantity $d - 2s$ is the sufficient statistic for opacity: raising $d$ at fixed $s$, or lowering $s$ at fixed $d$, both increase the number of noise dimensions and have qualitatively equivalent effects on the learning dynamics. $d - 2s$ is a primary axis of the phase diagram (§11).
+- **$\rho$ (general quality share).** Controls the fraction of output variance that is nonlinear and unlearnable by linear models. At low $\rho$, the matching function is nearly linear and easy to learn. At high $\rho$, predictions are limited by the model class regardless of data volume. $\rho$ and $d$ together determine the broker's informational advantage.
 
-- **$\rho$ (general worker quality share).** The fraction of match quality variance that is general and transferable. This controls *what the broker's cross-market data is worth*. At high $\rho$, the general component dominates and the broker's pooling advantage is decisive. At low $\rho$, the firm-specific interaction dominates and cross-market data is less valuable, narrowing the broker's advantage. $\rho$ is a primary axis of the phase diagram (§11).
-
-- **Smoothness of $\mu$ ($K_\mu$, $h$).** The number of RBF centers and the bandwidth (§1b) control how complex the general quality landscape is, independently of how much it matters ($\rho$) or how many noise dimensions surround it ($d$). Rougher $\mu$ (more centers, smaller bandwidth) requires denser local data to estimate accurately, extending the broker's advantage window. $K_\mu$ and $h$ are calibration parameters whose values are set during development, so the landscape complexity is fixed.
+- **Smoothness of $\mu$ ($K_\mu$, $h$).** The number of RBF centers and bandwidth control how complex the general quality landscape is. Rougher $\mu$ increases the effective noise for linear predictors. These are calibration parameters, fixed during development.
 
 ### 2. Learning
 
 Firms and the broker use predicted match quality $\hat{q}_{ij}$ in every core decision: which candidates to hire (§5), what wage to offer (§3), and whether to outsource hiring to the broker (§6).
 
-Firms and the broker learn $f$ from experience using $k$-nearest-neighbor regression ($k$-NN) with $k = 10$.
+Both firms and the broker learn from experience using ridge regression, fitted each period on their accumulated history.
 
 #### 2a. Firm $j$'s prediction
 
-A firm's history $\mathcal{H}_j^t = \{(w_m, q_{mj})\}_{m=1}^{n_j}$ records the workers the firm has directly employed and their realized match outputs, where $n_j = |\mathcal{H}_j^t|$.
+A firm's history $\mathcal{H}_j^t = \{(w_m, q_{mj})\}_{m=1}^{n_j}$ records the workers the firm has directly employed and their realized match outputs. Histories are seeded at initialization: each firm's 3-5 initial employees produce observed match outputs that are recorded immediately (§12c). Firms therefore always have at least 3 observations.
 
-- All observations come from a single firm, so every outcome reflects both the worker's general quality and their fit with this particular firm, inseparably.
+Firm $j$ knows its own type $x_j$. For a fixed firm, $f(w, x_j) = \mu(w) + w^\top x_j + \varepsilon$ is the sum of a nonlinear function $\mu(w)$ and a linear function $w^\top x_j$. The firm fits a ridge regression model on its history:
 
-Firm $j$ knows its own type $x_j$. Its prediction problem is to estimate $f(w, x_j)$ from own-hire data.
+$$\hat{q}_j(w') = \hat{\beta}_j^\top w' + \hat{c}_j$$
 
-To predict output for a new worker $w'$, a firm uses $k$-NN as a nonparametric estimator. That is, firm $j$ finds the $k$ observations in its history $\mathcal{H}_j^t$ whose worker types are closest to $w'$ (Euclidean distance), and returns the distance-weighted average of their realized outputs:
+where $\hat{\beta}_j, \hat{c}_j$ are the ridge regression coefficients fitted on $\{(w_m, q_{mj})\}$ with regularization parameter $\lambda$ (default 1.0). The model is refitted each period on the firm's full history.
 
-$$\hat{q}_j(w') = \frac{\sum_{m=1}^{k} K(\delta_m)\, q_m}
-{\sum_{m=1}^{k} K(\delta_m)}$$
-
-where $\delta_m = \|w' - w_m\|$ is the distance to the $m$-th nearest neighbor and $K(\delta) = \exp \left(-\delta^2 / 2 \right)$ is a weighting kernel.
-
-When $|\mathcal{H}_j^t| < k$, the firm uses all available observations. When $\mathcal{H}_j^t$ is empty, predictions default to the public benchmark $\bar{q}_{\text{pub}}$ (§2d).
+The linear model captures the interaction component $w^\top x_j$ well (it is exactly linear in $w$) but cannot capture the nonlinear general quality $\mu(w)$. The firm's prediction error therefore includes the full variance of $\mu$ as irreducible noise.
 
 #### 2b. Broker's prediction
 
-The broker's history $\mathcal{H}_b^t = \{(w_m, x_m, q_m)\}_{m=1}^{n_b}$ records all placements the broker has mediated across all client firms and their realized match outputs, where $n_b = |\mathcal{H}_b^t|$.
+The broker's history $\mathcal{H}_b^t = \{(w_m, x_m, q_m)\}_{m=1}^{n_b}$ records all placements the broker has mediated across all client firms and their realized match outputs. The broker's history is seeded at initialization with 5 random observations from existing worker-firm matches (§12c).
 
-- Unlike a firm, the broker observes the same worker types producing different outcomes at different firms, and different worker types at the same firm.
+Unlike a firm, the broker observes the same worker types producing different outcomes at different firms, and different worker types at the same firm. The broker fits a single pooled ridge regression on concatenated worker and firm type features:
 
-The broker's prediction problem is to estimate $f(w, x)$ from cross-market data.
+$$\hat{q}_b(w', x_j) = \hat{\beta}_w^\top w' + \hat{\beta}_x^\top x_j + \hat{c}_b$$
 
-The broker's algorithm assumes match quality has an additive structure: a worker-general component that transfers across firms, plus a firm-specific component. This assumption comes from the broker's domain knowledge. The broker does not know the functional forms of either component, and learns both nonparametrically via a two-stage procedure.
+where $[\hat{\beta}_w; \hat{\beta}_x; \hat{c}_b]$ are fitted on $\{([w_m; x_m], q_m)\}$ with regularization $\lambda$. The model dimension is $2d$ (worker type features plus firm type features), refitted each period.
 
-**Stage 1: estimate the worker-general component.** The broker runs $k$-NN regression on its full cross-firm history, using only worker types $w$ (not firm types $x$). Because the general component $\mu(w)$ does not depend on which firm the worker is placed at, this regression is $d$-dimensional:
+The broker's pooled model has two advantages over the firm's model:
 
-$$\hat\mu_b(w') = \frac{\sum_{m=1}^{k} K(\|w' - w_m\|) \cdot q_m}{\sum_{m=1}^{k} K(\|w' - w_m\|)}$$
+1. **More data.** The broker accumulates observations across all client firms, giving it far more data points than any individual firm. With $n_b \gg n_j$, the broker's coefficient estimates have lower variance.
 
-where the sum runs over the $k$ nearest neighbors to $w'$ in the broker's complete history. The broker regresses on match outputs $q_m$.
-
-Because the broker pools observations across many client firms, the firm-specific interaction terms in nearby observations tend to partially cancel, leaving $\mu(w)$ as the dominant signal in Stage 1.
-
-Orthogonality ($P \perp U$) in the true DGP ensures that Stage 1 estimation error is statistically independent of the Stage 2 target.
-
-**Stage 2: estimate the firm-specific residual.** For each client firm $j$, the broker subtracts its Stage 1 estimates to obtain residuals $\tilde{q}_m = q_m - \hat\mu_b(w_m)$, then runs $k$-NN regression on the residuals using only observations at firm $j$. Because $x_j$ is fixed and known for a given client, this is also a $d$-dimensional problem:
-
-$$\hat\beta_{b,j}(w') = \frac{\sum_{m \in \mathcal{H}_{b,j}^t} K(\|w' - w_m\|) \cdot \tilde{q}_m}{\sum_{m \in \mathcal{H}_{b,j}^t} K(\|w' - w_m\|)}$$
-
-where $\mathcal{H}_{b,j}^t$ is the subset of the broker's history at firm $j$.
-
-$\hat\beta_{b,j}(w')$ estimates the scalar $w'^\top \beta_j$ (not the vector $\beta_j$ itself). Stage 2 treats each firm independently.
-
-**Prediction.** The broker's prediction for pair $(w', x_j)$ combines the two stages:
-
-$$\hat{q}_b(w', x_j) = \hat\mu_b(w') + \hat\beta_{b,j}(w')$$
-
-When $\mathcal{H}_{b,j}^t$ is empty (new client), Stage 2 defaults to zero: $\hat\beta_{b,j}(w') = 0$, and the broker's prediction reduces to its Stage 1 estimate $\hat\mu_b(w')$. When $\mathcal{H}_b^t$ itself is empty (broker has never placed anyone), Stage 1 also defaults to $\bar{q}_{\text{pub}}$ (§2d).
-
-The broker's two-stage procedure is structurally aligned with the true matching function (§1a): Stage 1 pools cross-market data to isolate the general component, Stage 2 estimates the firm-specific residual. The firm's single-stage procedure (§2a) cannot perform this separation.
+2. **Richer features.** By including both $w$ and $x$ as features, the broker's model captures how worker-firm interactions vary across firms. The coefficient $\hat{\beta}_x$ estimates how firm characteristics affect match output — information no individual firm can learn from its own-hire data alone.
 
 #### 2c. The asymmetry between firms and the broker
 
-**Prediction accuracy.** The firm only learns from its own hires. Every observation reflects both the worker's general quality and their firm-specific fit. It learns "*what kind of worker works well here*," but it cannot tell whether a good hire was good in general or merely a good fit for this firm.
+The firm learns "what kind of worker works well here" from a small, firm-specific sample. It cannot distinguish general quality from firm-specific fit.
 
-The broker pools and decomposes. It learns both "*what kind of worker is generally good*" and "*what kind of worker fits which firm*," and it can distinguish the two.
+The broker learns "what kind of worker works well, and at which kind of firm" from a large cross-market sample. Its richer feature set ($[w; x]$) and larger data volume produce better predictions, especially at higher $d$ where individual firms cannot estimate $d+1$ regression parameters from their sparse histories.
 
-As firm $j$'s own-hire count $n_j$ grows, its estimate improves ($k$-NN regression is consistent for estimating $\mu(w) + w^\top\beta_j$ as a single function, regardless of its internal structure) and the broker's structural ability to separate $\mu$ from the interaction becomes less valuable. The broker's advantage is largest when firms have few observations and the general worker quality component is substantial (high $\rho$).
-
-**Use of prediction for allocation.** The broker serves multiple clients and evaluates multiple workers in every period. The broker's cross-market data advantage is not only about prediction quality, but also that it sees the full allocation landscape across its client portfolio.
-- The broker's prediction function $\hat{q}_b(w, x_j)$ is defined for any (worker, firm) pair.
-- Stage 1 estimates are computed once per worker and reused across firms; Stage 2 estimates are firm-specific.
-- When serving multiple clients in the same period, the broker evaluates all available workers against all client firms simultaneously and uses a greedy best-pair allocation heuristic (§5b).
+As firm $j$ accumulates more hires, its regression estimates improve and the broker's data advantage narrows. The broker's advantage is largest when firms have few observations and $d$ is high (more parameters to estimate from limited data).
 
 #### 2d. Public information
 
-A constant, scalar **public benchmark** $\bar{q}_{\text{pub}} = E[f(w,x)]$ is computed once at initialization from a Monte Carlo sample of clustered worker-firm pairs (matching the initialization distribution; §12c). This is the unconditional mean match output, not the mean absolute value.
+A constant, scalar **public benchmark** $\bar{q}_{\text{pub}} = E[f(w,x)]$ is computed once at initialization from a Monte Carlo sample of clustered worker-firm pairs (matching the initialization distribution; §12c). This is the unconditional mean match output.
 
-The benchmark serves as a **default prediction**: when a firm or broker has no relevant history for a candidate, it uses $\bar{q}_{\text{pub}}$ as its prediction. It affects only the earliest hires before agents have data and sets the starting point for learning. It also initializes satisfaction indices (§6a) and broker reputation (§6b).
+The benchmark initializes satisfaction indices (§6a) and broker reputation (§6b). It is not used as a prediction fallback — firms and the broker are always seeded with enough history to fit a regression model from period 1.
 
 ### 3. Wage Determination
 
@@ -357,12 +292,12 @@ r_{\text{base}} \cdot \left(1 + 0.20 \cdot
 
 where:
 
-- $r_{\text{base}}$ is the reservation wage floor (calibrated at initialization as $0.70 \cdot \bar{f}$, where $\bar{f} = E[|f(w,x)|]$ is the mean absolute match output; §12c),
+- $r_{\text{base}}$ is the reservation wage floor (calibrated at initialization as $0.60 \cdot \bar{f}$, where $\bar{f} = E[f(w,x)]$ is the mean match output; §12c),
 - the coefficient $0.20$ is the network wage premium, reflecting the finding that better-connected workers have more outside options and earn higher wages (Montgomery, 1991; Calvo-Armengol & Jackson, 2004, 2007),
 - $\deg_S(i)$ is worker $i$'s degree in $G_S$ (§4),
 - $\epsilon_r \sim N(0, (0.05 \cdot r_{\text{base}})^2)$ adds individual variation beyond network position.
 
-The floor at $r_{\text{base}}$ prevents negative noise draws from pushing reservation wages below the baseline outside option. The 0.70 calibration sets the outside option at 70% of average productivity. The ratio of outside option to productivity is a standard calibration target in labor market models; 0.70 falls between the low value (0.40) in Shimer (2005) and the high value (0.955) in Hagedorn and Manovskii (2008).
+The floor at $r_{\text{base}}$ prevents negative noise draws from pushing reservation wages below the baseline outside option. The 0.60 calibration sets the outside option at 60% of average productivity, producing a labor market where approximately 40% of match output is surplus available for splitting between workers and firms.
 
 ### 4. Network Structure
 
@@ -388,7 +323,7 @@ The worker population $N_W$ is fixed for the duration of the simulation: workers
 
 ### 5. Search
 
-Each firm without an open vacancy generates one with probability $p_{\text{vac}}$ per period. A vacancy that goes unfilled persists to the next period; the firm does not draw a new vacancy while one is already open. This keeps firm history growth tractable and ensures the outsourcing decision is made at most once per firm per period. The default $p_{\text{vac}} = 0.20$ produces approximately 20 vacancies per period across 100 firms, ensuring sufficient hiring activity for k-NN learning.
+Each firm without an open vacancy generates one with probability $p_{\text{vac}}$ per period. A vacancy that goes unfilled persists to the next period; the firm does not draw a new vacancy while one is already open. This keeps firm history growth tractable and ensures the outsourcing decision is made at most once per firm per period. The default $p_{\text{vac}} = 0.30$ produces approximately 30 vacancies per period across 100 firms, ensuring sufficient hiring activity for regression learning.
 
 A firm with a vacancy fills it either through internal search (§5a) or by outsourcing to the broker (§5b); the choice between the two channels is governed by a satisfaction-based decision rule described in §6. 
 
@@ -478,12 +413,10 @@ At the start of the simulation, the state of the world must be initialized.
 
 > **INITIALIZE (Claude generated; review required)**
 >
-> *Matching function.*
-> I.1. &emsp;Set $A \in \mathbb{R}^{d \times d}$ diagonal: $A_{ii} = 1$ for $i \leq s$, zero elsewhere. Set $U = I_d[:,1:s]$.
-> I.2. &emsp;Draw $s$ random vectors from $N(0, I_d)$; project each onto null space of $U$ ($v \leftarrow v - UU^\top v$); orthonormalize. Stack as rows of $P \in \mathbb{R}^{s \times d}$.
-> I.3. &emsp;Draw $K_\mu$ RBF centers $c_l \sim N(0, I_s)$ and non-negative weights $a_l = z_l^2$, $z_l \sim N(0, 1)$.
-> I.4. &emsp;Draw 10,000 Monte Carlo worker types $\tilde{w}$ from $N(0, I_d)$ clipped to $[-3,3]$; set $h \leftarrow$ median pairwise distance in $\{P\tilde{w}\}$.
-> I.5. &emsp;Draw 10,000 Monte Carlo $(w, x)$ pairs (iid for variance calibration); scale all $a_l$ jointly so $\text{Var}(\mu) / \text{Var}(f) = \rho$ on this sample.
+> *Matching function.* Interaction is $w^\top x$ (identity, no matrix needed).
+> I.1. &emsp;Draw $K_\mu$ RBF centers $c_l \sim N(0, I_d)$ and non-negative weights $a_l = z_l^2$, $z_l \sim N(0, 1)$.
+> I.2. &emsp;Draw 10,000 Monte Carlo worker types $\tilde{w}$ from $N(0, I_d)$ clipped to $[-3,3]$; set $h \leftarrow$ median pairwise distance in $\{\tilde{w}\}$.
+> I.3. &emsp;Draw 10,000 Monte Carlo $(w, x)$ pairs (iid for variance calibration); scale all $a_l$ jointly so $\text{Var}(\mu) / \text{Var}(f) = \rho$ on this sample.
 >
 > *Firm and worker types.*
 > I.6. &emsp;Generate firm curve: per-dimension frequencies $f_k \sim U[1,3]$, phases $\phi_k \sim U[0,2\pi]$, amplitude 2.0. Store curve parameters.
@@ -491,7 +424,7 @@ At the start of the simulation, the state of the world must be initialized.
 > I.8. &emsp;For each worker $i$: draw reference firm $j(i) \sim U\{1,\ldots,N_F\}$; set $w_i = x_{j(i)} + \epsilon_i$, $\epsilon_i \sim N(0, I_d)$, clipped to $[-3,3]$.
 >
 > *Calibration.*
-> I.9. &emsp;Compute $\bar{f} = E[|f|]$ and $E[f]$ from 10,000 clustered $(w, x)$ pairs using actual firm types. Set $\bar{q}\_\text{pub} \leftarrow E[f]$; $r\_\text{base} \leftarrow 0.70 \cdot \bar{f}$; $c\_\text{emp} \leftarrow 0.15 \cdot r\_\text{base}$ (M1 only).
+> I.9. &emsp;Compute $E[f]$ from 10,000 clustered $(w, x)$ pairs using actual firm types. Set $\bar{q}\_\text{pub} \leftarrow E[f]$; $r\_\text{base} \leftarrow 0.60 \cdot E[f]$; $c\_\text{emp} \leftarrow 0.15 \cdot r\_\text{base}$ (M1 only).
 > I.10. &emsp;For each worker $i$: compute reservation wage $r_i$ per §3b using $r_\text{base}$ and $G_S$ (after I.11).
 >
 > *Network and employment.*
@@ -532,14 +465,14 @@ Each period proceeds through six steps. The pseudocode below specifies the exact
 > 2.1.1. &emsp;for each firm $j$ with $\text{decision}\_j = \text{internal}$:
 > &emsp;&emsp;Draw $\lfloor n/2 \rfloor$ candidates from available workers $\cap\; R_j^t$ (uniform, without replacement; fewer if $|R_j^t \cap \text{available}| < \lfloor n/2 \rfloor$)
 > &emsp;&emsp;Draw $\lceil n/2 \rceil$ candidates from available workers $\setminus\; R_j^t$ (uniform, without replacement)
-> &emsp;&emsp;For each candidate $i$, predict: $\hat{q}_j(w_i)$ using $\mathcal{H}_j^t$; record $\bar{\delta}$, $\sigma_k^2$ from $k$-NN lookup
+> &emsp;&emsp;For each candidate $i$, predict: $\hat{q}_j(w_i) = \hat{\beta}_j^\top w_i + \hat{c}_j$ using firm's ridge model
 > &emsp;&emsp;Select $i^* = \arg\max \hat{q}_j(w_i)$ &ensp;(ties broken uniformly at random)
 > &emsp;&emsp;If $\hat{q}_j(w_{i^*}) \leq r_{i^*}$: vacancy persists (zero surplus); else: record proposed match $(j, i^*)$
 >
 > &emsp;**2.2. Broker proposals:**
 > 2.2.1. &emsp;Collect client list: $J^t = \{j : \text{decision}\_j = \text{broker}\}$
 > 2.2.2. &emsp;$\text{available\_pool} \leftarrow \text{Pool}^t \cap \{\text{available workers}\}$
-> 2.2.3. &emsp;Compute quality matrix: $\hat{Q}[i,j] = \hat{q}_b(w_i, x_j)$ for all $i \in \text{available\_pool}$, $j \in J^t$; record $\bar{\delta}$, $\sigma_k^2$ from each $k$-NN lookup. Fallbacks: if $\mathcal{H}_b^t = \emptyset$, $\hat{q}_b \equiv \bar{q}\_\text{pub}$; if $\mathcal{H}_{b,j}^t = \emptyset$, $\hat\beta_{b,j} = 0$ (prediction reduces to Stage 1 estimate).
+> 2.2.3. &emsp;Compute quality matrix: $\hat{Q}[i,j] = \hat{q}_b(w_i, x_j) = \hat{\beta}_w^\top w_i + \hat{\beta}_x^\top x_j + \hat{c}_b$ for all $i \in \text{available\_pool}$, $j \in J^t$, using the broker's pooled ridge model.
 > 2.2.4. &emsp;while available\_pool non-empty AND $J^t$ non-empty:
 > &emsp;&emsp;$(i^*, j^*) = \arg\max \hat{Q}[i,j]$ &ensp;(ties broken uniformly at random)
 > &emsp;&emsp;If $\hat{Q}[i^*, j^*] \leq r_{i^*}$: break &ensp;(no remaining pair has positive surplus)
@@ -603,7 +536,7 @@ Each period proceeds through six steps. The pseudocode below specifies the exact
 > &emsp;&emsp;Nodes: workers $1..N_W$, firms $N_W{+}1..N_W{+}N_F$, broker node $N_W{+}N_F{+}1$
 > &emsp;&emsp;Edges: $G_S$ edges among workers + employment edges $(i, j)$ for $i \in E_j^t$ + broker-pool edges $(i, \text{broker})$ for $i \in \text{Pool}^t$
 > 6.2. &emsp;Compute on combined graph: Freeman betweenness centrality (all nodes; record broker's); Burt's constraint (broker's ego network); effective size (broker's ego network)
-> 6.3. &emsp;Compute prediction quality ($R^2$, bias, rank correlation; rolling 50-placement window) for broker and each firm. Aggregate prediction confidence (period means of $\bar{\delta}$ and $\sigma_k^2$ recorded during Steps 2.1–2.2) for broker and each firm. Compute access vs. assessment (fraction of brokered placements where $i^* \in R_j^t$).
+> 6.3. &emsp;Compute prediction quality ($R^2$, bias, rank correlation; rolling window) for broker and each firm from accumulated (predicted, realized) pairs. Compute access vs. assessment (fraction of brokered placements where $i^* \in R_j^t$).
 >
 > **7. PERIOD RECORDING** (every period):
 > 7.1. &emsp;Record period aggregates: match quality by channel ($\bar{q}_c^t$); vacancy rate by channel (unfilled / total); outsourcing rate ($|J^t| / |V^t|$); broker pool size $|\text{Pool}^t|$; mean firm referral pool size $\overline{|R_j^t|}$.
@@ -651,20 +584,13 @@ The three measures decompose prediction quality into components that map to dist
 | Low | Low | High | Ranks correctly but noisy; allocation good, pricing noisy |
 | Low | High | Low | Poor predictions; early-period regime |
 
-**Prediction confidence.** Two measures of prediction uncertainty, computed as byproducts of the $k$-NN prediction step (no additional neighbor searches required). Reported as period-level averages over all predictions each agent makes that period.
+**Prediction quality.** Prediction accuracy is tracked via (predicted, realized) outcome pairs accumulated each period. Three metrics are computed over a rolling window:
 
-- *Average neighbor distance* $\bar{\delta} = \frac{1}{k}\sum_{m=1}^{k} \|w' - w_m\|$. How far the agent reached for informative data. Captures epistemic uncertainty: it reflects the local density of the agent's training data around the query point and would shrink with more observations. The broker, pooling across firms, has denser coverage and shorter neighbor distances. This quantity maps directly to the curse of dimensionality in the analytic benchmark (§13b): in high-$d$ spaces with few observations, neighbor distances grow and $k$-NN performance degrades.
+- *R-squared* ($R^2 = 1 - \text{MSE}/\text{Var}(\text{realized})$). Overall prediction accuracy. Positive means the model predicts better than the unconditional mean.
+- *Bias* ($\bar{e} = \text{mean}(\hat{q} - q)$). Systematic over- or under-prediction.
+- *Rank correlation* (Spearman's $\rho_S$). Whether the agent ranks candidates correctly. Most relevant to allocation quality: the greedy heuristic (§5b) only needs the ordering to be correct.
 
-- *Neighbor outcome variance* $\sigma_k^2 = \text{Var}(\{q_m\}_{m=1}^{k})$. How much the $k$ nearest neighbors' outcomes disagree. Captures aleatoric uncertainty: the irreducible match noise ($\varepsilon$) plus local function roughness. Both agents face the same noise, so the broker-firm gap in $\sigma_k^2$ should be small. High $\sigma_k^2$ with low $\bar{\delta}$ indicates a locally rough or noisy region of the matching function.
-
-| $\bar{\delta}$ | $\sigma_k^2$ | Interpretation |
-|---|---|---|
-| Low | Low | Dense data, smooth local function: confident and accurate |
-| Low | High | Dense data but noisy/rough function: uncertain despite good coverage |
-| High | Low | Sparse data, neighbors happen to agree: fragile confidence |
-| High | High | Sparse data, noisy function: least reliable predictions |
-
-The broker-firm gap in $\bar{\delta}$ (epistemic) makes the informational advantage visible at the micro level. Under Model 1 staffing, $\bar{\delta}$ should stop declining for locked-in firms whose histories freeze (§9f).
+The broker-firm gap in R-squared and rank correlation makes the informational advantage visible. Under Model 1 staffing, prediction quality should stop improving for locked-in firms whose histories freeze (§9f).
 
 **Access vs. assessment decomposition.** For each brokered placement, record whether worker $i^*$ was in $R_j^t$ (the client firm's referral pool, computed at step 0). If yes: assessment value (the firm could have found this worker but the broker predicted match output better). If no: access value (the firm could not have found this worker through its own network).
 
@@ -862,9 +788,9 @@ Deferred to future work.
 
 #### Phase diagram
 
-The phase diagram maps the conditions under which brokerage transitions from intermediation to capture (Proposition 5). Its two axes are the primary drivers of matching difficulty: $d - 2s$ (noise dimensions / market opacity, §1e) (vertical) and $\rho$ (general quality share, §1e) (horizontal). The panel is populated by sweeping $(d, s)$ combinations that satisfy $d \geq 2s$.
+The phase diagram maps the conditions under which brokerage transitions from intermediation to capture (Proposition 5). Its two axes are the primary drivers of matching difficulty: $d$ (type dimensionality, §1e) (vertical) and $\rho$ (general quality share, §1e) (horizontal).
 
-Low complexity (low $d - 2s$ and low $\rho$) corresponds to persistent brokerage without capture: firms learn quickly on their own (few noise dimensions) or cross-market data has little transferable value (low $\rho$), and the broker remains a commodity intermediary earning thin margins. High complexity (high $d - 2s$, high $\rho$) defines the capture region, where many noise dimensions or a large universal quality share sustain the broker's informational advantage long enough for positive feedback to produce capture.
+Low complexity (low $d$ and low $\rho$) corresponds to persistent brokerage without capture: firms learn quickly on their own (few type dimensions) or cross-market data has little transferable value (low $\rho$), and the broker remains a commodity intermediary earning thin margins. High complexity (high $d$, high $\rho$) defines the capture region, where many type dimensions or a large universal quality share sustain the broker's informational advantage long enough for positive feedback to produce capture.
 
 The boundary between the regions may shift with $\eta$ (entry/exit rate), which controls how quickly firm turnover refreshes the broker's structural advantage.
 
@@ -872,7 +798,7 @@ The boundary between the regions may shift with $\eta$ (entry/exit rate), which 
 
 **Fig. 1.** The informational mechanism.
 - *Purpose:* Establishes the core mechanism: the broker learns faster than individual firms, the gap widens with market opacity, this drives increasing outsourcing, and the resulting matches differ in quality by channel (Propositions 1, 2b, 2c).
-- *Content:* All panels are at default parameters ($d = 8$, $\rho = 0.50$). Each panel includes a **base model** series (dashed grey) as a no-capture reference line, plus Model 1 and Model 2 series. 
+- *Content:* All panels are at default parameters ($d = 4$, $\rho = 0.50$). Each panel includes a **base model** series (dashed grey) as a no-capture reference line, plus Model 1 and Model 2 series. 
   - Panel A: time on the horizontal axis, prediction quality ($R^2$, rolling 50-placement window) on the vertical axis. One line for the broker, one for the average firm. Under the base model the broker's learning advantage is transient: the gap narrows as firms accumulate experience. An inset or small-multiple shows the effect of varying $d$ on the base model learning gap (Proposition 2c). 
   - Panel B: time on the horizontal axis, fraction of vacancies outsourced to the broker on the vertical axis. Under the base model, outsourcing rises then falls as firms learn, establishing the self-liquidating baseline. Model 1 and Model 2 diverge from this reference. 
   - Panel C: time on the horizontal axis, average realized match output $\bar{q}_c^t$ on the vertical axis, one line per channel (direct hire, brokered placement, staffing where applicable). Under the base model only direct-hire and placement channels appear; the placement quality premium narrows over time. Model 1 and Model 2 overlaid or in separate sub-panels. 
@@ -892,7 +818,7 @@ The boundary between the regions may shift with $\eta$ (entry/exit rate), which 
 
 **Fig. 5.** Phase diagram.
 - *Purpose:* Maps the conditions under which capture occurs, identifying three qualitative regions (no capture, worker capture, data capture) as a function of matching complexity (Proposition 5 and its corollary).
-- *Content:* A single panel: $\rho$ (general quality share) on the horizontal axis, $d - 2s$ (noise dimensions) on the vertical axis. Populated by sweeping $(d, s)$ combinations that satisfy $d \geq 2s$; points with equal $d - 2s$ but different $(d, s)$ values should cluster together, confirming that $d - 2s$ is the sufficient statistic for opacity. The panel is a heatmap or contour plot with three labeled regions.
+- *Content:* A single panel: $\rho$ (general quality share) on the horizontal axis, $d$ (type dimensionality) on the vertical axis. The panel is a heatmap or contour plot with three labeled regions.
 
 #### SI figures
 
@@ -906,7 +832,7 @@ The boundary between the regions may shift with $\eta$ (entry/exit rate), which 
 
 **Fig. S3.** OAT parameter sweeps.
 - *Purpose:* Demonstrates that the main results (learning gap, capture trajectories, phase boundaries) are robust to parameter choices and not artifacts of specific defaults (Proposition 5).
-- *Content:* Grid of panels. Each panel varies one parameter ($\eta$, $\mu_b$, $c_{\text{emp}}$, $L$, $\mu_d$) while holding others at defaults, showing either learning curves (broker vs. firm prediction quality) or capture ratios ($F^t$, $\Sigma^t$) over time. The effect of $(d, s)$ is absorbed into the $d - 2s$ axis of the phase diagram (Fig. 5). Key patterns to confirm: staffing economics respond to $\mu_b$, $c_{\text{emp}}$, and $L$ as expected; data capture dynamics respond to $\mu_d$; firm turnover ($\eta$) shifts the capture boundary.
+- *Content:* Grid of panels. Each panel varies one parameter ($\eta$, $\mu_b$, $c_{\text{emp}}$, $L$, $\mu_d$) while holding others at defaults, showing either learning curves (broker vs. firm prediction quality) or capture ratios ($F^t$, $\Sigma^t$) over time. The effect of $(d, s)$ is absorbed into the $d$ axis of the phase diagram (Fig. 5). Key patterns to confirm: staffing economics respond to $\mu_b$, $c_{\text{emp}}$, and $L$ as expected; data capture dynamics respond to $\mu_d$; firm turnover ($\eta$) shifts the capture boundary.
 
 **Fig. S4.** Network visualization snapshots.
 - *Purpose:* Provides intuition for how the combined graph evolves and how structural holes close over time, making the abstract network measures in Fig. 2 visually concrete.
@@ -918,7 +844,7 @@ The boundary between the regions may shift with $\eta$ (entry/exit rate), which 
 
 **Fig. S6.** Prediction confidence decomposition.
 - *Purpose:* Makes the informational advantage visible at the micro level by showing how each agent's prediction uncertainty evolves. Complements Fig. S5 (which measures accuracy ex post) with an ex ante view of how much each agent "knows" when making predictions. Under Model 1, locked-in firms' epistemic uncertainty should stop declining, providing a micro-level signature of the lock-in mechanism.
-- *Content:* Two sub-panels sharing a time axis, all at default parameters. Panel A: average neighbor distance $\bar{\delta}$ over time (broker and average firm), capturing epistemic uncertainty. The broker-firm gap in $\bar{\delta}$ is the informational advantage: the broker has denser local data and shorter neighbor distances. Panel B: average neighbor outcome variance $\sigma_k^2$ over time (broker and average firm), capturing aleatoric uncertainty. Both agents face the same match noise, so the gap should be small. Under Model 1, a second set of firm lines stratified by staffing exposure (as in Fig. 4B) shows locked-in firms' $\bar{\delta}$ plateauing while non-clients' $\bar{\delta}$ continues to decline.
+- *Content:* Three sub-panels sharing a time axis: R-squared, bias, and rank correlation over time (broker and average firm). Under Model 1, a second set of firm lines stratified by staffing exposure shows locked-in firms' prediction quality plateauing while non-clients continue to improve.
 
 ## Part III. Calibration and Verification
 
@@ -944,28 +870,26 @@ Parameters are organized into five categories reflecting their role in the analy
 | $P$ | Broker pool target size | $\lceil 0.20 \cdot N_W \rceil$ | 200 workers at $N_W = 1000$. Pool maintained at target by replacing placed workers with new recruits each period. | Base |
 | $k_S$ | Social network mean degree | 6 | Fixed network topology parameter (§4) | Base |
 | $p_{\text{rewire}}$ | Social network rewiring | 0.1 | Fixed network topology parameter (§4) | Base |
-| $k$ | $k$-NN neighbors (§2a) | 10 | Fixed; results qualitatively insensitive to $k \in \{5, 15, 20\}$ | Base |
 | $\omega$ | Satisfaction recency weight (§6a) | 0.3 | Fixed; standard EWMA weight | Base |
-| $p_{\text{vac}}$ | Per-period vacancy probability (§5) | 0.20 | ~20 vacancies/period across 100 firms, ensuring sufficient hiring for k-NN learning | Base |
+| $p_{\text{vac}}$ | Per-period vacancy probability (§5) | 0.30 | ~30 vacancies/period across 100 firms | Base |
 | $L$ | Fee amortization period | 4 | Expected useful duration of a hire for per-period cost comparisons (§6a). M1 reuses as staffing assignment length (§9). | Base |
 
 **Calibration parameters.** Set during model development to ensure the DGP is well-behaved across the parameter space. Constant in production runs.
 
 | Symbol | Meaning | Default | Notes | Model |
 |--------|---------|---------|-------|-------|
-| $r_{\text{base}}$ | Reservation wage floor | $0.70 \cdot \bar{f}$ | Calibrated at init from Monte Carlo sample. Network premium (0.20) and noise scale (0.05) hardcoded in §3b. | Base |
+| $r_{\text{base}}$ | Reservation wage floor | $0.60 \cdot E[f]$ | Calibrated at init from Monte Carlo sample. Network premium (0.20) and noise scale (0.05) hardcoded in §3b. | Base |
 | $K_\mu$ | Number of RBF centers | 10 | Fixed; coverage maintained by $h$ scaling (§1b) | Base |
-| $h$ | RBF bandwidth | Median pairwise dist. in $\{Pw_i\}$ | Scales with $\sqrt{s}$ through the median heuristic (§1b) | Base |
+| $\lambda$ | Ridge regression regularization | 1.0 | Regularization for firm and broker regression models (§2a, §2b) | Base |
+| $h$ | RBF bandwidth | Median pairwise dist. in worker types | Automatic scaling via median heuristic (§1b) | Base |
 
 In the table, $\bar{f}$ denotes the mean absolute match output $E[|f(w,x)|]$, computed from a Monte Carlo sample at initialization. Parameters expressed as multiples of $r_{\text{base}}$ scale automatically with the output distribution, ensuring that the economic logic (surplus margins, fee incentives, staffing profitability) is stable across different $d$ and $A$ specifications.
 
-**Phase diagram axes.** The primary parameters of interest, defining the model's regime space (§1e, Fig. 5). Because $d - 2s$ is the sufficient statistic for market opacity (§1e), the phase diagram uses $d - 2s$ and $\rho$ as its two axes. The sweep varies $(d, s)$ jointly; combinations with the same $d - 2s$ should produce equivalent dynamics.
+**Phase diagram axes.** The primary parameters of interest are $d$ (type dimensionality, controlling difficulty) and $\rho$ (general quality share, controlling the nonlinear fraction). Higher $d$ increases the regression estimation challenge; higher $\rho$ increases the unlearnable nonlinear component.
 
 | Symbol | Meaning | Default | Sweep | Model |
 |--------|---------|---------|-------|-------|
 | $d$ | Type dimensionality | 8 | {4, 6, 8, 10} | Base |
-| $s$ | Signal rank (projection and interaction) | 2 | {1, 2, 3} | Base |
-| $d - 2s$ | Noise dimensions (phase diagram axis) | 4 | {0, 2, 4, 6, 8} from $(d, s)$ combinations satisfying $d \geq 2s$ | Base |
 | $\rho$ | General quality share $\text{Var}(\mu)/\text{Var}(f)$ | 0.50 | {0, 0.10, 0.20, 0.30, 0.50, 0.70, 1.0} | Base |
 
 **OAT sensitivity parameters.** Varied one at a time while holding all others at defaults. Confirms that qualitative dynamics are robust (Fig. S3).
@@ -987,29 +911,22 @@ In the table, $\bar{f}$ denotes the mean absolute match output $E[|f(w,x)|]$, co
 | $T_{\text{burn}}$ | Burn-in periods (discarded) | 20 | — | Base |
 | $M$ | Network measure interval | 10 | — | Base |
 
-**Rank and projection constraint.** The orthogonality constraint $P \perp U$ requires $d \geq 2s$. With the defaults ($d = 8$, $s = 2$), the constraint is satisfied ($8 \geq 4$). All $(d, s)$ combinations in the sweep satisfy $d \geq 2s$.
-
-**Projection robustness check.** A robustness check relaxes the orthogonality constraint $P \perp U$ by drawing $P$ randomly (without projecting onto the null space of $U$). This tests whether the broker's two-stage decomposition (§2b) is robust to leakage between the general and interaction components. Results are qualitatively similar; see Appendix.
 
 **Professional staffing specification.** The baseline defaults ($\mu_b = 0.25$) reflect a general labor market. For an alternative specification representing professional or specialized staffing markets (IT, engineering, executive search), use $\mu_b = 0.35$, reflecting higher value-capture rates for specialized screening. This value is included in the OAT sweep above.
 
-**Simulation length.** The default $T = 200$ periods (50 years at quarterly periodicity) is long enough for capture dynamics to emerge and stabilize in the baseline specification. The first $T_{\text{burn}} = 20$ periods are discarded from analysis; during the burn-in, agents have no experience and predictions default to the public benchmark (§2d). An OAT check at $T = 400$ verifies that dynamics have reached a qualitative steady state by $T = 200$.
+**Simulation length.** The default $T = 200$ periods (50 years at quarterly periodicity) is long enough for capture dynamics to emerge and stabilize in the baseline specification. The first $T_{\text{burn}} = 30$ periods are discarded from analysis; during the burn-in, agents are still accumulating initial experience and regression models are noisy. An OAT check at $T = 400$ verifies that dynamics have reached a qualitative steady state by $T = 200$.
 
 #### 12c. Initial conditions
 
-**Matching function generation.** The matching function $f(w,x) = \mu(w) + w^\top Ax$ is constructed in three steps.
+**Matching function generation.** The matching function $f(w,x) = \mu(w) + w^\top x$ is generated as follows.
 
-*Step 1: Interaction matrix $A$.* $A \in \mathbb{R}^{d \times d}$ is diagonal of rank $s$: $A_{ii} = 1$ for $i \leq s$, zero elsewhere. This is equivalent to $A = U U^\top$ where $U = I_d[:,1:s]$ (the first $s$ coordinate axes). The interaction reduces to $w_{1:s}^\top x_{1:s}$: each of the first $s$ skill dimensions pairs directly with the corresponding firm dimension. The diagonal structure makes the matching function learnable by k-NN with moderate data.
-
-*Step 2: Projection matrix $P$.* $P \in \mathbb{R}^{s \times d}$ with rows in the orthogonal complement of the column space of $U$. Procedure: sample $s$ random vectors from $N(0, I_d)$, project each onto the null space of $U$ ($v \leftarrow v - UU^\top v$), then orthonormalize. This ensures $PU = 0$ (§1d). Requires $d \geq 2s$, which is satisfied by all $(d, s)$ combinations in the sweep.
-
-*Step 3: General quality $\mu$.* Draw $K_\mu$ RBF centers $c_l \sim N(0, I_s)$ and non-negative weights $a_l = z_l^2$ where $z_l \sim N(0, 1)$. Non-negativity ensures $\mu(w) \geq 0$ (all workers have non-negative general quality). Set bandwidth $h$ equal to the median pairwise distance in $\{Pw_i\}$ computed from a Monte Carlo sample of 10,000 workers. Scale all $a_l$ jointly so that $\text{Var}(\mu) / \text{Var}(f) = \rho$ (evaluated on the same Monte Carlo sample).
+*General quality $\mu$.* The interaction is $w^\top x$ (implicit identity matrix, no separate construction needed). For $\mu$: draw $K_\mu$ RBF centers $c_l \sim N(0, I_d)$ and non-negative weights $a_l = z_l^2$ where $z_l \sim N(0, 1)$. Non-negativity ensures $\mu(w) \geq 0$. Set bandwidth $h$ equal to the median pairwise distance among a Monte Carlo sample of 10,000 worker types in $\mathbb{R}^d$. Scale all $a_l$ jointly so that $\text{Var}(\mu) / \text{Var}(f) = \rho$ (evaluated on the same Monte Carlo sample).
 
 **Firm types.** Sampled along a smooth 1D curve embedded in $\mathbb{R}^d$ (§0): $N_F$ firms are evenly spaced along the curve, with small perturbation. The curve parameters (per-dimension frequencies and phases) are stored for reuse by entrant firms.
 
 **Worker types.** Each worker draws a reference firm uniformly at random, then $w_i = x_{j(i)} + \epsilon_i$ where $\epsilon_i \sim N(0, I_d)$, clipped to $[-3, 3]^d$. Workers cluster around firm types, creating natural neighborhoods.
 
-**Calibration of $r_{\text{base}}$ and $\bar{q}_{\text{pub}}$.** At initialization, compute $\bar{f} = E[|f|]$ and $E[f]$ from a Monte Carlo sample of 10,000 clustered worker-firm pairs (workers drawn as perturbations of actual firm types, matching the initialization distribution). Set $r_{\text{base}} = 0.70 \cdot \bar{f}$ and $\bar{q}_{\text{pub}} = E[f]$. Using actual firm types for calibration ensures the output scale matches the simulation's population.
+**Calibration of $r_{\text{base}}$ and $\bar{q}_{\text{pub}}$.** At initialization, compute $E[f]$ from a Monte Carlo sample of 10,000 clustered worker-firm pairs (workers drawn as perturbations of actual firm types, matching the initialization distribution). Set $\bar{q}_{\text{pub}} = E[f]$ and $r_{\text{base}} = 0.60 \cdot E[f]$. Using actual firm types for calibration ensures the output scale matches the simulation's population.
 
 **Social network $G_S$.** Generated as a Watts–Strogatz small-world graph with $N_W$ nodes, degree $k_S$, rewiring probability $p_{\text{rewire}}$. Node ordering matches workers sorted by type (first principal component), so nearest neighbors in the ring lattice are nearest in type space. Rewiring then breaks some of this assortativity.
 
@@ -1033,10 +950,10 @@ In the table, $\bar{f}$ denotes the mean absolute match output $E[|f(w,x)|]$, co
 
 **Assessment.** The no-capture region should correspond to low complexity along either primary channel. The mechanism differs by channel:
 
-- At low $d - 2s$: the curse of dimensionality is mild and firms' $k$-NN predictions converge quickly from own-hire data alone, regardless of the quality share $\rho$.
-- At low $\rho$: cross-market data has little transferable value because the universal component $\mu$ accounts for a small share of match quality variance. The broker's pooling advantage is negligible even if $d - 2s$ is moderate.
+- At low $d$: firms can estimate $d+1$ regression parameters from their sparse histories. The broker's data advantage is small.
+- At low $\rho$: the matching function is mostly linear. Both firms and broker can learn it well with regression. The broker's advantage is modest.
 
-Because the two channels affect the firm-broker asymmetry differently, the no-capture boundary may sit at different complexity thresholds along the $d - 2s$ axis vs. the $\rho$ axis (§11). In a multi-broker extension, broker competition would fragment the data pool and expand the no-capture region; this is deferred to future work.
+Because the two channels affect the firm-broker asymmetry differently, the no-capture boundary may sit at different complexity thresholds along the $d$ axis vs. the $\rho$ axis (§11). In a multi-broker extension, broker competition would fragment the data pool and expand the no-capture region; this is deferred to future work.
 
 The key verification concern is that the positive feedback loop (more outsourcing → more broker data → better predictions → more outsourcing) might produce capture even at low complexity. Early runs should confirm that the no-capture region is large enough to be empirically plausible. If it is empty or unrealistically small, a possible fix is strengthening the referral channel (higher $k_S$).
 
@@ -1044,57 +961,43 @@ The goal is a phase diagram where the no-capture region is large enough to be em
 
 #### 13b. Analytic benchmark for the broker's advantage
 
-The following closed-form scaling predictions provide an analytic benchmark against which the simulation's $k$-NN learning dynamics can be compared. They yield predictions for the phase diagram axes ($d$, $\rho$) that the simulation can validate or refine.
+The following closed-form scaling predictions provide an analytic benchmark against which the simulation's ridge regression learning dynamics can be compared. They yield predictions for the phase diagram axes ($d$, $\rho$) that the simulation can validate or refine.
 
-All agents use $k$-NN regression in $d$ dimensions. The standard nonparametric convergence rate for $k$-NN in $d$ dimensions is $\text{MSE} \sim n^{-\frac{2}{2+d}}$, where $n$ is the number of observations (Stone, 1982). This rate assumes $k$ grows with $n$; with fixed $k = 10$, bias does not vanish, but the scaling dependence on $d$ and $n$ remains qualitatively correct. All rates below are stated up to constants that depend on the target function's smoothness and the effective noise level.
+All agents use ridge regression. Firms fit a $d$-dimensional linear model ($d+1$ parameters including intercept); the broker fits a $2d$-dimensional model on concatenated $[w; x]$ features. For a linear target with Gaussian noise, ridge regression MSE scales as $\text{MSE} \sim d / n + \lambda \|\beta^*\|^2$, where the first term is estimation error (decreasing in $n$) and the second is regularization bias (decreasing in $\lambda$). The key scaling is that firms need $n \gg d$ observations to estimate $d+1$ parameters accurately, while the broker needs $n \gg 2d$ but has far more data.
 
-**Firm.** Firm $j$ estimates the composite $f(w, x_j) = \mu(w) + w^\top \beta_j$ from $n_j = |\mathcal{H}_j^t|$ own-hire observations. The composite is a nonlinear function with variation in $2s$ effective dimensions (the $P$ and $U$ subspaces), but the firm performs $k$-NN in all $d$ dimensions, so its MSE scales as:
+**Firm.** Firm $j$ fits $q \approx \beta^\top w + c$ from $n_j$ own-hire observations ($d+1$ parameters). The true function $f(w, x_j) = \mu(w) + w^\top x_j$ has a linear component ($w^\top x_j$) that ridge regression captures well, and a nonlinear component ($\mu(w)$) that acts as irreducible noise. The firm's MSE decomposes as:
 
-$$\text{MSE}_{\text{firm}} \sim n_j^{-\frac{2}{2+d}}$$
+$$\text{MSE}_{\text{firm}} \approx \frac{d \cdot \sigma_{\text{eff}}^2}{n_j} + \rho \cdot \text{Var}(f)$$
 
-**Broker, Stage 1.** The broker estimates $\mu(w)$ from its full cross-market history $n_b = |\mathcal{H}_b^t|$ observations. Because Stage 1 regresses raw outcomes $q_m$ on worker types $w_m$, the response includes interaction terms $w_m^\top \beta_{j(m)}$ from different firms as additional noise. These terms have conditional mean zero (since firm types are mean-zero and independent of worker assignment to neighbors), so Stage 1 converges to $\mu(w)$, but the effective noise variance is $\sigma_\varepsilon^2 + (1 - \rho)\,\text{Var}(f)$ rather than $\sigma_\varepsilon^2$ alone. The Stage 1 MSE scales as:
+where $\sigma_{\text{eff}}^2 = \sigma_\varepsilon^2 + \rho \cdot \text{Var}(f)$ is the effective noise (match noise plus $\mu$ variance). The first term is estimation error (decreasing in $n_j$); the second is model misspecification (irreducible for a linear model).
 
-$$\text{MSE}_{\text{S1}} \sim n_b^{-\frac{2}{2+d}}$$
+**Broker.** The broker fits $q \approx \beta_w^\top w + \beta_x^\top x + c$ from $n_b$ pooled observations ($2d+1$ parameters). Its MSE is:
 
-with a rate constant inflated by the interaction noise. Since $n_b \gg n_j$ (the broker pools data from all client firms), this component converges much faster than the firm's composite estimate despite the larger constant.
+$$\text{MSE}_{\text{broker}} \approx \frac{2d \cdot \sigma_{\text{eff}}^2}{n_b} + \rho \cdot \text{Var}(f)$$
 
-**Broker, Stage 2.** The broker estimates the firm-specific residual $w^\top \beta_j$ from $n_{jb} = |\mathcal{H}_{b,j}^t|$ observations at firm $j$. The Stage 2 target is linear in $s$ effective dimensions (simpler than the firm's composite target), but the broker again performs $k$-NN in $d$ dimensions. Stage 1 estimation errors $\mu(w_m) - \hat\mu_b(w_m)$ propagate into the residuals $\tilde{q}_m$ as a spatially correlated bias (nearby observations share similar Stage 1 errors), creating an irreducible noise floor:
+Both agents face the same misspecification floor ($\rho \cdot \text{Var}(f)$). The difference is estimation error: the broker has twice as many parameters ($2d$ vs $d$) but far more data ($n_b \gg n_j$).
 
-$$\text{MSE}_{\text{S2}} \sim n_{jb}^{-\frac{2}{2+d}} + \text{MSE}_{\text{S1}}$$
+**Advantage condition.** The broker outperforms the firm when its estimation error is smaller:
 
-**Approximate broker MSE.** The broker's prediction error decomposes into Stage 1 and Stage 2 errors (the cross-term vanishes under $P \perp U$). Approximating each component's rate constant as proportional to its share of signal variance ($\rho$ for $\mu$, $1 - \rho$ for the interaction):
+$$\frac{2d}{n_b} < \frac{d}{n_j} \quad \Longrightarrow \quad n_b > 2 n_j$$
 
-$$\text{MSE}_{\text{broker}} \approx \rho \cdot n_b^{-\frac{2}{2+d}} + (1 - \rho) \cdot \left[n_{jb}^{-\frac{2}{2+d}} + n_b^{-\frac{2}{2+d}}\right] = n_b^{-\frac{2}{2+d}} + (1 - \rho) \cdot n_{jb}^{-\frac{2}{2+d}}$$
+Since the broker pools observations across all client firms, this condition is easily satisfied after a few periods. The advantage grows with $d$ (firms need more data to estimate more parameters) and is independent of $\rho$ at the estimation-error level (both agents face the same misspecification). However, higher $\rho$ increases $\sigma_{\text{eff}}^2$, making estimation noisier for both agents and extending the period during which the broker's data volume matters.
 
-The first term is the Stage 1 error, which propagates into both components of the prediction. The second is the Stage 2 convergence rate, weighted by the firm-specific variance share. When $n_b \gg n_{jb}$, the first term is negligible and the binding constraint is firm-specific estimation.
-
-**Advantage condition.** The broker outperforms the firm when $\text{MSE}_{\text{broker}} < \text{MSE}_{\text{firm}}$. When $n_b$ is large enough that the Stage 1 floor is negligible, this reduces to:
-
-$$(1 - \rho) \cdot n_{jb}^{-\frac{2}{2+d}} < n_j^{-\frac{2}{2+d}}$$
-
-Let $\alpha = \frac{n_{jb}}{n_j}$ denote the broker's share of firm $j$'s total hires. Substituting $n_{jb} = \alpha\, n_j$:
-
-$$(1 - \rho) < \alpha^{\frac{2}{2+d}}$$
-
-At $d = 8$: if the broker handles 30% of firm $j$'s hires ($\alpha = 0.3$), the broker needs $\rho > 0.21$; at $\alpha = 0.1$, it needs $\rho > 0.37$. This reveals a bootstrapping dynamic: the broker needs placements at a firm to build Stage 2 accuracy, but firms only outsource if the broker is already accurate. The outsourcing decision (§6) endogenizes $\alpha$.
-
-Higher $d$ slows convergence for all learners (the exponent $\frac{2}{2+d}$ decreases), extending the window during which the broker's data volume matters.
-
-Higher $\rho$ strengthens the broker's advantage through two channels: it reduces the weight on the firm-specific term $(1 - \rho) \cdot n_{jb}^{-\frac{2}{2+d}}$ in the broker's MSE, and it increases the weight on the nonlinear component $\mu(w)$ that is harder for the firm to estimate from limited data (the firm estimates $\mu$ and the interaction jointly, without the benefit of cross-market decomposition).
+Higher $d$ increases the number of parameters for both agents but hurts firms proportionally more (they have fewer observations per parameter). At $d = 4$, a firm with $n_j = 5$ observations estimates 5 parameters from 5 data points (barely determined). At $d = 8$, it needs 9 parameters from the same 5 observations (severely underdetermined).
 
 #### 13c. Robustness to matching function specification
 
-**Concern.** The main specification uses $f(w,x) = \mu(w) + w^\top Ax$ with RBF general quality (§1b) and rank-$s$ interaction (§1c). The ABM's $k$-NN learning mechanism is nonparametric and will learn any smooth $f$, so the question is whether the *dynamics* (positive feedback, decoupling, capture) are robust to the functional form of $\mu$ and the interaction structure.
+**Concern.** The main specification uses $f(w,x) = \mu(w) + w^\top x$ with RBF general quality (§1b) and identity interaction (§1c). The ABM's ridge regression learning mechanism is linear, so the question is whether the *dynamics* (positive feedback, decoupling, capture) are robust to the functional form of $\mu$ and the interaction structure.
 
 **Assessment.**
 (a) Alternative forms of $\mu$: quadratic ($\mu(w) = w^\top Qw$ for a low-rank $Q$) or single-index ($\mu(w) = g(P w)$ for a monotone $g$). These test whether the specific RBF form matters or whether any smooth nonlinear $\mu$ produces the same qualitative dynamics.
 
 - If the dynamics are qualitatively the same under RBF, quadratic, and single-index $\mu$, the paper can state robustness to the form of general quality.
 
-(b) Nonlinear interaction: $f(w,x) = \mu(w) + w^\top Ax + (w \circ w)^\top B(x \circ x)$. Adds nonlinearity to the firm-specific component; for example, having a moderate level of some skill is better than having too much or too little for certain firms.
+(b) Nonlinear interaction: $f(w,x) = \mu(w) + w^\top x + (w \circ w)^\top B(x \circ x)$. Adds nonlinearity to the firm-specific component; for example, having a moderate level of some skill is better than having too much or too little for certain firms.
 
 - Introduces a second parameter matrix $B$.
-- Tests whether the broker's two-stage decomposition retains its advantage when the interaction itself is nonlinear (since Stage 2 estimates a nonlinear residual rather than a linear one).
+- Tests whether the broker's pooled decomposition retains its advantage when the interaction itself is nonlinear (since firm-specific estimates a nonlinear residual rather than a linear one).
 
 ### References (cited in model specification)
 

@@ -3,7 +3,7 @@ using TransientBrokerage
 using StableRNGs: StableRNG
 
 @testset "Entry/Exit" begin
-    params = default_params(d=4, s=1, N_W=200, N_F=20)
+    params = default_params(d=4, N_W=200, N_F=20)
     N_W = params.N_W
 
     # Helper: build available set from state
@@ -43,7 +43,7 @@ using StableRNGs: StableRNG
         @test new_firm.id == old_next_id
         @test state.next_firm_id == old_next_id + 1
         @test 3 <= length(new_firm.employees) <= 5
-        @test new_firm.history_count == 0
+        @test 3 <= new_firm.history_count <= 5  # seeded from initial hires
         @test new_firm.satisfaction_internal == state.cal.q_pub
         @test new_firm.satisfaction_broker == state.cal.q_pub
         @test new_firm.tried_internal == false
@@ -107,7 +107,7 @@ using StableRNGs: StableRNG
         for wid in collect(state.broker.pool)
             state.workers[wid].status == available || delete!(state.broker.pool, wid)
         end
-        verify_invariants!(state)
+        verify_invariants(state)
     end
 
     # Turnover rate approximately equals eta over many periods

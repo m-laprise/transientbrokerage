@@ -51,19 +51,10 @@ using StableRNGs: StableRNG
 
     # MatchingEnv, CalibrationConstants, and CachedNetworkMeasures have correct dimensions
     @testset "Supporting struct construction" begin
-        d, s = 8, 2
-        env = MatchingEnv(
-            zeros(d, d),
-            zeros(d, s),
-            zeros(s, d),
-            zeros(s, 1),
-            zeros(1),
-            1.0,
-        )
-        @test size(env.A) == (d, d)
-        @test size(env.U) == (d, s)
-        @test size(env.P) == (s, d)
-        @test size(env.mu_centers) == (s, 1)
+        d = 8
+        env = MatchingEnv(d, zeros(d, 1), zeros(1), 1.0)
+        @test env.d == d
+        @test size(env.mu_centers) == (d, 1)
         @test env.mu_bandwidth == 1.0
 
         cal = CalibrationConstants(1.0, 2.0, 1.5)
@@ -83,7 +74,7 @@ using StableRNGs: StableRNG
         @test !ismutable(default_params())
 
         # MatchingEnv and CalibrationConstants are immutable
-        env = MatchingEnv(zeros(8, 8), zeros(8, 2), zeros(2, 8), zeros(2, 1), zeros(1), 1.0)
+        env = MatchingEnv(8, zeros(8, 1), zeros(1), 1.0)
         @test !ismutable(env)
         cal = CalibrationConstants(1.0, 1.0, 1.0)
         @test !ismutable(cal)
@@ -96,15 +87,14 @@ using StableRNGs: StableRNG
     # Every baseline default matches the spec's table of values
     @testset "default_params returns valid ModelParams" begin
         p = default_params()
-        @test p.d == 8
-        @test p.s == 2
+        @test p.d == 4
         @test p.rho == 0.50
         @test p.K_mu == 10
         @test p.N_W == 1000
         @test p.N_F == 100
         @test p.eta == 0.05
         @test p.beta_W == 0.50
-        @test p.k_nn == 10
+        @test p.lambda == 1.0
         @test p.k_S == 6
         @test p.p_rewire == 0.1
         @test p.omega == 0.3
@@ -112,21 +102,20 @@ using StableRNGs: StableRNG
         @test p.L == 4
         @test p.mu_b == 0.25
         @test p.c_emp_frac == 0.15
-        @test p.p_vac == 0.20
+        @test p.p_vac == 0.30
         @test p.pool_target_frac == 0.20
-        @test p.n_candidates_frac == 0.01
+        @test p.n_candidates_frac == 0.015
         @test p.network_measure_interval == 10
         @test p.T == 200
-        @test p.T_burn == 20
+        @test p.T_burn == 30
         @test p.seed == 42
     end
 
     # Keyword overrides replace defaults without affecting other fields
     @testset "default_params with overrides" begin
-        p = default_params(; seed = 99, d = 10, s = 3)
+        p = default_params(; seed = 99, d = 10)
         @test p.seed == 99
         @test p.d == 10
-        @test p.s == 3
     end
 
     # Typos or invalid parameter names raise immediately
@@ -136,8 +125,8 @@ using StableRNGs: StableRNG
 
     # Out-of-range or structurally invalid parameters throw AssertionError
     @testset "validate_params rejects invalid combinations" begin
-        # d < 2s
-        @test_throws AssertionError default_params(; d = 3, s = 2)
+        # d too small
+        @test_throws AssertionError default_params(; d = 1)
         # rho out of bounds
         @test_throws AssertionError default_params(; rho = -0.1)
         @test_throws AssertionError default_params(; rho = 1.5)
@@ -161,9 +150,9 @@ using StableRNGs: StableRNG
         @test p0.rho == 0.0
         p1 = default_params(; rho = 1.0)
         @test p1.rho == 1.0
-        # d = 2s (minimum valid)
-        p2 = default_params(; d = 4, s = 2)
-        @test p2.d == 4
+        # d = 2 (minimum valid)
+        p2 = default_params(; d = 2)
+        @test p2.d == 2
     end
 
     # Per-period fields zero out; cumulative revenue survives the reset
@@ -180,8 +169,6 @@ using StableRNGs: StableRNG
         accum.openings_brokered = 8
         accum.placement_revenue = 100.0
         accum.staffing_revenue = 200.0
-        push!(accum.firm_mean_dists, 1.0)
-        push!(accum.broker_mean_dists, 2.0)
         # Set cumulative fields
         accum.cumulative_placement_revenue = 500.0
         accum.cumulative_staffing_revenue = 1000.0
@@ -199,9 +186,6 @@ using StableRNGs: StableRNG
         @test accum.openings_brokered == 0
         @test accum.placement_revenue == 0.0
         @test accum.staffing_revenue == 0.0
-        @test isempty(accum.firm_mean_dists)
-        @test isempty(accum.broker_mean_dists)
-
         # Cumulative fields are preserved
         @test accum.cumulative_placement_revenue == 500.0
         @test accum.cumulative_staffing_revenue == 1000.0
@@ -213,14 +197,7 @@ using StableRNGs: StableRNG
         validate_params(p)
 
         # Sub-structs construct without error
-        env = MatchingEnv(
-            zeros(p.d, p.d),
-            zeros(p.d, p.s),
-            zeros(p.s, p.d),
-            zeros(p.s, 1),
-            zeros(1),
-            1.0,
-        )
+        env = MatchingEnv(p.d, zeros(p.d, 1), zeros(1), 1.0)
         cal = CalibrationConstants(1.0, 1.0, 1.0)
         accum = PeriodAccumulators()
         reset_accumulators!(accum)

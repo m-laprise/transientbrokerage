@@ -58,19 +58,17 @@ function resolve_conflicts(proposals::Vector{ProposedMatch},
 end
 
 """
-    finalize_match!(match, state, z_buf, Ax_buf) -> Float64
+    finalize_match!(match, state) -> Float64
 
 Realize match output, update worker status, firm employees, histories, and satisfaction.
-Returns realized output. `z_buf` and `Ax_buf` are pre-allocated buffers passed to `match_output!`.
+Returns realized output.
 """
-function finalize_match!(match::ProposedMatch, state::ModelState,
-                         z_buf::Vector{Float64}, Ax_buf::Vector{Float64})::Float64
+function finalize_match!(match::ProposedMatch, state::ModelState)::Float64
     worker = state.workers[match.worker_id]
     firm = state.firms[match.firm_idx]
 
     # Realize output
-    q_realized = match_output!(z_buf, Ax_buf, worker.type, firm.type,
-                                state.env, state.rng)
+    q_realized = match_output(worker.type, firm.type, state.env, state.rng)
 
     # Update worker
     worker.status = employed

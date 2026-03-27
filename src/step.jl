@@ -60,12 +60,7 @@ function step_period!(state::ModelState)
         length(current_broker_firms) / n_vacancies : 0.0
 
     # ── Step 2: Candidate generation and evaluation ──
-    client_firm_indices = collect(current_broker_firms)
-    trees = build_period_trees(state, client_firm_indices)
-    cache = PredictionCache(params.k_nn)
-    s_dim = size(state.env.P, 1)
-    z_buf = Vector{Float64}(undef, s_dim)
-    Ax_buf = Vector{Float64}(undef, params.d)
+    models = build_period_models(state, params.lambda)
 
     proposals = ProposedMatch[]
 
@@ -74,25 +69,22 @@ function step_period!(state::ModelState)
         dec == :internal || continue
         firm = state.firms[j]
         wid, q_hat_firm = internal_search(firm, state.workers, avail,
-                                           state.accum, params, state.cal.q_pub,
-                                           rng, trees.firm_trees[j], cache)
+                                           params, rng, models.firm_models[j])
         wid == 0 && continue
         wage = compute_wage(q_hat_firm, state.workers[wid].reservation_wage, params.beta_W)
         push!(proposals, ProposedMatch(j, wid, :internal, q_hat_firm, 0.0, wage))
     end
 
     # 2.2 Broker proposals (greedy best-pair)
+    client_firm_indices = collect(current_broker_firms)
     clients = [(j, state.firms[j]) for j in client_firm_indices]
     assignments = broker_allocate!(state.broker, clients, state.workers, avail,
-                                    state.accum, params, state.cal.q_pub,
-                                    rng, trees, cache)
+                                    params, rng, models)
 
     served_firms = Set{Int}()
     for (j, wid, q_hat_broker) in assignments
         # Firm re-evaluates candidate for wage setting (§3.1.1)
-        q_hat_firm = predict_firm(state.firms[j], state.workers[wid].type,
-                                   state.cal.q_pub, params.k_nn,
-                                   trees.firm_trees[j], cache).q_hat
+        q_hat_firm = predict_ridge(models.firm_models[j], state.workers[wid].type)
         wage = compute_wage(q_hat_firm, state.workers[wid].reservation_wage, params.beta_W)
         push!(proposals, ProposedMatch(j, wid, :broker, q_hat_firm, q_hat_broker, wage))
         push!(served_firms, j)
@@ -110,7 +102,7 @@ function step_period!(state::ModelState)
 
     filled_firms = Set{Int}()
     for match in accepted
-        q = finalize_match!(match, state, z_buf, Ax_buf)
+        q = finalize_match!(match, state)
 
         # Record output by channel
         if match.source == :internal

@@ -105,7 +105,7 @@ end
 
 Initialize the model and run for T periods, collecting per-period metrics.
 R-squared is computed both per-period and over a rolling window of `r_squared_window` periods.
-When `verify=true`, calls `verify_invariants!` each period.
+When `verify=true`, calls `verify_invariants` each period.
 """
 function run_simulation(params::ModelParams; verify::Bool = false,
                         r_squared_window::Int = 5)
@@ -119,14 +119,14 @@ function run_simulation(params::ModelParams; verify::Bool = false,
     broker_rolling = RollingPairs(r_squared_window)
 
     step_period!(state)
-    verify && verify_invariants!(state)
+    verify && verify_invariants(state)
     first_row = collect_period_metrics(state, firm_rolling, broker_rolling)
     rows = Vector{typeof(first_row)}(undef, T)
     rows[1] = first_row
 
     for t in 2:T
         step_period!(state)
-        verify && verify_invariants!(state)
+        verify && verify_invariants(state)
         rows[t] = collect_period_metrics(state, firm_rolling, broker_rolling)
     end
 

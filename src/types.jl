@@ -19,7 +19,7 @@ Base.@kwdef mutable struct Worker
     staffing_firm_id::Int = 0     # firm where staffed, 0 if not staffed
 end
 
-"""Employer with vacancies, a k-NN hiring history, and channel satisfaction scores."""
+"""Employer with vacancies, a hiring history, and channel satisfaction scores."""
 Base.@kwdef mutable struct Firm
     id::Int
     type::Vector{Float64}                    # x_j ∈ R^d
@@ -76,14 +76,13 @@ end
 """Immutable simulation parameters: population sizes, behavioral constants, and run config."""
 struct ModelParams
     d::Int                       # type dimensionality
-    s::Int                       # rank: projection and interaction (default 2)
     rho::Float64                 # general quality share Var(μ)/Var(f) (default 0.50)
     K_mu::Int                    # number of RBF centers (calibration parameter; default 10)
     N_W::Int                     # worker count
     N_F::Int                     # firm count
     eta::Float64                 # firm exit rate
     beta_W::Float64              # worker surplus share
-    k_nn::Int                    # k for k-NN (structural constant, fixed at 10)
+    lambda::Float64              # ridge regression regularization (default 1.0)
     k_S::Int                     # social network degree (structural constant, not swept)
     p_rewire::Float64            # rewiring probability (structural constant, not swept)
     omega::Float64               # satisfaction recency weight (structural constant, fixed at 0.3)
@@ -91,54 +90,31 @@ struct ModelParams
     L::Int                       # fee amortization period (§6a); reused as staffing assignment length in M1 (§9)
     mu_b::Float64                # staffing value-capture rate
     c_emp_frac::Float64          # employment cost as fraction of r_base
-    p_vac::Float64               # per-period vacancy probability (structural constant, fixed at 0.10)
-    pool_target_frac::Float64    # broker pool target as fraction of N_W (0.20; P = ⌈frac · N_W⌉)
-    n_candidates_frac::Float64   # candidates as fraction of N_W (0.01)
+    p_vac::Float64               # per-period vacancy probability (default 0.30)
+    pool_target_frac::Float64    # broker pool target as fraction of N_W (default 0.20; P = ⌈frac · N_W⌉)
+    n_candidates_frac::Float64   # candidates as fraction of N_W (default 0.015)
     network_measure_interval::Int # M
     T::Int                       # total periods
-    T_burn::Int                  # burn-in periods discarded from analysis (default 20)
+    T_burn::Int                  # burn-in periods discarded from analysis (default 30)
     seed::Int
 end
 
-"""Deterministic component of the matching function mu(w) + w'Ax: interaction matrix, projection, and RBF components."""
+"""Deterministic component of the matching function mu(w) + w'x: RBF general quality on full type space."""
 struct MatchingEnv
-    A::Matrix{Float64}                       # d×d interaction matrix of rank s
-    U::Matrix{Float64}                       # d×s worker skill basis of A
-    P::Matrix{Float64}                       # s×d projection matrix (rows ⊥ colspan(U))
-    mu_centers::Matrix{Float64}              # s × K_μ RBF centers (columns)
-    mu_weights::Vector{Float64}              # K_μ RBF amplitudes (scaled so Var(μ)/Var(f) = ρ)
+    d::Int                                   # type dimensionality (interaction is w'x, no separate A needed)
+    mu_centers::Matrix{Float64}              # d × K_μ RBF centers (columns)
+    mu_weights::Vector{Float64}              # K_μ RBF amplitudes (non-negative, scaled so Var(μ)/Var(f) = ρ)
     mu_bandwidth::Float64                    # calibrated RBF bandwidth h
 end
 
-"""Output-scale constants derived from Monte Carlo calibration: reservation wage floor, mean output, and public benchmark."""
+"""Output-scale constants derived from Monte Carlo calibration."""
 struct CalibrationConstants
-    r_base::Float64               # calibrated reservation wage floor
-    f_bar::Float64                # mean |μ(w) + w⊤Ax|
-    q_pub::Float64                # public benchmark
+    r_base::Float64               # reservation wage floor (0.60 * f_bar)
+    f_bar::Float64                # mean match output E[f] (= q_pub)
+    q_pub::Float64                # public benchmark E[f] (= f_bar; fallback prediction, satisfaction init)
 end
 
-"""k-NN prediction output: predicted quality, epistemic uncertainty, and aleatoric uncertainty."""
-struct PredictionResult
-    q_hat::Float64        # predicted match quality
-    mean_dist::Float64    # average neighbor distance (epistemic uncertainty)
-    neighbor_var::Float64 # neighbor outcome variance (aleatoric uncertainty)
-end
-
-"""Preallocated index, distance, and weight buffers for k-NN queries."""
-mutable struct PredictionCache
-    idxs::Vector{Int}
-    dists::Vector{Float64}
-    weights::Vector{Float64}
-end
-PredictionCache(k::Int) = PredictionCache(zeros(Int, k), zeros(Float64, k), zeros(Float64, k))
-
-"""Per-period KDTrees and precomputed residuals: per-firm trees, broker Stage 1, and broker Stage 2."""
-struct PeriodTrees
-    firm_trees::Vector{Union{Nothing, KDTree}}
-    broker_s1_tree::Union{Nothing, KDTree}
-    broker_s2_trees::Dict{Int, KDTree}
-    broker_s2_residuals::Dict{Int, Vector{Float64}}
-end
+"""Prediction quality over a window: R-squared, bias, and rank correlation."""
 
 """Prediction quality over a window: R-squared, bias, and rank correlation."""
 struct PredictionQuality
@@ -167,11 +143,6 @@ Base.@kwdef mutable struct PeriodAccumulators
     access_count::Int = 0
     assessment_count::Int = 0
     outsourcing_rate::Float64 = 0.0
-    # Confidence byproducts (prediction quality, §8)
-    firm_mean_dists::Vector{Float64} = Float64[]
-    firm_neighbor_vars::Vector{Float64} = Float64[]
-    broker_mean_dists::Vector{Float64} = Float64[]
-    broker_neighbor_vars::Vector{Float64} = Float64[]
     # Prediction/outcome pairs for R-squared computation
     firm_predicted::Vector{Float64} = Float64[]
     firm_realized::Vector{Float64} = Float64[]
@@ -200,10 +171,6 @@ function reset_accumulators!(a::PeriodAccumulators)
     a.access_count = 0
     a.assessment_count = 0
     a.outsourcing_rate = 0.0
-    empty!(a.firm_mean_dists)
-    empty!(a.firm_neighbor_vars)
-    empty!(a.broker_mean_dists)
-    empty!(a.broker_neighbor_vars)
     empty!(a.firm_predicted)
     empty!(a.firm_realized)
     empty!(a.broker_predicted)

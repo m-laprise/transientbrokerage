@@ -51,7 +51,7 @@ using StableRNGs: StableRNG
 
     # After finalize_match!, worker is employed, firm has the employee
     @testset "finalize_match! updates state" begin
-        params = default_params(d=4, s=1, N_W=100, N_F=10)
+        params = default_params(d=4, N_W=100, N_F=10)
         state = initialize_model(params)
         # Find an available worker
         avail_w = findfirst(w -> w.status == available, state.workers)
@@ -63,9 +63,8 @@ using StableRNGs: StableRNG
 
         match = ProposedMatch(firm_idx, avail_w, :internal, 5.0, 0.0,
                               compute_wage(5.0, worker.reservation_wage, params.beta_W))
-        z_buf = zeros(params.s)
-        Ax_buf = zeros(params.d)
-        q = finalize_match!(match, state, z_buf, Ax_buf)
+
+        q = finalize_match!(match, state)
 
         @test isfinite(q)
         @test worker.status == employed
@@ -78,7 +77,7 @@ using StableRNGs: StableRNG
 
     # Brokered match records to broker history; placed worker NOT added to pool
     @testset "finalize_match! broker match updates broker" begin
-        params = default_params(d=4, s=1, N_W=100, N_F=10)
+        params = default_params(d=4, N_W=100, N_F=10)
         state = initialize_model(params)
         # Pick an available worker that is in the pool
         pool_w = first(w for w in state.workers if w.status == available && w.id in state.broker.pool)
@@ -86,9 +85,8 @@ using StableRNGs: StableRNG
 
         match = ProposedMatch(1, pool_w.id, :broker, 5.0, 6.0,
                               compute_wage(5.0, pool_w.reservation_wage, params.beta_W))
-        z_buf = zeros(params.s)
-        Ax_buf = zeros(params.d)
-        finalize_match!(match, state, z_buf, Ax_buf)
+
+        finalize_match!(match, state)
 
         @test state.broker.history_count == old_broker_count + 1
         # Worker is now employed; pool removal happens during step 4.4 maintenance
@@ -116,6 +114,7 @@ using StableRNGs: StableRNG
     end
 
     # Prediction still works after buffer overflow (integration test for the fix)
+    # Prediction still works after circular buffer wraps
     @testset "prediction after history overflow" begin
         rng = StableRNG(1)
         firm = create_firm(1, 4, rng)
@@ -124,28 +123,32 @@ using StableRNGs: StableRNG
             record_history!(firm, clamp.(randn(rng, 4), -3.0, 3.0), randn(rng))
         end
         n = effective_history_size(firm)
-        tree = KDTree(@view firm.history_w[:, 1:n])
-        cache = PredictionCache(10)
-        result = predict_firm(firm, randn(rng, 4), 0.0, 10, tree, cache)
-        @test isfinite(result.q_hat)
-        @test isfinite(result.mean_dist)
+        model = fit_ridge(@view(firm.history_w[:, 1:n]), @view(firm.history_q[1:n]), 1.0)
+        q_hat = predict_ridge(model, randn(rng, 4))
+        @test isfinite(q_hat)
     end
 
-    # Broker circular buffer
+    # Broker circular buffer wraps correctly (broker is pre-seeded with 5 entries)
     @testset "record_broker_history! circular buffer" begin
-        params = default_params(d=4, s=1, N_W=100, N_F=5)
+        params = default_params(d=4, N_W=100, N_F=5)
         state = initialize_model(params)
         broker = state.broker
         cap = size(broker.history_w, 2)
+        seed_count = broker.history_count  # 5 from init seeding
         rng = StableRNG(1)
-        for i in 1:cap
+        # Fill remaining capacity
+        for i in 1:(cap - seed_count)
             record_broker_history!(broker, randn(rng, 4), randn(rng, 4), 1, Float64(i))
         end
         @test broker.history_count == cap
+        @test effective_history_size(broker) == cap
+        # One more wraps
         record_broker_history!(broker, ones(4), ones(4) * 2, 3, 888.0)
         @test broker.history_count == cap + 1
-        @test broker.history_q[1] == 888.0
-        @test broker.history_firm_idx[1] == 3
+        @test effective_history_size(broker) == cap
+        idx = mod1(cap + 1, cap)
+        @test broker.history_q[idx] == 888.0
+        @test broker.history_firm_idx[idx] == 3
     end
 
     # EWMA satisfaction update
@@ -212,7 +215,7 @@ end
         firm.satisfaction_internal = 5.0
         firm.satisfaction_broker = 5.0
         firm.tried_broker = true
-        params = default_params(d=4, s=1, N_W=100, N_F=5)
+        params = default_params(d=4, N_W=100, N_F=5)
         state = initialize_model(params)
         broker = state.broker
         clients = Set{Int}()
@@ -228,7 +231,7 @@ end
         firm.satisfaction_internal = 3.0
         firm.satisfaction_broker = 7.0
         firm.tried_broker = true
-        params = default_params(d=4, s=1, N_W=100, N_F=5)
+        params = default_params(d=4, N_W=100, N_F=5)
         state = initialize_model(params)
         dec = outsourcing_decision(firm, state.broker, 5.0, StableRNG(1))
         @test dec == :broker
@@ -240,7 +243,7 @@ end
         firm.satisfaction_internal = 7.0
         firm.satisfaction_broker = 3.0
         firm.tried_broker = true
-        params = default_params(d=4, s=1, N_W=100, N_F=5)
+        params = default_params(d=4, N_W=100, N_F=5)
         state = initialize_model(params)
         dec = outsourcing_decision(firm, state.broker, 5.0, StableRNG(1))
         @test dec == :internal
@@ -248,7 +251,7 @@ end
 
     # Untried broker uses cached reputation
     @testset "untried broker uses reputation" begin
-        params = default_params(d=4, s=1, N_W=100, N_F=5)
+        params = default_params(d=4, N_W=100, N_F=5)
         state = initialize_model(params)
         firm = state.firms[1]
         firm.tried_broker = false
@@ -263,7 +266,7 @@ end
     # update_broker_reputation! caches value; broker_reputation reads it back;
     # sticky: retains value when broker loses all clients
     @testset "broker reputation sticky with update" begin
-        params = default_params(d=4, s=1, N_W=100, N_F=5)
+        params = default_params(d=4, N_W=100, N_F=5)
         state = initialize_model(params)
         broker = state.broker
         # Update with clients -> caches last_reputation
@@ -283,7 +286,7 @@ end
 
     # Broker that has never had clients defaults to q_pub
     @testset "never-had-clients defaults to q_pub" begin
-        params = default_params(d=4, s=1, N_W=100, N_F=5)
+        params = default_params(d=4, N_W=100, N_F=5)
         state = initialize_model(params)
         broker = state.broker
         broker.has_had_clients = false
@@ -296,7 +299,7 @@ end
         firm.satisfaction_broker = -5.0
         firm.tried_broker = true
         firm.satisfaction_internal = -3.0
-        params = default_params(d=4, s=1, N_W=100, N_F=5)
+        params = default_params(d=4, N_W=100, N_F=5)
         state = initialize_model(params)
         # Internal is higher (-3 > -5), so should pick internal
         dec = outsourcing_decision(firm, state.broker, 5.0, StableRNG(1))
@@ -309,7 +312,7 @@ end
         firm.tried_broker = true
         firm.satisfaction_internal = 6.0
         firm.satisfaction_broker = 4.0
-        params = default_params(d=4, s=1, N_W=100, N_F=5)
+        params = default_params(d=4, N_W=100, N_F=5)
         state = initialize_model(params)
         # Initially internal wins
         dec1 = outsourcing_decision(firm, state.broker, 5.0, StableRNG(1))

@@ -12,7 +12,7 @@ using StableRNGs: StableRNG
             for _ in 1:50
                 step_period!(state)
                 try
-                    verify_invariants!(state)
+                    verify_invariants(state)
                 catch e
                     all_pass = false
                     @error "Invariant failed at period $(state.period)" exception=e
@@ -124,7 +124,7 @@ using StableRNGs: StableRNG
             for _ in 1:100
                 step_period!(state)
                 try
-                    verify_invariants!(state)
+                    verify_invariants(state)
                 catch e
                     all_pass = false
                     @error "Invariant failed at period $(state.period)" exception=e
@@ -143,10 +143,10 @@ using StableRNGs: StableRNG
         end
         # At least some firms should have id > N_F (entrants)
         @test any(f.id > params.N_F for f in state.firms)
-        # Entrant firms with no matches yet should have empty history
+        # Entrant firms start with seeded history from initial hires
         entrants = [f for f in state.firms if f.id > params.N_F && f.hire_count == 0]
         if !isempty(entrants)
-            @test all(f.history_count == 0 for f in entrants)
+            @test all(3 <= f.history_count <= 5 for f in entrants)
         end
     end
 

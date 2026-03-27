@@ -115,13 +115,15 @@ function sample_by_proximity(rng::AbstractRNG, candidates::Vector{Int}, nc::Int,
 end
 
 """
-    assign_initial_employment!(firms, workers, rng)
+    assign_initial_employment!(firms, workers, env, rng)
 
 Assign 3-5 workers per firm, sampling by type proximity (softmax weighting).
-Workers are drawn without replacement from the available pool.
+Workers are drawn without replacement from the available pool. Each hire's
+match output is realized and recorded to the firm's history, seeding the
+firm's prediction model.
 """
 function assign_initial_employment!(firms::Vector{Firm}, workers::Vector{Worker},
-                                    rng::AbstractRNG)
+                                    env::MatchingEnv, rng::AbstractRNG)
     avail = Set(1:length(workers))
     candidates = collect(avail)
     wts = Vector{Float64}(undef, length(workers))
@@ -137,6 +139,9 @@ function assign_initial_employment!(firms::Vector{Firm}, workers::Vector{Worker}
             workers[wid].employer_id = firm.id
             push!(firm.employees, wid)
             delete!(avail, wid)
+            # Record realized output to firm history
+            q = match_output(workers[wid].type, firm.type, env, rng)
+            record_history!(firm, workers[wid].type, q)
         end
     end
     return nothing
@@ -153,16 +158,16 @@ function initialize_model(params::ModelParams)::ModelState
     d = params.d
 
     # 1. Matching function
-    env = generate_matching_function(d, params.s, params.rho, params.K_mu, rng)
+    env = generate_matching_function(d, params.rho, params.K_mu, rng)
 
     # 2. Firm curve and types (generated before calibration so calibration uses actual types)
     firm_curve = generate_firm_curve(d, rng)
     firm_type_vecs = generate_firm_types(firm_curve, params.N_F, d, rng)
 
-    # 3. Calibration constants using actual firm types (q_pub = E[f], not E[|f|])
-    f_bar, f_mean, r_base = calibrate_output_scale(env, d, firm_type_vecs, rng)
+    # 3. Calibration constants using actual firm types
+    f_mean, r_base = calibrate_output_scale(env, firm_type_vecs, rng)
     q_pub = f_mean
-    cal = CalibrationConstants(r_base, f_bar, q_pub)
+    cal = CalibrationConstants(r_base, f_mean, q_pub)
 
     # 4. Worker types: each worker is a perturbation of a random firm's type (sigma_w = 1.0)
     #    Sorted by PC1 for network construction.
@@ -194,11 +199,17 @@ function initialize_model(params::ModelParams)::ModelState
     # 8. Firms (using pre-drawn types)
     firms = [create_firm(j, firm_type_vecs[j], d) for j in 1:params.N_F]
 
-    # 9. Initial employment
-    assign_initial_employment!(firms, workers, rng)
+    # 9. Initial employment (with history seeding)
+    assign_initial_employment!(firms, workers, env, rng)
 
-    # 10. Broker with seed pool
+    # 10. Broker with seed pool and seeded history from 5 random existing matches
     broker = create_broker(1, params, workers, rng)
+    employed_pairs = [(wid, j) for (j, firm) in enumerate(firms) for wid in firm.employees]
+    seed_pairs = sample(rng, employed_pairs, min(5, length(employed_pairs)); replace=false)
+    for (wid, j) in seed_pairs
+        q = match_output(workers[wid].type, firms[j].type, env, rng)
+        record_broker_history!(broker, workers[wid].type, firms[j].type, j, q)
+    end
 
     # 11. Initialize satisfaction at q_pub
     for firm in firms
