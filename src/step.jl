@@ -70,9 +70,9 @@ function step_period!(state::ModelState)
         for _ in 1:3
             w = clamp.(firm.type .+ randn(rng, d), -3.0, 3.0)
             q_true = match_output_noiseless(w, firm.type, state.env)
-            push!(state.accum.firm_holdout_pred, predict_ridge(fm, w))
+            push!(state.accum.firm_holdout_pred, predict_ridge(fm, firm_features(w)))
             push!(state.accum.firm_holdout_real, q_true)
-            push!(state.accum.broker_holdout_pred, predict_ridge(bm, vcat(w, firm.type, w .* firm.type)))
+            push!(state.accum.broker_holdout_pred, predict_ridge(bm, broker_features(w, firm.type)))
             push!(state.accum.broker_holdout_real, q_true)
         end
     end
@@ -99,7 +99,7 @@ function step_period!(state::ModelState)
     served_firms = Set{Int}()
     for (j, wid, q_hat_broker) in assignments
         # Firm re-evaluates candidate for wage setting (§3.1.1)
-        q_hat_firm = predict_ridge(models.firm_models[j], state.workers[wid].type)
+        q_hat_firm = predict_ridge(models.firm_models[j], firm_features(state.workers[wid].type))
         wage = compute_wage(q_hat_firm, state.workers[wid].reservation_wage, params.beta_W)
         push!(proposals, ProposedMatch(j, wid, :broker, q_hat_firm, q_hat_broker, wage))
         push!(served_firms, j)

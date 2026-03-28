@@ -30,13 +30,21 @@ The simulation is designed to demonstrate the following propositions.
 
 - ***The emergence of an informational advantage depends on the value of the data a broker and its clients accumulate, which in turn depends on the form and difficulty of the matching problem.*** When the matching problem is hard to solve, local or limited experience can be insufficient relative to a broker's high volume of cross-market data.
 
+Important models in the economics literature have characterized the broker's role as quality certification (Li, 1998) or expert screening (Bethune, Sultanum, and Trachter, 2024): the broker identifies which counterparties are intrinsically high quality, and its value lies in this attributional knowledge. Under this view, the broker is an appraiser whose cross-market experience helps it assess the general quality of counterparties more accurately than individual principals can.
+
+The relational-work view of brokerage rather suggests that the broker's value lies in understanding complementarities between counterparties. The broker is a relational worker and a matchmaker: its advantage comes from knowing which pairings will succeed, not merely which individual counterparties are generally good.
+
+The model allows for both possibilities. Match quality has two components: a general quality component that depends on one counterparty alone, and an interaction component that depends on the specific pairing. A parameter controls the relative importance of these components. The broker observes outcomes from many different pairings across principals, while each principal observes outcomes only from its own matches. This gives the broker two potential channels of informational advantage: (1) better estimation of counterparty quality from cross-market data (the attributional channel), and (2) better understanding of pairing complementarities from observing the same counterparties matched with different principals (the relational channel).
+
+Which channel dominates and actually drives the broker's informational advantage, and how the answer depends on the matching environment, is one of the questions the model is designed to address (see Proposition 6).
+
 ### Proposition 1
 
 **A broker's structural and informational advantages exhibit distinct dynamics over repeated brokerage activity.**
 
 **1a. Structural advantage tends to be self-liquidating.** A broker that bridges a gap between two principals, and successfully matches them, creates a direct relationship between them. With each match, the broker's network position weakens. Direct ties accumulate between principals and structural holes close. This is particularly the case when brokerage occurs at scale. A broker can counteract the self-liquidating tendency by aggressively recruiting new candidates, continuously expanding its reach into parts of the network that principals cannot yet access. However, when the broker's pool of candidates is stable or slowly evolving, placements create direct ties faster than new structural holes are bridged, and the erosion of structural advantage dominates.
 
-**1b. Informational advantage tends to be self-reinforcing.** Each match generates information about what makes pairings succeed or fail in a given market. When match quality partly depends on a universal or cross-market component, the broker's cross-market experience generates an informational advantage over each client's limited perspective.
+**1b. Informational advantage tends to be self-reinforcing.** Each match generates information about what makes pairings succeed or fail in a given market. The broker's cross-market experience, whether it helps assess general worker quality or understand worker-firm complementarities, generates an informational advantage over each client's limited within-firm perspective. This advantage grows with the volume and diversity of the broker's placement history.
 
 ### Proposition 2
 
@@ -44,7 +52,7 @@ The simulation is designed to demonstrate the following propositions.
 
 **2a. In sparse or small-world networks, an active broker's value depends primarily on its structural advantage, which is correlated with its informational advantage.** Principals cannot easily find each other in a such network. Standard structural-hole measures (betweenness centrality, constraint, effective size) predict broker value well in this regime. At the same time, structural holes provide the access that feeds the broker's learning, so its structural and informational advantages are positively correlated.
 
-**2b. In dense (or densifying) networks, an active broker's value depends primarily (or increasingly) on its informational advantage, which can become decoupled from its structural advantage.** Even if principals could find each other, a broker provides value if it can assess match quality better than principals can. A broker that started in a strong structural position may possess a lot of accumulated cross-market knowledge, regardless of its current structural advantage. As a broker's structural position weakens as a result of its brokerage activity, it accumulates more data, and the correlation between the two types of advantages weakens. In the limit, the broker has no structural advantage but retains its informational advantage.
+**2b. In dense (or densifying) networks, an active broker's value depends primarily (or increasingly) on its informational advantage, which can become decoupled from its structural advantage.** Even if principals could find each other, a broker provides value if it can predict match quality better than principals can. A broker that started in a strong structural position may possess a lot of accumulated cross-market knowledge, regardless of its current structural advantage. As a broker's structural position weakens as a result of its brokerage activity, it accumulates more data, and the correlation between the two types of advantages weakens. In the limit, the broker has no structural advantage but retains its informational advantage.
 
 ### Proposition 3
 
@@ -69,6 +77,12 @@ High matching complexity and low transparency make the principals' learning prob
 In transparent markets with simple matching problems, principals learn fast and well enough that the broker does not accumulate a decisive informational advantage. Brokers persist as commodity intermediaries earning thin margins and may attempt capture but do not consolidate into dominant principals. This is the no-capture region of the parameter space.
 
 Within the capture region of the parameter space, if the broker does not capture, its information advantage may start to erode over time.
+
+### Proposition 6
+
+**The broker's informational advantage arises primarily from understanding pairing complementarities (the relational channel) rather than from better assessing counterparty quality (the attributional channel).**
+
+When general quality dominates, principals can estimate it well from their own experience, because general quality depends on observable counterparty characteristics that do not require cross-market data to learn. When the interaction dominates, the broker's cross-market experience reveals the complementarity structure that no single principal can identify, because each principal observes only one side of the interaction. The relational channel drives the broker's advantage across most of the parameter space.
 
 ## Part I. Base Model
 
@@ -800,9 +814,9 @@ The boundary between the regions may shift with $\eta$ (entry/exit rate), which 
 **Fig. 1.** The informational mechanism.
 - *Purpose:* Establishes the core mechanism: the broker learns faster than individual firms, the gap widens with market opacity, this drives increasing outsourcing, and the resulting matches differ in quality by channel (Propositions 1, 2b, 2c).
 - *Content:* All panels are at default parameters ($d = 4$, $\rho = 0.50$). Each panel includes a **base model** series (dashed grey) as a no-capture reference line, plus Model 1 and Model 2 series. 
-  - Panel A: time on the horizontal axis, prediction quality ($R^2$, rolling 50-placement window) on the vertical axis. One line for the broker, one for the average firm. Under the base model the broker's learning advantage is transient: the gap narrows as firms accumulate experience. An inset or small-multiple shows the effect of varying $d$ on the base model learning gap (Proposition 2c). 
-  - Panel B: time on the horizontal axis, fraction of vacancies outsourced to the broker on the vertical axis. Under the base model, outsourcing rises then falls as firms learn, establishing the self-liquidating baseline. Model 1 and Model 2 diverge from this reference. 
-  - Panel C: time on the horizontal axis, average realized match output $\bar{q}_c^t$ on the vertical axis, one line per channel (direct hire, brokered placement, staffing where applicable). Under the base model only direct-hire and placement channels appear; the placement quality premium narrows over time. Model 1 and Model 2 overlaid or in separate sub-panels. 
+  - Panel A: time on the horizontal axis, prediction quality (holdout $R^2$, rolling window) on the vertical axis. One line for the broker, one for the average firm. The broker-firm gap reflects the informational advantage and its dynamics over time. An inset or small-multiple shows the effect of varying $d$ on the base model learning gap (Proposition 2c). 
+  - Panel B: time on the horizontal axis, fraction of vacancies outsourced to the broker on the vertical axis. The base model establishes the reference trajectory for outsourcing dynamics. Model 1 and Model 2 diverge from this reference. 
+  - Panel C: time on the horizontal axis, average realized match output $\bar{q}_c^t$ on the vertical axis, one line per channel (direct hire, brokered placement, staffing where applicable). Under the base model only direct-hire and placement channels appear. Model 1 and Model 2 overlaid or in separate sub-panels. 
   - Panels A–C trace the full chain: the learning gap (A) drives outsourcing (B), which produces match quality differences by channel (C). The base-model reference makes each capture mechanism's deviation from the self-liquidating baseline visually immediate.
 
 **Fig. 2.** Decoupling of structural position from informational advantage.
@@ -843,7 +857,12 @@ The boundary between the regions may shift with $\eta$ (entry/exit rate), which 
 - *Purpose:* Decomposes the learning gap (Fig. 1A) into three components that map to distinct model mechanisms: overall accuracy ($R^2$), systematic bias, and ranking accuracy. Shows when the broker's ranking advantage emerges relative to its calibration, and whether the recognition gap (§7a) closes before or after firms catch up on $R^2$.
 - *Content:* Three sub-panels sharing a time axis, all at default parameters. Panel A: $R^2$ over time (broker and average firm). Panel B: bias ($\bar{e} = \frac{1}{n}\sum(\hat{q} - q)$) over time (broker and average firm). Positive bias indicates overestimation; the broker's bias trajectory makes the recognition gap directly visible. Panel C: Spearman rank correlation over time (broker and average firm). Key patterns to look for: rank correlation converges faster than $R^2$ (agents learn to rank before they learn to price); broker bias starts positive and declines as firms improve (recognition gap closing); under Model 1, staffing suspends firm improvement across all three measures.
 
-**Fig. S6.** Prediction confidence decomposition.
+**Fig. S6.** Attributional vs. relational channel (Proposition 6).
+- *Purpose:* Identifies which channel drives the broker's informational advantage by sweeping rho while holding other parameters fixed. Distinguishes the attributional channel (better estimation of general counterparty quality) from the relational channel (better understanding of pairing complementarities).
+  - Examines how the broker-firm gap in prediction quality varies across rho. If the attributional channel dominated, the gap would be largest at high rho (where general quality matters most). If the relational channel dominates, the gap is largest at low rho (where complementarities matter most) or at intermediate rho (where both components contribute but the interaction is the harder estimation problem).
+- *Content:* rho on the horizontal axis (0.0 to 1.0). Three panels. Panel A: broker-firm gap in holdout R-squared at steady state, showing how the informational advantage varies with the relative importance of general quality vs interaction. Panel B: broker holdout R-squared and firm holdout R-squared separately, showing that both improve with rho (more learnable signal) but the gap changes non-monotonically. Panel C: outsourcing rate at steady state vs rho. If the relational channel dominates, the gap is largest at low-to-moderate rho (where the interaction is the binding estimation problem) and narrows at high rho (where general quality dominates and firms can learn it). If the attributional channel dominated, the gap would grow monotonically with rho.
+
+**Fig. S7.** Prediction confidence decomposition.
 - *Purpose:* Makes the informational advantage visible at the micro level by showing how each agent's prediction uncertainty evolves. Complements Fig. S5 (which measures accuracy ex post) with an ex ante view of how much each agent "knows" when making predictions. Under Model 1, locked-in firms' epistemic uncertainty should stop declining, providing a micro-level signature of the lock-in mechanism.
 - *Content:* Three sub-panels sharing a time axis: R-squared, bias, and rank correlation over time (broker and average firm). Under Model 1, a second set of firm lines stratified by staffing exposure shows locked-in firms' prediction quality plateauing while non-clients continue to improve.
 

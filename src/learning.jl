@@ -66,27 +66,34 @@ struct PeriodModels
     broker_model::RidgeModel
 end
 
+"""Construct firm feature vector [w; w.^2] for prediction."""
+firm_features(w::AbstractVector) = vcat(w, w .^ 2)
+
+"""Construct broker feature vector [w; x; w.*x; w.^2] for prediction."""
+broker_features(w::AbstractVector, x::AbstractVector) = vcat(w, x, w .* x, w .^ 2)
+
 
 """
     build_period_models(state, lambda) -> PeriodModels
 
-Fit ridge regression models for all firms (seeded with >= 3 observations)
-and for the broker (pooled across firms, features = [w; x; w.*x] to capture
-the interaction w'x plus linear effects).
+Fit ridge regression models for all firms (features = [w; w.^2]) and for
+the broker (features = [w; x; w.*x; w.^2]). The w.^2 features capture
+quadratic nonlinearity in general worker quality mu(w).
 """
 function build_period_models(state::ModelState, lambda::Float64)::PeriodModels
-    # Firm models: q ≈ beta'w + c
+    # Firm models: q ≈ beta'[w; w.^2] + c
     firm_models = [begin
         n = effective_history_size(firm)
-        fit_ridge(@view(firm.history_w[:, 1:n]), @view(firm.history_q[1:n]), lambda)
+        W = @view(firm.history_w[:, 1:n])
+        fit_ridge(vcat(W, W .^ 2), @view(firm.history_q[1:n]), lambda)
     end for firm in state.firms]
 
-    # Broker model: q ≈ beta'[w; x; w.*x] + c
+    # Broker model: q ≈ beta'[w; x; w.*x; w.^2] + c
     broker = state.broker
     n_b = effective_history_size(broker)
     W = @view(broker.history_w[:, 1:n_b])
     X = @view(broker.history_x[:, 1:n_b])
-    WXI = vcat(W, X, W .* X)
+    WXI = vcat(W, X, W .* X, W .^ 2)
     broker_model = fit_ridge(WXI, @view(broker.history_q[1:n_b]), lambda)
 
     return PeriodModels(firm_models, broker_model)

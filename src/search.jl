@@ -47,7 +47,7 @@ function internal_search(firm::Firm,
     best_q = -Inf
     n_tied = 0
     for wid in candidates
-        q_hat = predict_ridge(model, workers[wid].type)
+        q_hat = predict_ridge(model, firm_features(workers[wid].type))
         if q_hat > best_q
             best_q = q_hat
             best_id = wid
@@ -86,16 +86,17 @@ function broker_allocate!(broker::Broker,
     n_c = length(clients)
     broker_model = models.broker_model
     d = length(workers[pool[1]].type)
-    wxi_buf = Vector{Float64}(undef, 3d)  # [w; x; w.*x]
+    buf = Vector{Float64}(undef, 4d)  # [w; x; w.*x; w.^2]
 
     # Build quality matrix Q[worker_idx, client_idx]
     Q = Matrix{Float64}(undef, n_w, n_c)
     for (ci, (_, firm)) in enumerate(clients)
-        wxi_buf[d+1:2d] .= firm.type
+        buf[d+1:2d] .= firm.type
         for (wi, wid) in enumerate(pool)
-            wxi_buf[1:d] .= workers[wid].type
-            @views wxi_buf[2d+1:3d] .= wxi_buf[1:d] .* wxi_buf[d+1:2d]
-            Q[wi, ci] = predict_ridge(broker_model, wxi_buf)
+            buf[1:d] .= workers[wid].type
+            @views buf[2d+1:3d] .= buf[1:d] .* buf[d+1:2d]
+            @views buf[3d+1:4d] .= buf[1:d] .^ 2
+            Q[wi, ci] = predict_ridge(broker_model, buf)
         end
     end
 

@@ -115,14 +115,14 @@ end
         w = state.workers[wid].type
         x = state.firms[1].type
         # Via vcat
-        wxi = vcat(w, x, w .* x)
-        q_vcat = predict_ridge(models.broker_model, wxi)
+        q_vcat = predict_ridge(models.broker_model, broker_features(w, x))
         # Via pre-filled buffer (what broker_allocate! does internally)
-        wxi_buf = Vector{Float64}(undef, 3d)
-        wxi_buf[1:d] .= w
-        wxi_buf[d+1:2d] .= x
-        @views wxi_buf[2d+1:3d] .= wxi_buf[1:d] .* wxi_buf[d+1:2d]
-        q_buf = predict_ridge(models.broker_model, wxi_buf)
+        buf = Vector{Float64}(undef, 4d)
+        buf[1:d] .= w
+        buf[d+1:2d] .= x
+        @views buf[2d+1:3d] .= buf[1:d] .* buf[d+1:2d]
+        @views buf[3d+1:4d] .= buf[1:d] .^ 2
+        q_buf = predict_ridge(models.broker_model, buf)
         @test q_vcat == q_buf
     end
 end
