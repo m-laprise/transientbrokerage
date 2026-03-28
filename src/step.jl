@@ -63,7 +63,9 @@ function step_period!(state::ModelState)
     models = build_period_models(state, params.lambda)
 
     # Holdout evaluation: random workers at each firm, noiseless truth (no selection bias)
+    # Workers drawn with same sigma_w / sqrt(d) dispersion as the actual population
     d = params.d
+    σ_per_dim = params.sigma_w / sqrt(d)
     w_holdout = Vector{Float64}(undef, d)
     firm_buf = Vector{Float64}(undef, 2d)
     broker_buf = Vector{Float64}(undef, 4d)
@@ -72,7 +74,7 @@ function step_period!(state::ModelState)
         bm = models.broker_model
         for _ in 1:3
             randn!(rng, w_holdout)
-            @. w_holdout = clamp(firm.type + w_holdout, -3.0, 3.0)
+            @. w_holdout = clamp(firm.type + σ_per_dim * w_holdout, -3.0, 3.0)
             q_true = match_output_noiseless(w_holdout, firm.type, state.env)
             push!(state.accum.firm_holdout_pred, predict_ridge!(fm, firm_buf, w_holdout))
             push!(state.accum.firm_holdout_real, q_true)
