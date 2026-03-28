@@ -19,23 +19,27 @@ function compute_reservation_wage(deg::Int, max_deg::Int, r_base::Float64,
 end
 
 """
-    generate_firm_curve(d, rng) -> FirmCurve
+    generate_firm_curve(d, rng; d_ref=8) -> FirmCurve
 
-Create a random smooth 1D curve in R^d for sampling firm types.
+Create a random smooth 1D curve on the unit sphere in R^d for sampling firm types.
+Frequencies are scaled by `√(d_ref / d)` so that the curve's arc length (and hence
+mean inter-firm spacing) is approximately invariant to `d`.
 """
-function generate_firm_curve(d::Int, rng::AbstractRNG)::FirmCurve
-    FirmCurve(1.0 .+ 2.0 .* rand(rng, d), 2π .* rand(rng, d), 2.0)
+function generate_firm_curve(d::Int, rng::AbstractRNG; d_ref::Int=8)::FirmCurve
+    freq_scale = sqrt(d_ref / d)
+    FirmCurve((1.0 .+ 2.0 .* rand(rng, d)) .* freq_scale, 2π .* rand(rng, d))
 end
 
 """
     sample_firm_type(curve, t, d, rng) -> Vector{Float64}
 
-Sample a firm type at position `t` in [0, 1] along the curve, with small perturbation.
+Sample a firm type at position `t` in [0, 1] along the curve on the unit sphere,
+with small perturbation. The sinusoidal curve is projected onto the sphere surface.
 """
 function sample_firm_type(curve::FirmCurve, t::Float64, d::Int, rng::AbstractRNG)::Vector{Float64}
-    x = [curve.amplitude * sin(2π * curve.freqs[k] * t + curve.phases[k]) for k in 1:d]
-    x .+= 0.2 .* randn(rng, d)
-    clamp!(x, -3.0, 3.0)
+    x = [sin(2π * curve.freqs[k] * t + curve.phases[k]) for k in 1:d]
+    x ./= norm(x)  # project onto unit sphere
+    x .+= 0.1 .* randn(rng, d)  # small perturbation (stays near sphere)
     return x
 end
 
@@ -169,12 +173,16 @@ function initialize_model(params::ModelParams)::ModelState
     q_pub = f_mean
     cal = CalibrationConstants(r_base, f_mean, q_pub)
 
-    # 4. Worker types: each worker is a perturbation of a random firm's type (sigma_w = 1.0)
+    # 4. Worker types: each worker is a perturbation of a random firm's type
+    #    sigma_w controls dispersion around the firm curve.
+    #    Per-dimension scale is sigma_w / sqrt(d) so that the expected Euclidean
+    #    distance from the reference firm ≈ sigma_w regardless of d.
     #    Sorted by PC1 for network construction.
+    σ_per_dim = params.sigma_w / sqrt(d)
     X = Matrix{Float64}(undef, d, params.N_W)
     for i in 1:params.N_W
         ref = firm_type_vecs[rand(rng, 1:params.N_F)]
-        @views X[:, i] .= ref .+ randn(rng, d)
+        @views X[:, i] .= ref .+ σ_per_dim .* randn(rng, d)
         @views clamp!(X[:, i], -3.0, 3.0)
     end
     pc1_scores = vec(predict(fit(PCA, X; maxoutdim=1), X))

@@ -105,8 +105,8 @@ The model has three agent types: workers, firms, and a broker. This section desc
 There are $N_W$ workers (default 1000). The worker population is fixed: workers change status but never enter or leave the simulation. Each worker $i$ is characterized by:
 
 - **Type** $w_i \in \mathbb{R}^d$: a fixed vector of observable characteristics assigned at initialization. Types determine productive compatibility with firms through the matching function (§1).
-  - $d$ is the dimensionality of the type space (default 4).
-  - Each worker draws a reference firm uniformly at random, then $w_i = x_{j(i)} + \epsilon_i$ where $\epsilon_i \sim N(0, I_d)$, clipped to $[-3, 3]^d$. Workers cluster around firm types in the type space, creating natural neighborhoods where ridge regression predictions are informative.
+  - $d$ is the dimensionality of the type space (default 8).
+  - Each worker draws a reference firm uniformly at random, then $w_i = x_{j(i)} + \epsilon_i$ where $\epsilon_i \sim N(0, \sigma_w^2/d \cdot I_d)$, clipped to $[-3, 3]^d$. The per-dimension noise scale $\sigma_w / \sqrt{d}$ ensures that the expected Euclidean distance from each worker to its reference firm is approximately $\sigma_w$ regardless of $d$ (default $\sigma_w = 0.2$). Workers cluster around firm types in the type space, creating natural neighborhoods where ridge regression predictions are informative.
 - **Reservation wage** $r_i$: the minimum compensation the worker requires to accept employment (§3b). Fixed at initialization.
 - **State**: one of two discrete states in the base model:
   - *Available*: not employed by any firm; can be proposed for new matches.
@@ -177,11 +177,11 @@ $$\mu(w) = \sum_{l=1}^{K_\mu} a_l \exp \left(-\frac{ \|w - c_l\|^2}{2h^2}\right)
 
 Components:
 - $c_l \in \mathbb{R}^d$ are RBF centers,
-- $a_l \geq 0$ are non-negative random weights (drawn as $N(0,1)^2$, then jointly scaled so that $\text{Var}(\mu) = \rho \cdot \text{Var}(f)$; see §1d). Non-negativity ensures $\mu(w) \geq 0$: all workers have non-negative general quality,
+- $a_l \geq 0$ are non-negative random weights (drawn as $N(0,1)^2$, then jointly scaled per §1d). Non-negativity ensures $\mu(w) \geq 0$: all workers have non-negative general quality,
 - $h$ is the bandwidth (set to the median pairwise distance among a Monte Carlo sample of worker types),
-- $K_\mu$ is the number of centers (default 10).
+- $K_\mu$ is the number of centers (default 2).
 
-The nonlinear RBF landscape means the relationship between worker types and worker quality is complex: there can be multiple "quality archetypes" (local maxima of $\mu$ near different RBF centers). $K_\mu$ controls the topological complexity; $h$ controls the spatial scale of variation. Both are calibration parameters (§12b).
+With $K_\mu = 2$, general worker quality has two Gaussian bumps — the simplest non-trivial landscape with variation across type space. $h$ controls the spatial scale of variation. $K_\mu$ is a fixed constant (not swept); under the per-mode calibration (§1d), $\mu$ contributes a small share of total variance at moderate $\rho$, so its internal complexity has negligible effect on dynamics.
 
 Because $\mu$ is nonlinear and operates on the full $d$-dimensional type space, it cannot be learned by linear regression. Agents using linear models (§2a) can capture the linear interaction $w^\top x$ but not $\mu$. The parameter $\rho$ (§1d) controls how much this unlearnable component contributes to total output variance.
 
@@ -195,26 +195,27 @@ For firm $j$ with fixed type $x_j$, the interaction $w^\top x_j$ is linear in th
 
 #### 1d. Variance decomposition and the role of $\rho$
 
-The parameter $\rho$ controls the relative importance of general quality $\mu(w)$ versus the match-specific interaction $w^\top x$:
+The parameter $\rho$ controls the relative importance of general quality $\mu(w)$ versus the match-specific interaction $w^\top x$, calibrated on a per-mode basis.
 
-**The worker quality share $\rho$.** The parameter $\rho = \frac{\text{Var}(\mu)}{\text{Var}(f)}$ controls what fraction of total match quality variance is general (transferable across firms) vs. firm-specific.
+**Per-mode calibration.** The interaction $w^\top x$ contributes $d$ singular modes to the matching matrix $F_{ij} = f(w_i, x_j)$, while $\mu(w)$ is a rank-1 component (a function of the worker alone, constant across firms). A naive total-variance calibration $\text{Var}(\mu) / \text{Var}(f) = \rho$ would let $\mu$'s rank-1 spike dominate the SVD spectrum at moderate $\rho$, because all of $\mu$'s energy concentrates in a single singular value while the interaction spreads its energy across $d$ values.
 
-- Default $\rho = 0.50$. The default gives equal weight to both components, placing the baseline in a regime where the broker's cross-market pooling advantage (which operates on $\mu$) and the firm's own-data advantage (which operates on the interaction) are both substantive.
-  - For reference, AKM estimates attribute roughly 30% of total observed wage variation to worker effects (Card, Heining & Kline, 2013), but the mapping to $\rho$ is loose: AKM's denominator includes firm effects, measurement error, and transitory shocks that do not exist in the model.
-- At $\rho = 0$, the model reduces to $f(w,x) = w^\top x + \varepsilon$.
-- At $\rho = 1$, the model reduces to $f(w,x) = \mu(w)$.
+Instead, $\rho$ controls the **per-mode** strength: the weights $a_l$ are scaled so that
 
-This parameter directly controls the broker's informational advantage and is a primary axis of the phase diagram (§11). The phase diagram sweeps $\rho$ across its full range.
+$$\frac{\text{Var}(\mu)}{\text{Var}(w^\top x)} = \frac{\rho}{(1 - \rho) \cdot d}$$
 
-Both $\mu(w)$ and $w^\top x$ operate on the full $d$-dimensional type space. There is no subspace partitioning or orthogonality constraint — the nonlinear and linear components share all dimensions.
+This means $\rho = 0.5$ makes $\mu$'s singular value equal to the average interaction singular value — a fair comparison where neither component dominates by construction. The total variance share of $\mu$ at $\rho = 0.5$ is approximately $1/(d+1)$, not $1/2$.
 
-The weights $a_l$ are jointly scaled at initialization so that $\text{Var}(\mu) / \text{Var}(f) = \rho$, where $\text{Var}(f) = \text{Var}(\mu) + \text{Var}(w^\top x) + 1$ (the last term is noise variance). This calibration is exact on the Monte Carlo sample used at initialization and approximate for the simulation population.
+- Default $\rho = 0.50$. At $d = 8$, general quality contributes about $1/9$ of total noiseless variance — comparable to one interaction mode. The broker's cross-firm advantage primarily operates through the interaction term.
+- At $\rho = 0$, $\mu = 0$ and the model reduces to $f(w,x) = w^\top x + \varepsilon$.
+- At $\rho = 1$, $\mu$ dominates ($\text{Var}(\mu) / \text{Var}(w^\top x) = 1000$, a practical upper bound).
+
+This calibration is exact on the Monte Carlo sample used at initialization and approximate for the simulation population.
 
 Because $\mu$ is nonlinear and the interaction $w^\top x$ is linear, agents using linear models (§2a) can learn the interaction component but not $\mu$. The parameter $\rho$ therefore controls *how much of match quality is learnable by linear regression*:
 
-- At **low $\rho$** (interaction dominates), the matching function is mostly linear. Both firms and the broker can learn it well with ridge regression. The broker's advantage is modest — just more data for the same linear model.
-- At **high $\rho$** ($\mu$ dominates), the matching function has a large nonlinear component that linear regression cannot capture. Neither firms nor the broker can predict the $\mu$ component accurately, but the broker's larger dataset helps average over $\mu$-induced noise, producing more stable linear coefficient estimates.
-- At **moderate $\rho$**, the linear interaction is substantial (regression captures it) and $\mu$ adds structure that the broker's pooled data helps navigate. The broker's advantage is largest in this regime.
+- At **low $\rho$** (interaction dominates), the matching function is mostly linear and high-rank. The broker's cross-firm data is essential because the interaction $w^\top x$ can only be disentangled by observing the same workers at different firms. Individual firms see only their own slice $w^\top x_j$ and cannot separate worker quality from interaction effects. The broker's advantage is large.
+- At **high $\rho$** ($\mu$ dominates), general worker quality explains most of the output variance. Since $\mu(w)$ depends only on the worker, each firm can estimate it from its own hires. The broker's cross-firm data adds little because there is little interaction signal to learn. The broker's advantage is small.
+- At **moderate $\rho$**, both components are present. The broker benefits from cross-firm interaction data while firms can partially learn from $\mu$'s contribution. The broker's advantage is intermediate.
 
 #### 1e. What controls the difficulty of the matching problem
 
@@ -222,7 +223,7 @@ Because $\mu$ is nonlinear and the interaction $w^\top x$ is linear, agents usin
 
 - **$\rho$ (general quality share).** Controls the fraction of output variance that is nonlinear and unlearnable by linear models. At low $\rho$, the matching function is nearly linear and easy to learn. At high $\rho$, predictions are limited by the model class regardless of data volume. $\rho$ and $d$ together determine the broker's informational advantage.
 
-- **Smoothness of $\mu$ ($K_\mu$, $h$).** The number of RBF centers and bandwidth control how complex the general quality landscape is. Rougher $\mu$ increases the effective noise for linear predictors. These are calibration parameters, fixed during development.
+- **Smoothness of $\mu$ ($K_\mu$, $h$).** The number of RBF centers and bandwidth control the shape of the general quality landscape. With the per-mode calibration, the complexity of $\mu$ has little effect on dynamics because $\mu$ is a small fraction of total variance at moderate $\rho$. These are calibration parameters, fixed during development.
 
 ### 2. Learning
 
@@ -432,12 +433,12 @@ At the start of the simulation, the state of the world must be initialized.
 > *Matching function.* Interaction is $w^\top x$ (identity, no matrix needed).
 > I.1. &emsp;Draw $K_\mu$ RBF centers $c_l \sim N(0, I_d)$ and non-negative weights $a_l = z_l^2$, $z_l \sim N(0, 1)$.
 > I.2. &emsp;Draw 10,000 Monte Carlo worker types $\tilde{w}$ from $N(0, I_d)$ clipped to $[-3,3]$; set $h \leftarrow$ median pairwise distance in $\{\tilde{w}\}$.
-> I.3. &emsp;Draw 10,000 Monte Carlo $(w, x)$ pairs (iid for variance calibration); scale all $a_l$ jointly so $\text{Var}(\mu) / \text{Var}(f) = \rho$ on this sample.
+> I.3. &emsp;Draw 10,000 Monte Carlo $(w, x)$ pairs (iid for variance calibration); scale all $a_l$ jointly so $\text{Var}(\mu) / \text{Var}(w^\top x) = \rho / ((1 - \rho) \cdot d)$ on this sample (per-mode calibration; see §1d).
 >
 > *Firm and worker types.*
-> I.6. &emsp;Generate firm curve: per-dimension frequencies $f_k \sim U[1,3]$, phases $\phi_k \sim U[0,2\pi]$, amplitude 2.0. Store curve parameters.
-> I.7. &emsp;Sample $N_F$ firm types evenly along the curve: $x_j[k] = 2\sin(2\pi f_k t_j + \phi_k) + \epsilon_k$, $\epsilon_k \sim N(0, 0.04)$, clipped to $[-3,3]$.
-> I.8. &emsp;For each worker $i$: draw reference firm $j(i) \sim U\{1,\ldots,N_F\}$; set $w_i = x_{j(i)} + \epsilon_i$, $\epsilon_i \sim N(0, I_d)$, clipped to $[-3,3]$.
+> I.6. &emsp;Generate firm curve: per-dimension frequencies $f_k \sim U[1,3] \cdot \sqrt{d_{\text{ref}} / d}$ (where $d_{\text{ref}} = 8$), phases $\phi_k \sim U[0,2\pi]$. The frequency scaling makes the curve's arc length approximately invariant to $d$. Store curve parameters.
+> I.7. &emsp;Sample $N_F$ firm types evenly along the curve: compute $x_j[k] = \sin(2\pi f_k t_j + \phi_k)$, normalize to the unit sphere $x_j \leftarrow x_j / \|x_j\|$, then add perturbation $x_j \leftarrow x_j + \epsilon$, $\epsilon \sim N(0, 0.01 \cdot I_d)$.
+> I.8. &emsp;For each worker $i$: draw reference firm $j(i) \sim U\{1,\ldots,N_F\}$; set $w_i = x_{j(i)} + \epsilon_i$, $\epsilon_i \sim N(0, \sigma_w^2/d \cdot I_d)$, clipped to $[-3,3]$.
 >
 > *Calibration.*
 > I.9. &emsp;Compute $E[f]$ from 10,000 clustered $(w, x)$ pairs using actual firm types. Set $\bar{q}\_\text{pub} \leftarrow E[f]$; $r\_\text{base} \leftarrow 0.60 \cdot E[f]$; $c\_\text{emp} \leftarrow 0.15 \cdot r\_\text{base}$ (M1 only).
@@ -892,6 +893,7 @@ Parameters are organized into five categories reflecting their role in the analy
 | $p_{\text{rewire}}$ | Social network rewiring | 0.1 | Fixed network topology parameter (§4) | Base |
 | $\omega$ | Satisfaction recency weight (§6a) | 0.3 | Fixed; standard EWMA weight | Base |
 | $p_{\text{vac}}$ | Per-period vacancy probability (§5) | 0.50 | ~25 vacancies/period across 50 firms | Base |
+| $\sigma_w$ | Worker type dispersion | 0.2 | Expected distance from worker to reference firm, dimension-invariant (§0, §12c) | Base |
 | $L$ | Fee amortization period | 4 | Expected useful duration of a hire for per-period cost comparisons (§6a). M1 reuses as staffing assignment length (§9). | Base |
 
 **Calibration parameters.** Set during model development to ensure the DGP is well-behaved across the parameter space. Constant in production runs.
@@ -899,7 +901,7 @@ Parameters are organized into five categories reflecting their role in the analy
 | Symbol | Meaning | Default | Notes | Model |
 |--------|---------|---------|-------|-------|
 | $r_{\text{base}}$ | Reservation wage floor | $0.60 \cdot E[f]$ | Calibrated at init from Monte Carlo sample. Network premium (0.20) and noise scale (0.05) hardcoded in §3b. | Base |
-| $K_\mu$ | Number of RBF centers | 10 | Fixed; coverage maintained by $h$ scaling (§1b) | Base |
+| $K_\mu$ | Number of RBF centers | 2 | Fixed constant; two Gaussian bumps, simplest non-trivial landscape (§1b) | Base |
 | $\lambda$ | Ridge regression regularization | 1.0 | Regularization for firm and broker regression models (§2a, §2b) | Base |
 | $h$ | RBF bandwidth | Median pairwise dist. in worker types | Automatic scaling via median heuristic (§1b) | Base |
 
@@ -909,8 +911,8 @@ In the table, $\bar{f}$ denotes the mean absolute match output $E[|f(w,x)|]$, co
 
 | Symbol | Meaning | Default | Sweep | Model |
 |--------|---------|---------|-------|-------|
-| $d$ | Type dimensionality | 8 | {4, 6, 8, 10} | Base |
-| $\rho$ | General quality share $\text{Var}(\mu)/\text{Var}(f)$ | 0.50 | {0, 0.10, 0.20, 0.30, 0.50, 0.70, 1.0} | Base |
+| $d$ | Type dimensionality | 8 | {4, 8, 12} | Base |
+| $\rho$ | General quality per-mode share (§1d) | 0.50 | {0, 0.10, 0.50, 0.90, 1.0} | Base |
 
 **OAT sensitivity parameters.** Varied one at a time while holding all others at defaults. Confirms that qualitative dynamics are robust (Fig. S3).
 
@@ -940,11 +942,11 @@ In the table, $\bar{f}$ denotes the mean absolute match output $E[|f(w,x)|]$, co
 
 **Matching function generation.** The matching function $f(w,x) = \mu(w) + w^\top x$ is generated as follows.
 
-*General quality $\mu$.* The interaction is $w^\top x$ (implicit identity matrix, no separate construction needed). For $\mu$: draw $K_\mu$ RBF centers $c_l \sim N(0, I_d)$ and non-negative weights $a_l = z_l^2$ where $z_l \sim N(0, 1)$. Non-negativity ensures $\mu(w) \geq 0$. Set bandwidth $h$ equal to the median pairwise distance among a Monte Carlo sample of 10,000 worker types in $\mathbb{R}^d$. Scale all $a_l$ jointly so that $\text{Var}(\mu) / \text{Var}(f) = \rho$ (evaluated on the same Monte Carlo sample).
+*General quality $\mu$.* The interaction is $w^\top x$ (implicit identity matrix, no separate construction needed). For $\mu$: draw $K_\mu$ RBF centers $c_l \sim N(0, I_d)$ and non-negative weights $a_l = z_l^2$ where $z_l \sim N(0, 1)$. Non-negativity ensures $\mu(w) \geq 0$. Set bandwidth $h$ equal to the median pairwise distance among a Monte Carlo sample of 10,000 worker types in $\mathbb{R}^d$. Scale all $a_l$ jointly so that $\text{Var}(\mu) / \text{Var}(w^\top x) = \rho / ((1-\rho) \cdot d)$ (per-mode calibration, §1d; evaluated on the same Monte Carlo sample).
 
-**Firm types.** Sampled along a smooth 1D curve embedded in $\mathbb{R}^d$ (§0): $N_F$ firms are evenly spaced along the curve, with small perturbation. The curve parameters (per-dimension frequencies and phases) are stored for reuse by entrant firms.
+**Firm types.** Sampled along a smooth 1D curve on the unit sphere in $\mathbb{R}^d$ (§0): $N_F$ firms are evenly spaced along the curve, projected onto the unit sphere, with small Gaussian perturbation ($\sigma = 0.1$). Per-dimension frequencies are scaled by $\sqrt{d_{\text{ref}} / d}$ (with $d_{\text{ref}} = 8$) so that the curve's arc length and mean inter-firm spacing are approximately invariant to $d$. The curve parameters are stored for reuse by entrant firms.
 
-**Worker types.** Each worker draws a reference firm uniformly at random, then $w_i = x_{j(i)} + \epsilon_i$ where $\epsilon_i \sim N(0, I_d)$, clipped to $[-3, 3]^d$. Workers cluster around firm types, creating natural neighborhoods.
+**Worker types.** Each worker draws a reference firm uniformly at random, then $w_i = x_{j(i)} + \epsilon_i$ where $\epsilon_i \sim N(0, \sigma_w^2 / d \cdot I_d)$, clipped to $[-3, 3]^d$. The per-dimension scale $\sigma_w / \sqrt{d}$ ensures the expected Euclidean distance to the reference firm is approximately $\sigma_w = 0.2$ regardless of $d$. Workers cluster tightly around the firm curve, each close to a few firms and far from most, creating the spatial locality that makes the matching problem non-trivial.
 
 **Calibration of $r_{\text{base}}$ and $\bar{q}_{\text{pub}}$.** At initialization, compute $E[f]$ from a Monte Carlo sample of 10,000 clustered worker-firm pairs (workers drawn as perturbations of actual firm types, matching the initialization distribution). Set $\bar{q}_{\text{pub}} = E[f]$ and $r_{\text{base}} = 0.60 \cdot E[f]$. Using actual firm types for calibration ensures the output scale matches the simulation's population.
 

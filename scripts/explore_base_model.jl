@@ -14,6 +14,7 @@ using TransientBrokerage
 using CairoMakie
 using DataFrames
 using Statistics: mean
+using LinearAlgebra: svd, norm
 using JLD2
 
 const OUTDIR = joinpath(@__DIR__, "..", "data", "figures", "exploration")
@@ -221,26 +222,32 @@ N_SEEDS = 5
 # Labels: evocative description first, exact parameters in parentheses
 configs = [
     (tag="baseline",
-     label="Baseline: 4-dim types, moderate quality share, 5% turnover (d=4, ρ=0.50, η=0.05)",
-     kwargs=(d=4, rho=0.50)),
-    (tag="simple_matching",
-     label="Simple matching: 2-dim types (d=2, ρ=0.50, η=0.05)",
-     kwargs=(d=2, rho=0.50)),
-    (tag="complex_matching",
-     label="Complex matching: 8-dim types (d=8, ρ=0.50, η=0.05)",
+     label="Baseline: 8-dim types, moderate quality share, 5% turnover (d=8, ρ=0.50, η=0.05)",
      kwargs=(d=8, rho=0.50)),
-    (tag="weak_quality",
-     label="Weak general quality: mostly match-specific (d=4, ρ=0.10, η=0.05)",
-     kwargs=(d=4, rho=0.10)),
-    (tag="strong_quality",
-     label="Strong general quality: worker type dominates (d=4, ρ=0.90, η=0.05)",
-     kwargs=(d=4, rho=0.90)),
-    (tag="stable_market",
-     label="Stable market: 1% firm turnover, ~100-period lifetimes (d=4, ρ=0.50, η=0.01)",
-     kwargs=(d=4, rho=0.50, eta=0.01)),
-    (tag="volatile_market",
-     label="Volatile market: 10% firm turnover, ~10-period lifetimes (d=4, ρ=0.50, η=0.10)",
-     kwargs=(d=4, rho=0.50, eta=0.10)),
+    (tag="d04_simple",
+     label="Simple matching: 4-dim types (d=4, ρ=0.50, η=0.05)",
+     kwargs=(d=4, rho=0.50)),
+    (tag="d12_complex",
+     label="Complex matching: 12-dim types (d=12, ρ=0.50, η=0.05)",
+     kwargs=(d=12, rho=0.50)),
+    (tag="rho10_weakquality",
+     label="Weak general quality: mostly match-specific (d=8, ρ=0.10, η=0.05)",
+     kwargs=(d=8, rho=0.10)),
+    (tag="rho90_strongquality",
+     label="Strong general quality: worker type dominates (d=8, ρ=0.90, η=0.05)",
+     kwargs=(d=8, rho=0.90)),
+    (tag="eta01_stable",
+     label="Stable market: 1% firm turnover, ~100-period lifetimes (d=8, ρ=0.50, η=0.01)",
+     kwargs=(d=8, rho=0.50, eta=0.01)),
+    (tag="eta10_volatile",
+     label="Volatile market: 10% firm turnover, ~10-period lifetimes (d=8, ρ=0.50, η=0.10)",
+     kwargs=(d=8, rho=0.50, eta=0.10)),
+    (tag="rho00_pureinteraction",
+     label="Pure interaction: no general quality (d=8, ρ=0.00, η=0.05)",
+     kwargs=(d=8, rho=0.0)),
+    (tag="rho100_purequality",
+     label="Pure general quality: no match-specific component (d=8, ρ=1.00, η=0.05)",
+     kwargs=(d=8, rho=1.0)),
 ]
 
 RERUN = "--rerun" in ARGS  # pass --rerun to force re-simulation
@@ -263,6 +270,73 @@ for (i, c) in enumerate(configs)
         println("  Saved data: $datafile")
     end
     plot_ensemble(mdfs, c.label, "$(c.tag).png")
+end
+
+# ---------------------------------------------------------------------------
+# SVD of noiseless matching matrix F[worker, firm] for dimension sweep
+# ---------------------------------------------------------------------------
+
+"""Build N_W × N_F noiseless matching matrix and plot its SVD spectrum."""
+function plot_svd_matching(; d::Int, rho::Float64, seed::Int=42, filename::String)
+    params = default_params(; d=d, rho=rho, seed=seed)
+    state = initialize_model(params)
+
+    N_W = length(state.workers)
+    N_F = length(state.firms)
+    F = Matrix{Float64}(undef, N_W, N_F)
+    for j in 1:N_F
+        x = state.firms[j].type
+        for i in 1:N_W
+            F[i, j] = match_output_noiseless(state.workers[i].type, x, state.env)
+        end
+    end
+
+    S = svd(F)
+    σ = S.S
+    σ_norm = σ ./ σ[1]
+    cumvar = cumsum(σ .^ 2) ./ sum(σ .^ 2)
+
+    fig = Figure(; size=(700, 280), figure_padding=(10, 15, 5, 5))
+    title = "SVD of noiseless matching matrix F[worker, firm] " *
+            "($(N_W)×$(N_F), d=$d, ρ=$rho, seed=$seed)"
+    Label(fig[0, 1:2], title; fontsize=13, font=:bold, halign=:center, tellwidth=false)
+
+    ax1 = Axis(fig[1, 1]; title="Singular values of F(w,x) matrix",
+               xlabel="Component", ylabel="Normalized",
+               titlesize=11, xlabelsize=10, ylabelsize=10)
+    scatterlines!(ax1, 1:length(σ_norm), σ_norm; markersize=4, color=:steelblue)
+
+    cumvar_plot = vcat(0.0, cumvar)  # start at (0, 0)
+    ax2 = Axis(fig[1, 2]; title="Cumulative variance explained",
+               xlabel="Component", ylabel="Fraction",
+               titlesize=11, xlabelsize=10, ylabelsize=10,
+               limits=(nothing, (0, 1.05)))
+    scatterlines!(ax2, 0:length(cumvar), cumvar_plot; markersize=4, color=:steelblue)
+    # Reference lines at 90% and 95%
+    hlines!(ax2, [0.90, 0.95]; color=:gray60, linestyle=:dash, linewidth=0.8)
+    text!(ax2, length(cumvar) * 0.75, 0.90; text="90%", fontsize=9, color=:gray40, align=(:left, :bottom))
+    text!(ax2, length(cumvar) * 0.75, 0.95; text="95%", fontsize=9, color=:gray40, align=(:left, :bottom))
+
+    rowsize!(fig.layout, 0, Fixed(22))
+
+    save(joinpath(OUTDIR, filename), fig)
+    println("  Saved: $filename")
+    return fig
+end
+
+# Generate SVD figures for configs that vary d or rho (i.e. change the matching function)
+println("Generating SVD matching matrix figures...")
+svd_configs = filter(c -> begin
+        d = get(Dict(pairs(c.kwargs)), :d, 8)
+        rho = get(Dict(pairs(c.kwargs)), :rho, 0.50)
+        d != 8 || rho != 0.50  # skip if both are baseline defaults
+    end, configs)
+# Always include baseline
+pushfirst!(svd_configs, configs[1])
+for c in svd_configs
+    kw = Dict(pairs(c.kwargs))
+    plot_svd_matching(; d=get(kw, :d, 8), rho=get(kw, :rho, 0.50),
+                        filename="$(c.tag)_svd.png")
 end
 
 println()

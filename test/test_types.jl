@@ -89,7 +89,7 @@ using StableRNGs: StableRNG
         p = default_params()
         @test p.d == 4
         @test p.rho == 0.50
-        @test p.K_mu == 10
+        @test p.K_mu == 2
         @test p.N_W == 1000
         @test p.N_F == 50
         @test p.eta == 0.05

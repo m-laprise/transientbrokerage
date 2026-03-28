@@ -13,7 +13,7 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
     defaults = Dict{Symbol,Any}(
         :d => 4,
         :rho => 0.50,
-        :K_mu => 10,
+        :K_mu => 2,
         :N_W => 1000,
         :N_F => 50,
         :eta => 0.05,
@@ -28,6 +28,7 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
         :c_emp_frac => 0.15,
         :p_vac => 0.50,
         :pool_target_frac => 0.20,
+        :sigma_w => 0.2,
         :n_candidates_frac => 0.015,
         :network_measure_interval => 10,
         :T => 200,
@@ -56,6 +57,7 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
         defaults[:c_emp_frac],
         defaults[:p_vac],
         defaults[:pool_target_frac],
+        defaults[:sigma_w],
         defaults[:n_candidates_frac],
         defaults[:network_measure_interval],
         defaults[:T],
@@ -90,6 +92,7 @@ function validate_params(p::ModelParams)
     @assert 0.0 < p.c_emp_frac < 1.0 "c_emp_frac must be in (0, 1), got $(p.c_emp_frac)"
     @assert 0.0 < p.p_vac <= 1.0 "p_vac must be in (0, 1], got $(p.p_vac)"
     @assert 0.0 < p.pool_target_frac <= 1.0 "pool_target_frac must be in (0, 1], got $(p.pool_target_frac)"
+    @assert p.sigma_w > 0.0 "sigma_w must be > 0, got $(p.sigma_w)"
     @assert 0.0 < p.n_candidates_frac <= 1.0 "n_candidates_frac must be in (0, 1], got $(p.n_candidates_frac)"
     @assert p.network_measure_interval >= 1 "network_measure_interval must be ≥ 1, got $(p.network_measure_interval)"
     @assert p.T >= 1 "T must be ≥ 1, got $(p.T)"

@@ -33,8 +33,9 @@ using Graphs: nv, is_connected
     end
 
     @testset "firm properties" begin
-        @test all(all(-3.0 .<= f.type .<= 3.0) for f in state.firms)
         @test all(length(f.type) == params.d for f in state.firms)
+        # Firm types are on the unit sphere + small perturbation
+        @test all(0.5 < sqrt(sum(f.type .^ 2)) < 1.5 for f in state.firms)
     end
 
     @testset "initial employment: 6-10 per firm, no double-counting" begin
@@ -125,12 +126,12 @@ end
         @test all(all(-3.0 .<= t .<= 3.0) for t in types)
     end
 
-    # Curve amplitude fills a reasonable range (not all near zero)
-    @testset "curve fills type space" begin
+    # Firm types are near the unit sphere (norm ≈ 1 plus small perturbation)
+    @testset "firm types near unit sphere" begin
         curve = generate_firm_curve(d, StableRNG(42))
         types = generate_firm_types(curve, 100, d, StableRNG(1))
-        max_abs = maximum(maximum(abs.(t)) for t in types)
-        @test max_abs > 1.0  # amplitude 2.0 should reach beyond 1
+        norms = [sqrt(sum(t .^ 2)) for t in types]
+        @test all(0.5 .< norms .< 1.5)  # near unit sphere with perturbation
     end
 
     # Deterministic with fixed seed

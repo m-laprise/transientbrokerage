@@ -45,8 +45,18 @@ function generate_matching_function(d::Int, rho::Float64,
     end
     mu_bandwidth = median(pairwise_dists)
 
-    # Scale weights so Var(mu)/Var(f) = rho
-    if rho > 0.0
+    # Scale mu weights using per-mode calibration.
+    # The interaction w'x spreads its variance across d singular modes while mu(w) is
+    # rank-1. We calibrate so that mu's singular value matches rho/(1-rho) times the
+    # *average* interaction singular value: Var(mu) = rho/(1-rho) * Var(w'x) / d.
+    # This way rho=0.5 means mu is as strong as one interaction mode, giving clean
+    # SVD spectra and dimension-invariant interpretation.
+    #   rho = 0: pure interaction (mu = 0)
+    #   rho = 1: pure general quality (mu >> interaction; capped ratio)
+    #   0 < rho < 1: per-mode balanced
+    if rho == 0.0
+        mu_weights = zeros(K_mu)
+    else
         inv2h2 = 1.0 / (2.0 * mu_bandwidth^2)
         mu_vals = Vector{Float64}(undef, n_cal)
         for i in 1:n_cal
@@ -64,10 +74,9 @@ function generate_matching_function(d::Int, rho::Float64,
             randn!(rng, x_buf); clamp!(x_buf, -3.0, 3.0)
             interaction_vals[i] = dot(view(w_samples, :, i), x_buf)
         end
-        scale = sqrt(rho / (1.0 - rho) * var(interaction_vals) / max(var_mu, 1e-12))
+        ratio = rho >= 1.0 ? 1000.0 : rho / (1.0 - rho)
+        scale = sqrt(ratio * var(interaction_vals) / (d * max(var_mu, 1e-12)))
         mu_weights = mu_weights_raw .* scale
-    else
-        mu_weights = zeros(K_mu)
     end
 
     return MatchingEnv(d, mu_centers, mu_weights, mu_bandwidth)

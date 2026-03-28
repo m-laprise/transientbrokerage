@@ -16,23 +16,26 @@ using Statistics: var
         @test env.mu_bandwidth > 0.0
     end
 
-    # Variance calibration: Var(mu)/Var(f) approx rho within 25% tolerance
-    @testset "Variance calibration Var(mu)/Var(f) approx rho" begin
+    # Per-mode variance calibration: Var(mu) / Var(w'x) ≈ rho / ((1-rho) * d)
+    # mu is rank-1 while w'x has d modes, so we calibrate mu's singular value
+    # to match rho/(1-rho) times the average interaction singular value.
+    @testset "Variance calibration per-mode balanced" begin
         env = generate_matching_function(d, rho, K_mu, StableRNG(42))
         cal_rng = StableRNG(99)
         n = 10_000
         mu_vals = Vector{Float64}(undef, n)
-        f_vals = Vector{Float64}(undef, n)
+        interaction_vals = Vector{Float64}(undef, n)
         for i in 1:n
             w = clamp.(randn(cal_rng, d), -3.0, 3.0)
             x = clamp.(randn(cal_rng, d), -3.0, 3.0)
             mu_vals[i] = eval_mu(w, env)
-            f_vals[i] = match_output_noiseless(w, x, env)
+            interaction_vals[i] = dot(w, x)
         end
         var_mu = var(mu_vals)
-        var_f = var(f_vals) + 1.0  # add noise variance
-        ratio = var_mu / var_f
-        @test abs(ratio - rho) / rho < 0.25
+        var_wx = var(interaction_vals)
+        expected_ratio = rho / ((1.0 - rho) * d)
+        actual_ratio = var_mu / var_wx
+        @test abs(actual_ratio - expected_ratio) / expected_ratio < 0.25
     end
 
     # When rho=0, mu contributes nothing

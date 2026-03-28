@@ -92,6 +92,7 @@ struct ModelParams
     c_emp_frac::Float64          # employment cost as fraction of r_base
     p_vac::Float64               # per-period vacancy probability (default 0.30)
     pool_target_frac::Float64    # broker pool target as fraction of N_W (default 0.20; P = ⌈frac · N_W⌉)
+    sigma_w::Float64             # worker type dispersion around firm curve (default 0.2)
     n_candidates_frac::Float64   # candidates as fraction of N_W (default 0.015)
     network_measure_interval::Int # M
     T::Int                       # total periods
@@ -197,11 +198,10 @@ mutable struct CachedNetworkMeasures
     effective_size::Float64   # Burt's effective size (non-redundant contacts)
 end
 
-"""Smooth 1D curve in R^d for generating firm types. Stored so entrant firms can sample from the same curve."""
+"""Smooth 1D curve on the unit sphere in R^d for generating firm types."""
 struct FirmCurve
     freqs::Vector{Float64}     # per-dimension frequencies in [1, 3]
     phases::Vector{Float64}    # per-dimension phases in [0, 2π]
-    amplitude::Float64         # sinusoid amplitude (default 2.0)
 end
 
 """Complete simulation state: all agents, network, environment, and accumulators."""
