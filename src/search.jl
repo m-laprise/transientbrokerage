@@ -43,11 +43,13 @@ function internal_search(firm::Firm,
     isempty(candidates) && return (0, 0.0)
 
     # Evaluate via firm ridge model
+    d = length(firm.type)
+    buf = Vector{Float64}(undef, 2d)
     best_id = 0
     best_q = -Inf
     n_tied = 0
     for wid in candidates
-        q_hat = predict_ridge(model, firm_features(workers[wid].type))
+        q_hat = predict_ridge!(model, buf, workers[wid].type)
         if q_hat > best_q
             best_q = q_hat
             best_id = wid

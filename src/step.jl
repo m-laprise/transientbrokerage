@@ -64,15 +64,19 @@ function step_period!(state::ModelState)
 
     # Holdout evaluation: random workers at each firm, noiseless truth (no selection bias)
     d = params.d
+    w_holdout = Vector{Float64}(undef, d)
+    firm_buf = Vector{Float64}(undef, 2d)
+    broker_buf = Vector{Float64}(undef, 4d)
     for (j, firm) in enumerate(state.firms)
         fm = models.firm_models[j]
         bm = models.broker_model
         for _ in 1:3
-            w = clamp.(firm.type .+ randn(rng, d), -3.0, 3.0)
-            q_true = match_output_noiseless(w, firm.type, state.env)
-            push!(state.accum.firm_holdout_pred, predict_ridge(fm, firm_features(w)))
+            randn!(rng, w_holdout)
+            @. w_holdout = clamp(firm.type + w_holdout, -3.0, 3.0)
+            q_true = match_output_noiseless(w_holdout, firm.type, state.env)
+            push!(state.accum.firm_holdout_pred, predict_ridge!(fm, firm_buf, w_holdout))
             push!(state.accum.firm_holdout_real, q_true)
-            push!(state.accum.broker_holdout_pred, predict_ridge(bm, broker_features(w, firm.type)))
+            push!(state.accum.broker_holdout_pred, predict_ridge!(bm, broker_buf, w_holdout, firm.type))
             push!(state.accum.broker_holdout_real, q_true)
         end
     end

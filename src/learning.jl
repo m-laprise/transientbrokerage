@@ -72,6 +72,25 @@ firm_features(w::AbstractVector) = vcat(w, w .^ 2)
 """Construct broker feature vector [w; x; w.*x; w.^2] for prediction."""
 broker_features(w::AbstractVector, x::AbstractVector) = vcat(w, x, w .* x, w .^ 2)
 
+"""Write firm features [w; w.^2] into `buf` and predict. Zero-allocation hot path."""
+function predict_ridge!(model::RidgeModel, buf::Vector{Float64}, w::AbstractVector)
+    d = length(w)
+    @views buf[1:d] .= w
+    @views @. buf[d+1:2d] = w ^ 2
+    return dot(model.beta, buf) + model.intercept
+end
+
+"""Write broker features [w; x; w.*x; w.^2] into `buf` and predict. Zero-allocation hot path."""
+function predict_ridge!(model::RidgeModel, buf::Vector{Float64},
+                        w::AbstractVector, x::AbstractVector)
+    d = length(w)
+    @views buf[1:d] .= w
+    @views buf[d+1:2d] .= x
+    @views @. buf[2d+1:3d] = w * x
+    @views @. buf[3d+1:4d] = w ^ 2
+    return dot(model.beta, buf) + model.intercept
+end
+
 
 """
     build_period_models(state, lambda) -> PeriodModels

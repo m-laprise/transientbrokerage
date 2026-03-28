@@ -38,7 +38,7 @@ export build_social_network, compute_referral_pool!, compute_all_referral_pools!
 export FirmCurve, generate_firm_curve, sample_firm_type, generate_firm_types
 export compute_reservation_wage, create_firm, create_broker
 export assign_initial_employment!, initialize_model
-export fit_ridge, predict_ridge, build_period_models, firm_features, broker_features
+export fit_ridge, predict_ridge, predict_ridge!, build_period_models, firm_features, broker_features
 export compute_prediction_quality
 export build_combined_graph, compute_betweenness, compute_burt_constraint
 export compute_effective_size, update_cached_network_measures!
