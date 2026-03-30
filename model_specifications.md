@@ -154,76 +154,64 @@ Workers and firms are characterized by multi-dimensional types, respectively $w_
 Let $q_{ij}$ represent the **per-period productive output of match $(i, j)$**. It is a function of worker type and firm type, it is measured in monetary units, and it represents the economic value the firm derives from the worker:
 
 $$q_{ij} = f(w_i, x_j) + \varepsilon_{ij}, \qquad
-\varepsilon_{ij} \sim N(0, 1)$$
+\varepsilon_{ij} \sim N(0, \sigma_\varepsilon^2)$$
 
-The noise term $\varepsilon_{ij}$ represents idiosyncratic match-specific variation (interpersonal chemistry, unobserved characteristics, and other factors not captured by observable types) that is irreducible even with perfect knowledge of $f$.
+where $\sigma_\varepsilon = 0.25$. The noise term $\varepsilon_{ij}$ represents idiosyncratic match-specific variation (interpersonal chemistry, unobserved characteristics, and other factors not captured by observable types) that is irreducible even with perfect knowledge of $f$.
 
 The matching function $f: \mathbb{R}^d \times \mathbb{R}^d \to \mathbb{R}$ is unknown to all agents and fixed for the duration of the simulation. Agents learn $f$ nonparametrically from observed outcomes (§2).
 
 The deterministic portion of match quality has two components:
 
-$$f(w, x) = \mu(w) + w^\top x$$
+$$f(w, x) = Q + \rho \cdot \tanh(\cos(w, c)) + (1 - \rho) \cdot \cos(w, x)$$
 
-- The first is the output of $\mu: \mathbb{R}^d \to \mathbb{R}$, which maps worker types to general worker quality (§1b). It is non-negative and nonlinear.
-- The second is $w^\top x$, a dot product that captures match-specific worker-firm interaction (§1c). It is linear in both arguments.
+where $Q = 1.0$ is an offset that shifts the output to be positive for typical matches (the signal components are bounded in $[-1, 1]$, so $f \in [0, 2]$ before noise).
+
+- The first is $\rho \cdot \tanh(\cos(w, c))$, where $\cos$ denotes cosine similarity and $c$ is an ideal worker type vector (§1b). The $\tanh$ nonlinearity saturates at $\pm 1$.
+- The second is $(1 - \rho) \cdot \cos(w, x)$, the cosine similarity between worker and firm types, capturing match-specific interaction (§1c). Bounded in $[-1, 1]$.
+
+Both components are bounded and $\rho$ directly controls the mixing weight (§1d).
 
 #### 1b. General worker quality
 
 General worker quality is the analogue of the "worker effect" in the AKM decomposition of observed wages (Abowd, Kramarz & Margolis, 1999). It captures portable human capital such as general ability, conscientiousness, reliability.
 
-Here, it is formalized as a weighted sum of radial basis functions (RBFs) defined on the full $d$-dimensional worker type space:
+Here, general quality is $\tanh(\cos(w, c))$, where $c \in \mathbb{R}^d$ is an **ideal worker type vector** drawn at initialization like an $(N_W + 1)$th worker: a perturbation of a random firm type with the same $\sigma_w / \sqrt{d}$ per-dimension noise used for regular workers (§12c).
 
-$$\mu(w) = \sum_{l=1}^{K_\mu} a_l \exp \left(-\frac{ \|w - c_l\|^2}{2h^2}\right)$$
+The vector $c$ represents a quality archetype. Workers whose types are aligned with $c$ (high cosine similarity) have higher general quality. The $\tanh(\cos(w, c))$ term is a signed quality measure in $[-1, 1]$: workers aligned with $c$ have positive quality, anti-aligned workers have negative quality, with diminishing returns at the extremes.
 
-Components:
-- $c_l \in \mathbb{R}^d$ are RBF centers,
-- $a_l \geq 0$ are non-negative random weights (drawn as $N(0,1)^2$, then jointly scaled per §1d). Non-negativity ensures $\mu(w) \geq 0$: all workers have non-negative general quality,
-- $h$ is the bandwidth (set to the median pairwise distance among a Monte Carlo sample of worker types),
-- $K_\mu$ is the number of centers (default 2).
+This is analogous to the AKM worker effect: some workers are universally better, some universally worse. The quality component depends only on the worker type, not on the firm, so it is portable across firms.
 
-With $K_\mu = 2$, general worker quality has two Gaussian bumps — the simplest non-trivial landscape with variation across type space. $h$ controls the spatial scale of variation. $K_\mu$ is a fixed constant (not swept); under the per-mode calibration (§1d), $\mu$ contributes a small share of total variance at moderate $\rho$, so its internal complexity has negligible effect on dynamics.
-
-Because $\mu$ is nonlinear and operates on the full $d$-dimensional type space, it cannot be learned by linear regression. Agents using linear models (§2a) can capture the linear interaction $w^\top x$ but not $\mu$. The parameter $\rho$ (§1d) controls how much this unlearnable component contributes to total output variance.
-
-The relative importance of general worker quality within the overall match function is controlled by the parameter $\rho$ (which scales the weights $a_l$), defined in §1d.
+Since $\tanh$ is a monotone function of the cosine similarity, ridge regression on features including $w$ can partially learn it. Unlike a pure dot product, the nonlinearity means the linear model cannot capture it exactly. The parameter $\rho$ (§1d) controls how much the general quality component contributes to total match output.
 
 #### 1c. Match-specific interaction
 
-The match-specific interaction $w^\top x$ captures how well a particular worker-firm pairing works together, beyond the worker's baseline productivity. It is a dot product in the full $d$-dimensional type space: each worker skill dimension interacts independently with the corresponding firm characteristic dimension.
+The match-specific interaction is $\cos(w, x) = w^\top x / (\|w\| \|x\|)$, the cosine similarity between worker and firm types. It captures how well aligned a worker's skills are with a firm's needs, independent of vector magnitudes.
 
-For firm $j$ with fixed type $x_j$, the interaction $w^\top x_j$ is linear in the worker type $w$. This means a firm can learn to predict the interaction component from its hiring history using linear regression — the natural predictor for a linear function.
+Bounded in $[-1, 1]$. For a fixed firm $j$, $\cos(w, x_j)$ varies smoothly with $w$ and is approximately learnable by ridge regression from the firm's hiring history.
 
-#### 1d. Variance decomposition and the role of $\rho$
+#### 1d. The role of $\rho$
 
-The parameter $\rho$ controls the relative importance of general quality $\mu(w)$ versus the match-specific interaction $w^\top x$, calibrated on a per-mode basis.
+The parameter $\rho$ is a direct mixing weight that controls how much of match quality depends on the worker alone (portable across firms) vs. worker-firm pairings: $f = \rho \cdot (\text{quality}) + (1 - \rho) \cdot (\text{interaction}) + \varepsilon$.
 
-**Per-mode calibration.** The interaction $w^\top x$ contributes $d$ singular modes to the matching matrix $F_{ij} = f(w_i, x_j)$, while $\mu(w)$ is a rank-1 component (a function of the worker alone, constant across firms). A naive total-variance calibration $\text{Var}(\mu) / \text{Var}(f) = \rho$ would let $\mu$'s rank-1 spike dominate the SVD spectrum at moderate $\rho$, because all of $\mu$'s energy concentrates in a single singular value while the interaction spreads its energy across $d$ values.
+At **low $\rho$**, the broker's cross-firm data is most valuable because the interaction $\cos(w, x)$ can only be disentangled by observing the same workers at different firms. Individual firms see only their own slice $\cos(w, x_j)$ and cannot separate worker quality from interaction effects. The broker's advantage is large.
 
-Instead, $\rho$ controls the **per-mode** strength: the weights $a_l$ are scaled so that
+At **high $\rho$**, firms can learn general quality from their own hires; the broker's advantage shrinks. Since $\tanh(\cos(w, c))$ depends only on the worker, each firm can estimate it from its own hiring history. The broker's cross-firm data adds little.
 
-$$\frac{\text{Var}(\mu)}{\text{Var}(w^\top x)} = \frac{\rho}{(1 - \rho) \cdot d}$$
-
-This means $\rho = 0.5$ makes $\mu$'s singular value equal to the average interaction singular value — a fair comparison where neither component dominates by construction. The total variance share of $\mu$ at $\rho = 0.5$ is approximately $1/(d+1)$, not $1/2$.
-
-- Default $\rho = 0.50$. At $d = 8$, general quality contributes about $1/9$ of total noiseless variance — comparable to one interaction mode. The broker's cross-firm advantage primarily operates through the interaction term.
-- At $\rho = 0$, $\mu = 0$ and the model reduces to $f(w,x) = w^\top x + \varepsilon$.
-- At $\rho = 1$, $\mu$ dominates ($\text{Var}(\mu) / \text{Var}(w^\top x) = 1000$, a practical upper bound).
-
-This calibration is exact on the Monte Carlo sample used at initialization and approximate for the simulation population.
-
-Because $\mu$ is nonlinear and the interaction $w^\top x$ is linear, agents using linear models (§2a) can learn the interaction component but not $\mu$. The parameter $\rho$ therefore controls *how much of match quality is learnable by linear regression*:
-
-- At **low $\rho$** (interaction dominates), the matching function is mostly linear and high-rank. The broker's cross-firm data is essential because the interaction $w^\top x$ can only be disentangled by observing the same workers at different firms. Individual firms see only their own slice $w^\top x_j$ and cannot separate worker quality from interaction effects. The broker's advantage is large.
-- At **high $\rho$** ($\mu$ dominates), general worker quality explains most of the output variance. Since $\mu(w)$ depends only on the worker, each firm can estimate it from its own hires. The broker's cross-firm data adds little because there is little interaction signal to learn. The broker's advantage is small.
-- At **moderate $\rho$**, both components are present. The broker benefits from cross-firm interaction data while firms can partially learn from $\mu$'s contribution. The broker's advantage is intermediate.
+At **moderate $\rho$**, both components are present. The broker benefits from cross-firm interaction data while firms can partially learn the general quality component.
 
 #### 1e. What controls the difficulty of the matching problem
 
-- **$d$ (type dimensionality).** Higher $d$ means each agent's regression model has more parameters to estimate from the same amount of data. Individual firms suffer more than the broker because they have fewer observations per parameter. $d$ is the primary difficulty axis.
+- **Worker-firm geometry.** The primary difficulty axis. Two aspects interact: (1) how workers are distributed around firms ($\sigma_w$ relative to inter-firm spacing), and (2) how much of type space the firm curve spans.
 
-- **$\rho$ (general quality share).** Controls the fraction of output variance that is nonlinear and unlearnable by linear models. At low $\rho$, the matching function is nearly linear and easy to learn. At high $\rho$, predictions are limited by the model class regardless of data volume. $\rho$ and $d$ together determine the broker's informational advantage.
+  Workers are drawn as perturbations of firm types with dispersion $\sigma_w$ (§0). When $\sigma_w$ is comparable to inter-firm spacing (the default $\sigma_w = 0.5$), workers overlap with multiple firms' neighborhoods, creating meaningful variation in match quality that requires data to learn.
 
-- **Smoothness of $\mu$ ($K_\mu$, $h$).** The number of RBF centers and bandwidth control the shape of the general quality landscape. With the per-mode calibration, the complexity of $\mu$ has little effect on dynamics because $\mu$ is a small fraction of total variance at moderate $\rho$. These are calibration parameters, fixed during development.
+  Equally important, firms must point in genuinely different directions across all $d$ dimensions. The sinusoidal firm curve achieves this by assigning each dimension an independent random frequency and phase (§12c). Because firm types span the full $d$-dimensional space, the interaction $\cos(w, x)$ varies in fundamentally different ways across firms, and a firm observing $\cos(w, x_j)$ for its own fixed $x_j$ cannot infer how the same workers would match at firms pointing in other directions. A curve confined to a low-dimensional subspace (e.g., a geodesic arc spanning only 2 dimensions) makes the interaction too simple for firms to need cross-firm data, collapsing the broker's advantage.
+
+- **$\rho$ (quality-interaction mixing weight).** Controls the broker's informational advantage. At low $\rho$, the interaction dominates and cross-firm data is essential; the broker's advantage is large. At high $\rho$, general quality dominates and firms can learn from their own hires; the broker's advantage shrinks.
+
+- **$d$ (type dimensionality).** Higher $d$ increases the number of regression features ($2d$ for firms, $4d$ for the broker) and, because the sinusoidal firm curve spans all $d$ dimensions, also increases the effective dimensionality of the interaction. However, under cosine normalization the interaction remains a bounded scalar regardless of $d$, so the effect of $d$ on the broker's advantage is secondary to $\rho$ and worker-firm geometry.
+
+- **$\sigma_\varepsilon$ (noise scale).** With $\sigma_\varepsilon = 0.25$ and signal in $[-1, 1]$, the signal-to-noise ratio is approximately 4:1.
 
 ### 2. Learning
 
@@ -235,29 +223,29 @@ Both firms and the broker learn from experience using ridge regression, fitted e
 
 A firm's history $\mathcal{H}_j^t = \{(w_m, q_{mj})\}_{m=1}^{n_j}$ records the workers the firm has directly employed and their realized match outputs. Histories are seeded at initialization: each firm's 6-10 initial employees produce observed match outputs that are recorded immediately (§12c). Firms therefore always have at least 6 observations.
 
-Firm $j$ knows its own type $x_j$. For a fixed firm, $f(w, x_j) = \mu(w) + w^\top x_j + \varepsilon$ is the sum of a nonlinear function $\mu(w)$ and a linear function $w^\top x_j$. The firm fits a ridge regression model on its history:
+Firm $j$ knows its own type $x_j$. For a fixed firm, $f(w, x_j) = \rho \cdot \tanh(\cos(w, c)) + (1 - \rho) \cdot \cos(w, x_j) + \varepsilon$ combines a nonlinear quality term and a cosine interaction term. The firm fits a ridge regression model on its history using $2d$ features:
 
-$$\hat{q}_j(w') = \hat{\beta}_j^\top w' + \hat{c}_j$$
+$$\hat{q}_j(w') = \hat{\beta}_j^\top [w'; w'^2] + \hat{c}_j$$
 
-where $\hat{\beta}_j, \hat{c}_j$ are the ridge regression coefficients fitted on $\{(w_m, q_{mj})\}$ with regularization parameter $\lambda$ (default 1.0). The model is refitted each period on the firm's full history.
+where $\hat{\beta}_j, \hat{c}_j$ are the ridge regression coefficients fitted on $\{([w_m; w_m^2], q_{mj})\}$ with regularization parameter $\lambda$ (default 1.0). The model is refitted each period on the firm's full history. The firm uses $2d$ features: the worker type $w$ and its elementwise square $w^2$. The quadratic features $w^2$ help approximate the $\tanh$ nonlinearity in the general quality component.
 
-The linear model captures the interaction component $w^\top x_j$ well (it is exactly linear in $w$) but cannot capture the nonlinear general quality $\mu(w)$. The firm's prediction error therefore includes the full variance of $\mu$ as irreducible noise.
+The cosine-normalized interaction $\cos(w, x_j)$ is approximately linear for nearby workers but not exactly linear. The firm captures both the quality and interaction components imperfectly.
 
 #### 2b. Broker's prediction
 
-The broker's history $\mathcal{H}_b^t = \{(w_m, x_m, q_m)\}_{m=1}^{n_b}$ records all placements the broker has mediated across all client firms and their realized match outputs. The broker's history is seeded at initialization with 5 random observations from existing worker-firm matches (§12c).
+The broker's history $\mathcal{H}_b^t = \{(w_m, x_m, q_m)\}_{m=1}^{n_b}$ records all placements the broker has mediated across all client firms and their realized match outputs. The broker's history is seeded at initialization with 20 random observations from existing worker-firm matches (§12c).
 
-Unlike a firm, the broker observes the same worker types producing different outcomes at different firms, and different worker types at the same firm. The broker fits a single pooled ridge regression on concatenated worker type, firm type, and elementwise interaction features:
+Unlike a firm, the broker observes the same worker types producing different outcomes at different firms, and different worker types at the same firm. The broker fits a single pooled ridge regression on concatenated worker type, firm type, elementwise interaction, and quadratic worker features:
 
-$$\hat{q}_b(w', x_j) = \hat{\beta}_w^\top w' + \hat{\beta}_x^\top x_j + \hat{\beta}_{wx}^\top (w' \odot x_j) + \hat{c}_b$$
+$$\hat{q}_b(w', x_j) = \hat{\beta}_w^\top w' + \hat{\beta}_x^\top x_j + \hat{\beta}_{wx}^\top (w' \odot x_j) + \hat{\beta}_{w^2}^\top w'^2 + \hat{c}_b$$
 
-where $[\hat{\beta}_w; \hat{\beta}_x; \hat{\beta}_{wx}; \hat{c}_b]$ are fitted on $\{([w_m; x_m; w_m \odot x_m], q_m)\}$ with regularization $\lambda$. The feature vector is $[w; x; w \odot x]$, where $\odot$ denotes elementwise multiplication, giving $3d$ features total. The interaction features $w \odot x$ allow the model to capture the bilinear interaction $w^\top x$ that drives the match-specific component (§1c), while the separate $w$ and $x$ blocks capture linear main effects. Refitted each period.
+where $[\hat{\beta}_w; \hat{\beta}_x; \hat{\beta}_{wx}; \hat{\beta}_{w^2}; \hat{c}_b]$ are fitted on $\{([w_m; x_m; w_m \odot x_m; w_m^2], q_m)\}$ with regularization $\lambda$. The feature vector is $[w; x; w \odot x; w^2]$, where $\odot$ denotes elementwise multiplication, giving $4d$ features total. The interaction features $w \odot x$ allow the model to capture the cosine interaction that drives the match-specific component (§1c), while the separate $w$ and $x$ blocks capture linear main effects and $w^2$ helps approximate the $\tanh$ nonlinearity. Refitted each period.
 
 The broker's pooled model has three advantages over the firm's model:
 
 1. **More data.** The broker accumulates observations across all client firms, giving it far more data points than any individual firm. With $n_b \gg n_j$, the broker's coefficient estimates have lower variance.
 
-2. **Richer features.** By including both $w$ and $x$ as features, the broker's model captures how worker-firm interactions vary across firms. The coefficient $\hat{\beta}_x$ estimates how firm characteristics affect match output — information no individual firm can learn from its own-hire data alone.
+2. **Richer features.** By including both $w$ and $x$ as features, the broker's model captures how worker-firm interactions vary across firms. The coefficient $\hat{\beta}_x$ estimates how firm characteristics affect match output, information no individual firm can learn from its own-hire data alone.
 
 3. **Interaction features.** The elementwise products $w \odot x$ give the broker's linear model the capacity to learn the bilinear interaction $w^\top x$ directly, rather than relying on the linear terms alone. A firm does not need these features (its type $x_j$ is fixed, so $w^\top x_j$ is already linear in $w$), but the broker, fitting across firms with varying $x$, benefits from explicitly representing the worker-firm interaction.
 
@@ -265,7 +253,7 @@ The broker's pooled model has three advantages over the firm's model:
 
 The firm learns "what kind of worker works well here" from a small, firm-specific sample. It cannot distinguish general quality from firm-specific fit.
 
-The broker learns "what kind of worker works well, and at which kind of firm" from a large cross-market sample. Its richer feature set ($[w; x; w \odot x]$, with $3d$ features) and larger data volume produce better predictions, especially at higher $d$ where individual firms cannot estimate $d+1$ regression parameters from their sparse histories.
+The broker learns "what kind of worker works well, and at which kind of firm" from a large cross-market sample. Its richer feature set ($[w; x; w \odot x; w^2]$, with $4d$ features) and larger data volume produce better predictions, especially at higher $d$ where individual firms cannot estimate their $2d+1$ regression parameters from their sparse histories.
 
 As firm $j$ accumulates more hires, its regression estimates improve and the broker's data advantage narrows. The broker's advantage is largest when firms have few observations and $d$ is high (more parameters to estimate from limited data).
 
@@ -430,15 +418,14 @@ At the start of the simulation, the state of the world must be initialized.
 
 > **INITIALIZE (Claude generated; review required)**
 >
-> *Matching function.* Interaction is $w^\top x$ (identity, no matrix needed).
-> I.1. &emsp;Draw $K_\mu$ RBF centers $c_l \sim N(0, I_d)$ and non-negative weights $a_l = z_l^2$, $z_l \sim N(0, 1)$.
-> I.2. &emsp;Draw 10,000 Monte Carlo worker types $\tilde{w}$ from $N(0, I_d)$ clipped to $[-3,3]$; set $h \leftarrow$ median pairwise distance in $\{\tilde{w}\}$.
-> I.3. &emsp;Draw 10,000 Monte Carlo $(w, x)$ pairs (iid for variance calibration); scale all $a_l$ jointly so $\text{Var}(\mu) / \text{Var}(w^\top x) = \rho / ((1 - \rho) \cdot d)$ on this sample (per-mode calibration; see §1d).
+> *Firm types and matching function.*
+> I.1. &emsp;Generate firm curve: per-dimension frequencies $f_k \sim U[1,3] \cdot \sqrt{d_{\text{ref}} / d}$ (where $d_{\text{ref}} = 8$), phases $\phi_k \sim U[0,2\pi]$. Store curve parameters.
+> I.2. &emsp;Sample $N_F$ firm types evenly along the curve: compute $x_j[k] = \sin(2\pi f_k t_j + \phi_k)$, normalize to the unit sphere $x_j \leftarrow x_j / \|x_j\|$, then add perturbation $x_j \leftarrow x_j + \epsilon$, $\epsilon \sim N(0, 0.01 \cdot I_d)$.
+> I.3. &emsp;Draw ideal worker $c$ as perturbation of a random firm type with $\sigma_w / \sqrt{d}$ per-dimension noise (like an $(N_W + 1)$th worker).
+> I.4. &emsp;Build MatchingEnv with $d$, $\rho$, $c$. No variance calibration step needed.
 >
-> *Firm and worker types.*
-> I.6. &emsp;Generate firm curve: per-dimension frequencies $f_k \sim U[1,3] \cdot \sqrt{d_{\text{ref}} / d}$ (where $d_{\text{ref}} = 8$), phases $\phi_k \sim U[0,2\pi]$. The frequency scaling makes the curve's arc length approximately invariant to $d$. Store curve parameters.
-> I.7. &emsp;Sample $N_F$ firm types evenly along the curve: compute $x_j[k] = \sin(2\pi f_k t_j + \phi_k)$, normalize to the unit sphere $x_j \leftarrow x_j / \|x_j\|$, then add perturbation $x_j \leftarrow x_j + \epsilon$, $\epsilon \sim N(0, 0.01 \cdot I_d)$.
-> I.8. &emsp;For each worker $i$: draw reference firm $j(i) \sim U\{1,\ldots,N_F\}$; set $w_i = x_{j(i)} + \epsilon_i$, $\epsilon_i \sim N(0, \sigma_w^2/d \cdot I_d)$, clipped to $[-3,3]$.
+> *Worker types.*
+> I.5. &emsp;For each worker $i$: draw reference firm $j(i) \sim U\{1,\ldots,N_F\}$; set $w_i = x_{j(i)} + \epsilon_i$, $\epsilon_i \sim N(0, \sigma_w^2/d \cdot I_d)$, clipped to $[-3,3]$.
 >
 > *Calibration.*
 > I.9. &emsp;Compute $E[f]$ from 10,000 clustered $(w, x)$ pairs using actual firm types. Set $\bar{q}\_\text{pub} \leftarrow E[f]$; $r\_\text{base} \leftarrow 0.60 \cdot E[f]$; $c\_\text{emp} \leftarrow 0.15 \cdot r\_\text{base}$ (M1 only).
@@ -446,9 +433,9 @@ At the start of the simulation, the state of the world must be initialized.
 >
 > *Network and employment.*
 > I.11. &emsp;Build $G_S$: Watts–Strogatz with $N_W$ nodes, degree $k_S$, rewiring $p_\text{rewire}$. Node order = workers sorted by first principal component of type.
-> I.12. &emsp;For each firm $j$: draw workforce size $\sim \text{Uniform}\{3, 4, 5\}$; sample workers without replacement with probability $\propto \exp(-\|w_i - x_j\|^2)$; add to $E_j^0$; set worker status $\leftarrow$ employed at $j$.
+> I.12. &emsp;For each firm $j$: draw workforce size $\sim \text{Uniform}\{6, 7, 8, 9, 10\}$; sample workers without replacement with probability $\propto \exp(-\|w_i - x_j\|^2)$; add to $E_j^0$; set worker status $\leftarrow$ employed at $j$.
 > I.13. &emsp;For each firm $j$: $R_j^0 \leftarrow \bigcup_{i \in E_j^0} N_S(i) \setminus E_j^0$.
-> I.14. &emsp;Broker seed pool: draw $P = \lceil 0.20 \cdot N_W \rceil$ workers uniformly from available workers; add to $\text{Pool}^0$.
+> I.14. &emsp;Broker seed pool: draw $P = \lceil 0.20 \cdot N_W \rceil$ workers uniformly from available workers; add to $\text{Pool}^0$. Seed broker history $\mathcal{H}_b$ with 20 random observations from existing worker-firm matches.
 >
 > *State variables.*
 > I.15. &emsp;For each firm $j$: $\mathcal{H}_j \leftarrow \emptyset$; $\quad s_{j,\text{int}}^0 \leftarrow \bar{q}\_\text{pub}$; $\quad s_{j,\text{broker}}^0 \leftarrow \bar{q}\_\text{pub}$; $\quad \text{vacancy} \leftarrow \text{none}$.
@@ -592,7 +579,7 @@ where $p_{bj}$ is the proportion of the broker's ties invested in node $j$. Low 
 
 **Selected-sample metrics.** Three metrics are computed over a rolling window of the last 50 actual hires (brokered placements for the broker, direct hires for firms):
 
-- *Selected $R^2$* $= 1 - \text{MSE}/\text{Var}(q)$, where $\text{MSE} = \frac{1}{n}\sum(\hat{q} - q)^2$ and $\text{Var}(q)$ is the variance of realized output in the window. Because hired workers are those with the highest predictions, this sample is subject to the winner's curse: predictions are systematically inflated relative to outcomes, depressing $R^2$ and inflating bias. Selected $R^2$ measures **wage accuracy** — how well the prediction used for wage-setting matches the realized outcome. It is the metric most relevant to the economics of the firm's profit margin.
+- *Selected $R^2$* $= 1 - \text{MSE}/\text{Var}(q)$, where $\text{MSE} = \frac{1}{n}\sum(\hat{q} - q)^2$ and $\text{Var}(q)$ is the variance of realized output in the window. Because hired workers are those with the highest predictions, this sample is subject to the winner's curse: predictions are systematically inflated relative to outcomes, depressing $R^2$ and inflating bias. Selected $R^2$ measures **wage accuracy**: how well the prediction used for wage-setting matches the realized outcome. It is the metric most relevant to the economics of the firm's profit margin.
 
 - *Bias* $= \frac{1}{n}\sum(\hat{q} - q)$. Tracks systematic over- or underprediction. Positive bias is expected in the selected sample due to the winner's curse: the agent selects candidates whose predictions benefited from positive noise. This bias inflates wages (through the surplus-sharing formula, §3a) and drives the recognition gap (§7a). $R^2$ can be high while bias is large if predictions track the shape of $f$ but are shifted.
 
@@ -620,7 +607,7 @@ The broker-firm gap in holdout $R^2$ is the purest measure of the informational 
 
 All base model mechanisms (§§1–7) operate unchanged in the model variants 1 and 2: firms search, learn, outsource, and the broker earns placement fees exactly as before.
 
-In Model 1, the difference is that the broker can additionally employ workers directly and supply them to client firms on an ongoing basis — an arrangement called staffing.
+In Model 1, the difference is that the broker can additionally employ workers directly and supply them to client firms on an ongoing basis, an arrangement called staffing.
 
 In Model 2, the difference is that the broker can additionally offer a data product in the form of a per-period subscription service for predictions, alongside its placement service.
 
@@ -893,26 +880,25 @@ Parameters are organized into five categories reflecting their role in the analy
 | $p_{\text{rewire}}$ | Social network rewiring | 0.1 | Fixed network topology parameter (§4) | Base |
 | $\omega$ | Satisfaction recency weight (§6a) | 0.3 | Fixed; standard EWMA weight | Base |
 | $p_{\text{vac}}$ | Per-period vacancy probability (§5) | 0.50 | ~25 vacancies/period across 50 firms | Base |
-| $\sigma_w$ | Worker type dispersion | 0.2 | Expected distance from worker to reference firm, dimension-invariant (§0, §12c) | Base |
+| $\sigma_w$ | Worker type dispersion | 0.5 | Expected distance from worker to reference firm, dimension-invariant (§0, §12c) | Base |
 | $L$ | Fee amortization period | 4 | Expected useful duration of a hire for per-period cost comparisons (§6a). M1 reuses as staffing assignment length (§9). | Base |
 
 **Calibration parameters.** Set during model development to ensure the DGP is well-behaved across the parameter space. Constant in production runs.
 
 | Symbol | Meaning | Default | Notes | Model |
 |--------|---------|---------|-------|-------|
-| $r_{\text{base}}$ | Reservation wage floor | $0.60 \cdot E[f]$ | Calibrated at init from Monte Carlo sample. Network premium (0.20) and noise scale (0.05) hardcoded in §3b. | Base |
-| $K_\mu$ | Number of RBF centers | 2 | Fixed constant; two Gaussian bumps, simplest non-trivial landscape (§1b) | Base |
+| $r_{\text{base}}$ | Reservation wage floor | $0.70 \cdot E[f]$ | Calibrated at init from Monte Carlo sample of random (not clustered) worker-firm pairs. Network premium (0.20) and noise scale (0.05) hardcoded in §3b. | Base |
 | $\lambda$ | Ridge regression regularization | 1.0 | Regularization for firm and broker regression models (§2a, §2b) | Base |
-| $h$ | RBF bandwidth | Median pairwise dist. in worker types | Automatic scaling via median heuristic (§1b) | Base |
+| $\sigma_\varepsilon$ | Match output noise SD | 0.25 | Signal bounded in $[-1,1]$; SNR $\approx$ 4:1 | Base |
 
 In the table, $\bar{f}$ denotes the mean absolute match output $E[|f(w,x)|]$, computed from a Monte Carlo sample at initialization. Parameters expressed as multiples of $r_{\text{base}}$ scale automatically with the output distribution, ensuring that the economic logic (surplus margins, fee incentives, staffing profitability) is stable across different $d$ and $A$ specifications.
 
-**Phase diagram axes.** The primary parameters of interest are $d$ (type dimensionality, controlling difficulty) and $\rho$ (general quality share, controlling the nonlinear fraction). Higher $d$ increases the regression estimation challenge; higher $\rho$ increases the unlearnable nonlinear component.
+**Phase diagram axes.** The primary parameter of interest is $\rho$ (quality-interaction mixing weight). Lower $\rho$ increases the broker's informational advantage by making cross-firm interaction data essential. $d$ is a secondary axis: higher $d$ increases the number of regression features but does not fundamentally change the difficulty of the cosine-normalized matching problem.
 
 | Symbol | Meaning | Default | Sweep | Model |
 |--------|---------|---------|-------|-------|
 | $d$ | Type dimensionality | 8 | {4, 8, 12} | Base |
-| $\rho$ | General quality per-mode share (§1d) | 0.50 | {0, 0.10, 0.50, 0.90, 1.0} | Base |
+| $\rho$ | Quality-interaction mixing weight (§1d) | 0.50 | {0, 0.10, 0.50, 0.90, 1.0} | Base |
 
 **OAT sensitivity parameters.** Varied one at a time while holding all others at defaults. Confirms that qualitative dynamics are robust (Fig. S3).
 
@@ -940,19 +926,19 @@ In the table, $\bar{f}$ denotes the mean absolute match output $E[|f(w,x)|]$, co
 
 #### 12c. Initial conditions
 
-**Matching function generation.** The matching function $f(w,x) = \mu(w) + w^\top x$ is generated as follows.
+**Matching function generation.** The matching function $f(w,x) = Q + \rho \cdot \tanh(\cos(w, c)) + (1 - \rho) \cdot \cos(w, x)$ (where $Q = 1.0$) is generated as follows.
 
-*General quality $\mu$.* The interaction is $w^\top x$ (implicit identity matrix, no separate construction needed). For $\mu$: draw $K_\mu$ RBF centers $c_l \sim N(0, I_d)$ and non-negative weights $a_l = z_l^2$ where $z_l \sim N(0, 1)$. Non-negativity ensures $\mu(w) \geq 0$. Set bandwidth $h$ equal to the median pairwise distance among a Monte Carlo sample of 10,000 worker types in $\mathbb{R}^d$. Scale all $a_l$ jointly so that $\text{Var}(\mu) / \text{Var}(w^\top x) = \rho / ((1-\rho) \cdot d)$ (per-mode calibration, §1d; evaluated on the same Monte Carlo sample).
+*Ideal worker type $c$.* Draw $c$ as a perturbation of a random firm type with $\sigma_w / \sqrt{d}$ per-dimension Gaussian noise, identically to how a regular worker type is drawn (§1b). Build MatchingEnv with $d$, $\rho$, $c$, $\|c\|$. No variance calibration is needed because both components are cosine-normalized and bounded in $[-1, 1]$.
 
-**Firm types.** Sampled along a smooth 1D curve on the unit sphere in $\mathbb{R}^d$ (§0): $N_F$ firms are evenly spaced along the curve, projected onto the unit sphere, with small Gaussian perturbation ($\sigma = 0.1$). Per-dimension frequencies are scaled by $\sqrt{d_{\text{ref}} / d}$ (with $d_{\text{ref}} = 8$) so that the curve's arc length and mean inter-firm spacing are approximately invariant to $d$. The curve parameters are stored for reuse by entrant firms.
+**Firm types.** Sampled along a sinusoidal curve on the unit sphere in $\mathbb{R}^d$ (see §1e for the design rationale): each dimension $k$ has an independent random frequency $f_k \sim U[1,3] \cdot \sqrt{d_{\text{ref}} / d}$ and phase $\phi_k \sim U[0, 2\pi]$, giving firm $j$ at position $t_j$ the raw coordinates $\sin(2\pi f_k t_j + \phi_k)$, which are projected onto the unit sphere and perturbed by $N(0, 0.01 \cdot I_d)$. The frequency scaling by $\sqrt{d_{\text{ref}} / d}$ (with $d_{\text{ref}} = 8$) keeps inter-firm spacing approximately invariant to $d$. Curve parameters are stored for reuse by entrant firms.
 
-**Worker types.** Each worker draws a reference firm uniformly at random, then $w_i = x_{j(i)} + \epsilon_i$ where $\epsilon_i \sim N(0, \sigma_w^2 / d \cdot I_d)$, clipped to $[-3, 3]^d$. The per-dimension scale $\sigma_w / \sqrt{d}$ ensures the expected Euclidean distance to the reference firm is approximately $\sigma_w = 0.2$ regardless of $d$. Workers cluster tightly around the firm curve, each close to a few firms and far from most, creating the spatial locality that makes the matching problem non-trivial.
+**Worker types.** Each worker draws a reference firm uniformly at random, then $w_i = x_{j(i)} + \epsilon_i$ where $\epsilon_i \sim N(0, \sigma_w^2 / d \cdot I_d)$, clipped to $[-3, 3]^d$. The per-dimension scale $\sigma_w / \sqrt{d}$ ensures the expected Euclidean distance to the reference firm is approximately $\sigma_w = 0.5$ regardless of $d$. Workers cluster around the firm curve, each close to a few firms and far from most, creating the spatial locality that makes the matching problem non-trivial.
 
-**Calibration of $r_{\text{base}}$ and $\bar{q}_{\text{pub}}$.** At initialization, compute $E[f]$ from a Monte Carlo sample of 10,000 clustered worker-firm pairs (workers drawn as perturbations of actual firm types, matching the initialization distribution). Set $\bar{q}_{\text{pub}} = E[f]$ and $r_{\text{base}} = 0.60 \cdot E[f]$. Using actual firm types for calibration ensures the output scale matches the simulation's population.
+**Calibration of $r_{\text{base}}$ and $\bar{q}_{\text{pub}}$.** At initialization, compute $E[f]$ from a Monte Carlo sample of 10,000 random worker-firm pairs. Workers are drawn as perturbations of random firm types (matching the initialization distribution), then evaluated against independently drawn firms (not their reference firm). This matches the distribution firms actually face when searching for candidates. Set $\bar{q}_{\text{pub}} = E[f]$ and $r_{\text{base}} = 0.70 \cdot E[f]$.
 
 **Social network $G_S$.** Generated as a Watts–Strogatz small-world graph with $N_W$ nodes, degree $k_S$, rewiring probability $p_{\text{rewire}}$. Node ordering matches workers sorted by type (first principal component), so nearest neighbors in the ring lattice are nearest in type space. Rewiring then breaks some of this assortativity.
 
-**Initial employment.** Each firm starts with a random workforce of size drawn uniformly from $\{3, 4, 5\}$ (small enough that firms start with limited referral reach, large enough that they have a non-empty $R_j^0$). Workers are sampled without replacement from the available population with probability proportional to $\exp(-\|w_i - x_j\|^2)$, where $w_i$ is the worker type and $x_j$ is the firm type. This softmax weighting ensures initial hires tend to be reasonable matches without requiring a hard distance threshold. This seeds each firm's referral pool.
+**Initial employment.** Each firm starts with a random workforce of size drawn uniformly from $\{6, 7, 8, 9, 10\}$ (small enough that firms start with limited referral reach, large enough that they have a non-empty $R_j^0$ and sufficient initial training data for regression). Workers are sampled without replacement from the available population with probability proportional to $\exp(-\|w_i - x_j\|^2)$, where $w_i$ is the worker type and $x_j$ is the firm type. This softmax weighting ensures initial hires tend to be reasonable matches without requiring a hard distance threshold. This seeds each firm's referral pool.
 
 **Broker pool.** The broker maintains a fixed-target pool of $P = \lceil 0.20 \cdot N_W \rceil$ workers (200 at $N_W = 1000$), drawn uniformly from the available population at initialization. Each period, workers who were placed or staffed leave the pool and are replaced by new recruits to maintain the target size. The fixed pool size reflects the broker's finite operational capacity for candidate management. It also ensures that the self-liquidating dynamic of Proposition 1a is visible: the broker's structural position depends on the composition of its pool relative to firms' growing referral networks, not on unbounded pool expansion.
 
@@ -960,7 +946,7 @@ In the table, $\bar{f}$ denotes the mean absolute match output $E[|f(w,x)|]$, co
 
 **Employment cost $c_{\text{emp}}$.** Set at $0.15 \cdot r_{\text{base}}$ for Model 1. This represents the total per-period cost of being the employer of record: statutory employer costs (payroll taxes, unemployment insurance, workers' compensation, approximately 10--12% of wages) plus administrative overhead (payroll processing, HR administration, assignment management, and liability insurance, approximately 3--5%). Calibrated to industry reports on agency operating costs and statutory employer burden (American Staffing Association, 2019; Bureau of Labor Statistics, 2024a). For Model 2, $c_{\text{emp}} = 0$.
 
-**Public benchmark (§2d).** Set to $\bar{q}_{\text{pub}} = E[f]$ (the mean match output, not the mean absolute value). With non-negative $\mu$ and clustered worker-firm pairs, $E[f] > 0$. The benchmark is a static constant that does not update during the simulation. It serves as the fallback prediction for agents with no history and initializes satisfaction indices and broker reputation.
+**Public benchmark (§2d).** Set to $\bar{q}_{\text{pub}} = E[f]$ (the mean match output, not the mean absolute value). With clustered worker-firm pairs, $E[f] > 0$ because nearby workers have positive cosine similarity with their reference firms. The benchmark is a static constant that does not update during the simulation. It serves as the fallback prediction for agents with no history and initializes satisfaction indices and broker reputation.
 
 **Experience histories.** All empty at initialization. The first several periods are a burn-in where agents have no experience and predictions default to the public benchmark.
 
@@ -1009,17 +995,11 @@ Higher $d$ increases the number of parameters for both agents but hurts firms pr
 
 #### 13c. Robustness to matching function specification
 
-**Concern.** The main specification uses $f(w,x) = \mu(w) + w^\top x$ with RBF general quality (§1b) and identity interaction (§1c). The ABM's ridge regression learning mechanism is linear, so the question is whether the *dynamics* (positive feedback, decoupling, capture) are robust to the functional form of $\mu$ and the interaction structure.
+**Concern.** The main specification uses $f(w,x) = \rho \cdot \tanh(\cos(w, c)) + (1 - \rho) \cdot \cos(w, x)$ with a cosine-normalized formulation (§1a--§1c). The question is whether the *dynamics* (positive feedback, decoupling, capture) are robust to the specific choice of nonlinearity and interaction structure.
 
-**Assessment.**
-(a) Alternative forms of $\mu$: quadratic ($\mu(w) = w^\top Qw$ for a low-rank $Q$) or single-index ($\mu(w) = g(P w)$ for a monotone $g$). These test whether the specific RBF form matters or whether any smooth nonlinear $\mu$ produces the same qualitative dynamics.
+**Assessment.** The cosine-normalized formulation was chosen for simplicity and interpretability: both components are bounded in $[-1, 1]$, $\rho$ directly controls the mixing weight without requiring variance calibration, and the cosine similarity has a natural geometric interpretation in the type space.
 
-- If the dynamics are qualitatively the same under RBF, quadratic, and single-index $\mu$, the paper can state robustness to the form of general quality.
-
-(b) Nonlinear interaction: $f(w,x) = \mu(w) + w^\top x + (w \circ w)^\top B(x \circ x)$. Adds nonlinearity to the firm-specific component; for example, having a moderate level of some skill is better than having too much or too little for certain firms.
-
-- Introduces a second parameter matrix $B$.
-- Tests whether the broker's pooled decomposition retains its advantage when the interaction itself is nonlinear (since firm-specific estimates a nonlinear residual rather than a linear one).
+The $\tanh$ nonlinearity was selected over alternatives (squared cosine, RBF kernels) because the qualitative dynamics are robust to the choice of nonlinearity. What matters for the model's information dynamics is that (a) the general quality component is a nonlinear function of the worker type alone, making it imperfectly learnable by linear regression, and (b) the interaction component depends on the worker-firm pairing, making cross-firm data valuable. Any smooth, bounded nonlinearity applied to a worker-type similarity measure produces the same qualitative dynamics.
 
 ### References (cited in model specification)
 

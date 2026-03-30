@@ -128,7 +128,7 @@ using StableRNGs: StableRNG
         @test isfinite(q_hat)
     end
 
-    # Broker circular buffer wraps correctly (broker is pre-seeded with 5 entries)
+    # Broker circular buffer wraps correctly (broker is pre-seeded with 20 entries)
     @testset "record_broker_history! circular buffer" begin
         params = default_params(d=4, N_W=100, N_F=5)
         state = initialize_model(params)

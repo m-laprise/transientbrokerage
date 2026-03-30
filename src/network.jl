@@ -20,15 +20,16 @@ end
     compute_referral_pool!(firm, workers, G_S)
 
 Set firm's referral pool to the social neighbors of current employees,
-excluding employees themselves.
+excluding employees themselves. Worker IDs are used as graph node indices
+(worker.id == worker.node_id, enforced at initialization).
 """
 function compute_referral_pool!(firm::Firm, workers::Vector{Worker},
                                  G_S::SimpleGraph)
     empty!(firm.referral_pool)
     for emp_id in firm.employees
-        for nbr in neighbors(G_S, workers[emp_id].node_id)
-            if nbr ∉ firm.employees
-                push!(firm.referral_pool, nbr)
+        for nbr_id in neighbors(G_S, emp_id)
+            if nbr_id ∉ firm.employees
+                push!(firm.referral_pool, nbr_id)
             end
         end
     end

@@ -273,70 +273,156 @@ for (i, c) in enumerate(configs)
 end
 
 # ---------------------------------------------------------------------------
-# SVD of noiseless matching matrix F[worker, firm] for dimension sweep
+# SVD and matching matrix figures for configs that vary d or rho
 # ---------------------------------------------------------------------------
 
-"""Build N_W × N_F noiseless matching matrix and plot its SVD spectrum."""
-function plot_svd_matching(; d::Int, rho::Float64, seed::Int=42, filename::String)
-    params = default_params(; d=d, rho=rho, seed=seed)
-    state = initialize_model(params)
+"""
+    build_ordered_matching_matrix(state) -> (F, firm_order, worker_order)
 
+Build the N_W × N_F noiseless matching matrix with rows and columns ordered to
+reveal block structure:
+- Firms ordered geometrically along the firm curve (by curve parameter t).
+- Workers grouped by closest firm, groups in same order as firms. Within each
+  group, workers sorted by decreasing proximity to their closest firm.
+Returns the reordered matrix and the index permutations.
+"""
+function build_ordered_matching_matrix(state)
     N_W = length(state.workers)
     N_F = length(state.firms)
+    d = state.params.d
+
+    # --- Firm ordering: reconstruct curve parameter t for each firm ---
+    # Firms were generated at evenly spaced t in [0, 1]; we recover the ordering
+    # by projecting firm types onto the curve's first-harmonic direction.
+    # Simpler: use the initialization order (firms[j] was created at t_j = (j-1)/(N_F-1)).
+    # After entry/exit, firm indices no longer correspond to curve positions.
+    # Instead, sort firms by their angular position along the curve's dominant axis.
+    firm_types = [state.firms[j].type for j in 1:N_F]
+    # Use first principal component of firm types as the curve coordinate
+    FT = reduce(hcat, firm_types)  # d × N_F
+    ft_mean = vec(mean(FT, dims=2))
+    FT_c = FT .- ft_mean
+    # First PC via SVD
+    U, _, _ = svd(FT_c)
+    pc1_firms = vec(U[:, 1]' * FT_c)
+    firm_order = sortperm(pc1_firms)
+
+    # --- Worker ordering: group by closest firm, sort within group ---
+    # For each worker, find the closest firm (by Euclidean distance)
+    worker_closest = Vector{Int}(undef, N_W)     # index into firm_order rank
+    worker_dist = Vector{Float64}(undef, N_W)
+    firm_rank = invperm(firm_order)  # firm_rank[j] = position of firm j in the ordering
+    for i in 1:N_W
+        w = state.workers[i].type
+        best_j = 1
+        best_d2 = Inf
+        for j in 1:N_F
+            d2 = sum((w[k] - firm_types[j][k])^2 for k in 1:d)
+            if d2 < best_d2
+                best_d2 = d2
+                best_j = j
+            end
+        end
+        worker_closest[i] = firm_rank[best_j]  # group key = firm's position in ordering
+        worker_dist[i] = sqrt(best_d2)
+    end
+    # Sort workers: primary key = firm group (ascending), secondary = distance (ascending = closest first)
+    worker_order = sortperm(1:N_W, by=i -> (worker_closest[i], worker_dist[i]))
+
+    # --- Build reordered matrix ---
     F = Matrix{Float64}(undef, N_W, N_F)
-    for j in 1:N_F
-        x = state.firms[j].type
-        for i in 1:N_W
-            F[i, j] = match_output_noiseless(state.workers[i].type, x, state.env)
+    for (jj, j) in enumerate(firm_order)
+        x = firm_types[j]
+        for (ii, i) in enumerate(worker_order)
+            F[ii, jj] = match_output_noiseless(state.workers[i].type, x, state.env)
         end
     end
 
+    return F, firm_order, worker_order
+end
+
+"""Plot SVD spectrum of the noiseless matching matrix."""
+function plot_svd_matching(F::Matrix{Float64}; d::Int, rho::Float64,
+                           seed::Int=42, filename::String)
+    N_W, N_F = size(F)
     S = svd(F)
     σ = S.S
     σ_norm = σ ./ σ[1]
     cumvar = cumsum(σ .^ 2) ./ sum(σ .^ 2)
 
     fig = Figure(; size=(700, 280), figure_padding=(10, 15, 5, 5))
-    title = "SVD of noiseless matching matrix F[worker, firm] " *
+    title = "SVD of noiseless F[worker, firm] " *
             "($(N_W)×$(N_F), d=$d, ρ=$rho, seed=$seed)"
     Label(fig[0, 1:2], title; fontsize=13, font=:bold, halign=:center, tellwidth=false)
 
-    ax1 = Axis(fig[1, 1]; title="Singular values of F(w,x) matrix",
+    ax1 = Axis(fig[1, 1]; title="Singular values of F(w,x)",
                xlabel="Component", ylabel="Normalized",
                titlesize=11, xlabelsize=10, ylabelsize=10)
     scatterlines!(ax1, 1:length(σ_norm), σ_norm; markersize=4, color=:steelblue)
 
-    cumvar_plot = vcat(0.0, cumvar)  # start at (0, 0)
+    cumvar_plot = vcat(0.0, cumvar)
     ax2 = Axis(fig[1, 2]; title="Cumulative variance explained",
                xlabel="Component", ylabel="Fraction",
                titlesize=11, xlabelsize=10, ylabelsize=10,
                limits=(nothing, (0, 1.05)))
     scatterlines!(ax2, 0:length(cumvar), cumvar_plot; markersize=4, color=:steelblue)
-    # Reference lines at 90% and 95%
     hlines!(ax2, [0.90, 0.95]; color=:gray60, linestyle=:dash, linewidth=0.8)
     text!(ax2, length(cumvar) * 0.75, 0.90; text="90%", fontsize=9, color=:gray40, align=(:left, :bottom))
     text!(ax2, length(cumvar) * 0.75, 0.95; text="95%", fontsize=9, color=:gray40, align=(:left, :bottom))
 
     rowsize!(fig.layout, 0, Fixed(22))
-
     save(joinpath(OUTDIR, filename), fig)
     println("  Saved: $filename")
-    return fig
 end
 
-# Generate SVD figures for configs that vary d or rho (i.e. change the matching function)
-println("Generating SVD matching matrix figures...")
+"""Plot the ordered noiseless matching matrix (top) and histogram of f values (bottom)."""
+function plot_matching_matrix(F::Matrix{Float64}; d::Int, rho::Float64,
+                              seed::Int=42, filename::String)
+    N_W, N_F = size(F)
+    crange = let m = maximum(abs, F); (-m, m) end
+
+    fig = Figure(; size=(700, 500), figure_padding=(10, 15, 5, 5))
+    title = "Noiseless matching matrix f(w,x) " *
+            "($(N_W)×$(N_F), d=$d, ρ=$rho, seed=$seed)"
+    Label(fig[0, 1:2], title; fontsize=13, font=:bold, halign=:center, tellwidth=false)
+
+    # Top panel: heatmap (workers on x-axis, firms on y-axis — wider than tall)
+    ax1 = Axis(fig[1, 1]; xlabel="Worker (grouped by closest firm)",
+               ylabel="Firm (curve order)",
+               titlesize=11, xlabelsize=10, ylabelsize=10)
+    hm = heatmap!(ax1, 1:N_W, 1:N_F, F; colormap=:RdBu, colorrange=crange)
+    Colorbar(fig[1, 2], hm; label="f(w, x)", labelsize=10, ticklabelsize=9)
+
+    # Bottom panel: histogram of all f values
+    ax2 = Axis(fig[2, 1]; xlabel="f(w, x)", ylabel="Count",
+               titlesize=11, xlabelsize=10, ylabelsize=10)
+    hist!(ax2, vec(F); bins=80, color=(:steelblue, 0.7), strokewidth=0.5, strokecolor=:gray40)
+    vlines!(ax2, [0.0]; color=:gray50, linewidth=0.8)
+
+    rowsize!(fig.layout, 0, Fixed(22))
+    rowsize!(fig.layout, 1, Relative(0.7))
+    colsize!(fig.layout, 2, Fixed(30))
+    save(joinpath(OUTDIR, filename), fig)
+    println("  Saved: $filename")
+end
+
+# Generate SVD + matrix figures for configs that vary d or rho
+println("Generating SVD and matching matrix figures...")
 svd_configs = filter(c -> begin
         d = get(Dict(pairs(c.kwargs)), :d, 8)
         rho = get(Dict(pairs(c.kwargs)), :rho, 0.50)
-        d != 8 || rho != 0.50  # skip if both are baseline defaults
+        d != 8 || rho != 0.50
     end, configs)
-# Always include baseline
 pushfirst!(svd_configs, configs[1])
 for c in svd_configs
     kw = Dict(pairs(c.kwargs))
-    plot_svd_matching(; d=get(kw, :d, 8), rho=get(kw, :rho, 0.50),
-                        filename="$(c.tag)_svd.png")
+    cd = get(kw, :d, 8)
+    crho = get(kw, :rho, 0.50)
+    params = default_params(; d=cd, rho=crho, seed=42)
+    state = initialize_model(params)
+    F, _, _ = build_ordered_matching_matrix(state)
+    plot_svd_matching(F; d=cd, rho=crho, filename="$(c.tag)_svd.png")
+    plot_matching_matrix(F; d=cd, rho=crho, filename="$(c.tag)_matrix.png")
 end
 
 println()

@@ -62,25 +62,23 @@ function step_period!(state::ModelState)
     # ── Step 2: Candidate generation and evaluation ──
     models = build_period_models(state, params.lambda)
 
-    # Holdout evaluation: random workers at each firm, noiseless truth (no selection bias)
-    # Workers drawn with same sigma_w / sqrt(d) dispersion as the actual population
+    # Holdout evaluation: sample actual workers at random firms, noiseless truth (no selection bias)
+    # Uses existing workers (not synthetic), evaluated at random firms they may or may not be near.
     d = params.d
-    σ_per_dim = params.sigma_w / sqrt(d)
-    w_holdout = Vector{Float64}(undef, d)
     firm_buf = Vector{Float64}(undef, 2d)
     broker_buf = Vector{Float64}(undef, 4d)
-    for (j, firm) in enumerate(state.firms)
-        fm = models.firm_models[j]
-        bm = models.broker_model
-        for _ in 1:3
-            randn!(rng, w_holdout)
-            @. w_holdout = clamp(firm.type + σ_per_dim * w_holdout, -3.0, 3.0)
-            q_true = match_output_noiseless(w_holdout, firm.type, state.env)
-            push!(state.accum.firm_holdout_pred, predict_ridge!(fm, firm_buf, w_holdout))
-            push!(state.accum.firm_holdout_real, q_true)
-            push!(state.accum.broker_holdout_pred, predict_ridge!(bm, broker_buf, w_holdout, firm.type))
-            push!(state.accum.broker_holdout_real, q_true)
-        end
+    N_W = length(state.workers)
+    N_F = length(state.firms)
+    for _ in 1:(3 * N_F)
+        wid = rand(rng, 1:N_W)
+        j = rand(rng, 1:N_F)
+        w = state.workers[wid].type
+        x = state.firms[j].type
+        q_true = match_output_noiseless(w, x, state.env)
+        push!(state.accum.firm_holdout_pred, predict_ridge!(models.firm_models[j], firm_buf, w))
+        push!(state.accum.firm_holdout_real, q_true)
+        push!(state.accum.broker_holdout_pred, predict_ridge!(models.broker_model, broker_buf, w, x))
+        push!(state.accum.broker_holdout_real, q_true)
     end
 
     proposals = ProposedMatch[]

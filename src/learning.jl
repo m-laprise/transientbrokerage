@@ -96,8 +96,7 @@ end
     build_period_models(state, lambda) -> PeriodModels
 
 Fit ridge regression models for all firms (features = [w; w.^2]) and for
-the broker (features = [w; x; w.*x; w.^2]). The w.^2 features capture
-quadratic nonlinearity in general worker quality mu(w).
+the broker (features = [w; x; w.*x; w.^2]).
 """
 function build_period_models(state::ModelState, lambda::Float64)::PeriodModels
     # Firm models: q ≈ beta'[w; w.^2] + c

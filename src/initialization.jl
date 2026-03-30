@@ -22,8 +22,9 @@ end
     generate_firm_curve(d, rng; d_ref=8) -> FirmCurve
 
 Create a random smooth 1D curve on the unit sphere in R^d for sampling firm types.
-Frequencies are scaled by `√(d_ref / d)` so that the curve's arc length (and hence
-mean inter-firm spacing) is approximately invariant to `d`.
+Each dimension has an independent sinusoidal frequency and phase, so the curve spans
+all d dimensions. Frequencies are scaled by `√(d_ref / d)` so that the curve's arc
+length (and hence mean inter-firm spacing) is approximately invariant to `d`.
 """
 function generate_firm_curve(d::Int, rng::AbstractRNG; d_ref::Int=8)::FirmCurve
     freq_scale = sqrt(d_ref / d)
@@ -33,20 +34,20 @@ end
 """
     sample_firm_type(curve, t, d, rng) -> Vector{Float64}
 
-Sample a firm type at position `t` in [0, 1] along the curve on the unit sphere,
-with small perturbation. The sinusoidal curve is projected onto the sphere surface.
+Sample a firm type at position `t` ∈ [0, 1] along the sinusoidal curve on the
+unit sphere, with small perturbation.
 """
 function sample_firm_type(curve::FirmCurve, t::Float64, d::Int, rng::AbstractRNG)::Vector{Float64}
     x = [sin(2π * curve.freqs[k] * t + curve.phases[k]) for k in 1:d]
     x ./= norm(x)  # project onto unit sphere
-    x .+= 0.1 .* randn(rng, d)  # small perturbation (stays near sphere)
+    x .+= 0.1 .* randn(rng, d)
     return x
 end
 
 """
     generate_firm_types(curve, N_F, d, rng) -> Vector{Vector{Float64}}
 
-N_F firm types evenly spaced along the curve.
+N_F firm types evenly spaced around the small circle.
 """
 function generate_firm_types(curve::FirmCurve, N_F::Int, d::Int, rng::AbstractRNG)::Vector{Vector{Float64}}
     [sample_firm_type(curve, t, d, rng) for t in range(0.0, 1.0; length=N_F)]
@@ -121,7 +122,7 @@ end
 """
     assign_initial_employment!(firms, workers, env, rng)
 
-Assign 3-5 workers per firm, sampling by type proximity (softmax weighting).
+Assign 6-10 workers per firm, sampling by type proximity (softmax weighting).
 Workers are drawn without replacement from the available pool. Each hire's
 match output is realized and recorded to the firm's history, seeding the
 firm's prediction model.
@@ -161,15 +162,16 @@ function initialize_model(params::ModelParams)::ModelState
     rng = StableRNG(params.seed)
     d = params.d
 
-    # 1. Matching function
-    env = generate_matching_function(d, params.rho, params.K_mu, rng)
-
-    # 2. Firm curve and types (generated before calibration so calibration uses actual types)
+    # 1. Firm curve and types (needed before matching function for ideal worker draw)
     firm_curve = generate_firm_curve(d, rng)
     firm_type_vecs = generate_firm_types(firm_curve, params.N_F, d, rng)
 
+    # 2. Matching function (ideal worker c drawn from firm types)
+    env = generate_matching_function(d, params.rho,
+                                     firm_type_vecs, rng; sigma_w=params.sigma_w)
+
     # 3. Calibration constants using actual firm types
-    f_mean, r_base = calibrate_output_scale(env, firm_type_vecs, rng)
+    f_mean, r_base = calibrate_output_scale(env, firm_type_vecs, rng; sigma_w=params.sigma_w)
     q_pub = f_mean
     cal = CalibrationConstants(r_base, f_mean, q_pub)
 
@@ -199,10 +201,11 @@ function initialize_model(params::ModelParams)::ModelState
     reservation_wages = [compute_reservation_wage(degs[i], max_deg, r_base, rng)
                          for i in 1:params.N_W]
 
-    # 7. Workers
+    # 7. Workers (id == node_id invariant: worker IDs are used as G_S node indices)
     workers = [Worker(id=i, node_id=i, type=worker_types[i],
                       reservation_wage=reservation_wages[i])
                for i in 1:params.N_W]
+    @assert all(w.id == w.node_id for w in workers) "Worker id must equal node_id"
 
     # 8. Firms (using pre-drawn types)
     firms = [create_firm(j, firm_type_vecs[j], d) for j in 1:params.N_F]
@@ -210,10 +213,10 @@ function initialize_model(params::ModelParams)::ModelState
     # 9. Initial employment (with history seeding)
     assign_initial_employment!(firms, workers, env, rng)
 
-    # 10. Broker with seed pool and seeded history from 5 random existing matches
+    # 10. Broker with seed pool and seeded history from 20 random existing matches
     broker = create_broker(1, params, workers, rng)
     employed_pairs = [(wid, j) for (j, firm) in enumerate(firms) for wid in firm.employees]
-    seed_pairs = sample(rng, employed_pairs, min(10, length(employed_pairs)); replace=false)
+    seed_pairs = sample(rng, employed_pairs, min(20, length(employed_pairs)); replace=false)
     for (wid, j) in seed_pairs
         q = match_output(workers[wid].type, firms[j].type, env, rng)
         record_broker_history!(broker, workers[wid].type, firms[j].type, j, q)

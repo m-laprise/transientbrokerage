@@ -18,7 +18,7 @@ using Graphs: nv, is_connected
         @test state.cal.r_base > 0
         @test state.cal.f_bar > 0
         @test state.cal.q_pub == state.cal.f_bar  # both are E[f]
-        @test state.cal.r_base ≈ 0.60 * state.cal.f_bar
+        @test state.cal.r_base ≈ 0.70 * state.cal.f_bar
     end
 
     @testset "correct agent counts" begin
@@ -74,7 +74,7 @@ using Graphs: nv, is_connected
         @test size(state.broker.history_x) == (params.d, 5000)
         @test length(state.broker.history_q) == 5000
         @test length(state.broker.history_firm_idx) == 5000
-        @test state.broker.history_count == 10  # seeded from 10 random initial matches
+        @test state.broker.history_count == 20  # seeded from 20 random initial matches
     end
 
     @testset "firm history and satisfaction" begin

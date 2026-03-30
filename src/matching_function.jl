@@ -1,149 +1,108 @@
 """
     matching_function.jl
 
-Matching function f(w, x) = mu(w) + w'x + noise: generation, evaluation, and calibration.
+Matching function f(w, x) = ρ·tanh(cos(w,c)) + (1-ρ)·cos(w,x) + ε.
+Both components are cosine-normalized so ρ directly controls the mixing weight.
+The ideal worker c is drawn like an (N_W+1)th worker.
 """
 
-"""Squared Euclidean distance between column `j` of matrix `M` and vector `z`."""
-@inline function _col_sqdist(M::Matrix{Float64}, j::Int, z::AbstractVector, d::Int)
-    d2 = 0.0
-    @inbounds for k in 1:d
-        δ = z[k] - M[k, j]
-        d2 += δ * δ
-    end
-    return d2
-end
-
 """
-    generate_matching_function(d, rho, K_mu, rng) -> MatchingEnv
+    generate_matching_function(d, rho, firm_types, rng; sigma_w=0.5) -> MatchingEnv
 
-Build the RBF-based general quality function mu(w) on the full d-dimensional type
-space, with variance calibrated so Var(mu)/Var(f) = rho. The interaction is w'x
-(identity, full rank). No projection or rank reduction.
+Build the matching environment. The ideal worker c is drawn as a perturbation
+of a random firm type (sigma_w / sqrt(d) per dimension, like a real worker).
 """
 function generate_matching_function(d::Int, rho::Float64,
-                                     K_mu::Int, rng::AbstractRNG)
-    # RBF centers (d × K_mu, columns) and non-negative raw weights (squared for mu >= 0)
-    mu_centers = randn(rng, d, K_mu)
-    mu_weights_raw = randn(rng, K_mu) .^ 2
+                                     firm_types::Vector{Vector{Float64}},
+                                     rng::AbstractRNG; sigma_w::Float64=0.5)
+    σ_per_dim = sigma_w / sqrt(d)
+    ref = firm_types[rand(rng, 1:length(firm_types))]
+    c = clamp.(ref .+ σ_per_dim .* randn(rng, d), -3.0, 3.0)
+    c_norm = norm(c)
+    return MatchingEnv(d, rho, c, c_norm)
+end
 
-    # MC worker samples for bandwidth and variance calibration
-    n_cal = 10_000
-    w_samples = Matrix{Float64}(undef, d, n_cal)
-    for i in 1:n_cal
-        @views randn!(rng, w_samples[:, i])
-        @views clamp!(w_samples[:, i], -3.0, 3.0)
-    end
-
-    # Bandwidth = median pairwise distance (subsample for speed)
-    n_pair = min(500, n_cal)
-    pairwise_dists = Vector{Float64}(undef, n_pair * (n_pair - 1) ÷ 2)
-    idx = 0
-    for i in 1:n_pair, j in (i+1):n_pair
-        idx += 1
-        @inbounds pairwise_dists[idx] = sqrt(_col_sqdist(w_samples, i, view(w_samples, :, j), d))
-    end
-    mu_bandwidth = median(pairwise_dists)
-
-    # Scale mu weights using per-mode calibration.
-    # The interaction w'x spreads its variance across d singular modes while mu(w) is
-    # rank-1. We calibrate so that mu's singular value matches rho/(1-rho) times the
-    # *average* interaction singular value: Var(mu) = rho/(1-rho) * Var(w'x) / d.
-    # This way rho=0.5 means mu is as strong as one interaction mode, giving clean
-    # SVD spectra and dimension-invariant interpretation.
-    #   rho = 0: pure interaction (mu = 0)
-    #   rho = 1: pure general quality (mu >> interaction; capped ratio)
-    #   0 < rho < 1: per-mode balanced
-    if rho == 0.0
-        mu_weights = zeros(K_mu)
-    else
-        inv2h2 = 1.0 / (2.0 * mu_bandwidth^2)
-        mu_vals = Vector{Float64}(undef, n_cal)
-        for i in 1:n_cal
-            val = 0.0
-            @inbounds for l in 1:K_mu
-                val += mu_weights_raw[l] * exp(-_col_sqdist(mu_centers, l, view(w_samples, :, i), d) * inv2h2)
-            end
-            mu_vals[i] = val
-        end
-        var_mu = var(mu_vals)
-
-        x_buf = Vector{Float64}(undef, d)
-        interaction_vals = Vector{Float64}(undef, n_cal)
-        for i in 1:n_cal
-            randn!(rng, x_buf); clamp!(x_buf, -3.0, 3.0)
-            interaction_vals[i] = dot(view(w_samples, :, i), x_buf)
-        end
-        ratio = rho >= 1.0 ? 1000.0 : rho / (1.0 - rho)
-        scale = sqrt(ratio * var(interaction_vals) / (d * max(var_mu, 1e-12)))
-        mu_weights = mu_weights_raw .* scale
-    end
-
-    return MatchingEnv(d, mu_centers, mu_weights, mu_bandwidth)
+"""Cosine similarity w'x / (‖w‖‖x‖), or 0 if either vector is near-zero."""
+function cosine_sim(w::AbstractVector, x::AbstractVector)::Float64
+    w_norm = norm(w)
+    x_norm = norm(x)
+    (w_norm < 1e-12 || x_norm < 1e-12) && return 0.0
+    return dot(w, x) / (w_norm * x_norm)
 end
 
 """
     eval_mu(w, env) -> Float64
 
-Non-negative general worker quality mu(w) = sum_l a_l * exp(- ||w - c_l||^2 / 2h^2),
-where all a_l >= 0. Operates directly on the full d-dimensional worker type.
+General worker quality: tanh(cos(w, c)).
+Returns the raw (unweighted) quality; the ρ mixing happens in match_output.
 """
-function eval_mu(w::AbstractVector, env::MatchingEnv)::Float64
-    inv2h2 = 1.0 / (2.0 * env.mu_bandwidth^2)
-    centers = env.mu_centers
-    weights = env.mu_weights
-    d = env.d
-    val = 0.0
-    @inbounds for l in eachindex(weights)
-        val += weights[l] * exp(-_col_sqdist(centers, l, w, d) * inv2h2)
-    end
-    return val
-end
+eval_mu(w::AbstractVector, env::MatchingEnv)::Float64 = tanh(cosine_sim(w, env.c))
+
+"""
+    eval_interaction(w, x) -> Float64
+
+Match-specific interaction: cos(w, x) (cosine similarity).
+"""
+eval_interaction(w::AbstractVector, x::AbstractVector)::Float64 = cosine_sim(w, x)
+
+"""Noise standard deviation for match output."""
+const SIGMA_EPS = 0.25
+
+"""Offset ensuring match output is positive for well-matched pairs."""
+const Q_OFFSET = 1.0
 
 """
     match_output(w, x, env, rng) -> Float64
 
-Stochastic match output f(w,x) = mu(w) + w'x + eps, where eps ~ N(0,1).
+Stochastic match output q = Q_OFFSET + ρ·tanh(cos(w,c)) + (1-ρ)·cos(w,x) + ε.
+The offset shifts the signal from [-1,1] to [0,2], ensuring positive output
+for typical matches. ε ~ N(0, σ_ε²) with σ_ε = $(SIGMA_EPS).
 """
 function match_output(w::AbstractVector, x::AbstractVector,
                       env::MatchingEnv, rng::AbstractRNG)::Float64
-    return eval_mu(w, env) + dot(w, x) + randn(rng)
+    return Q_OFFSET + env.rho * eval_mu(w, env) + (1.0 - env.rho) * eval_interaction(w, x) + SIGMA_EPS * randn(rng)
 end
 
 """
     match_output_noiseless(w, x, env) -> Float64
 
-Deterministic match output mu(w) + w'x, without noise.
-Used by `calibrate_output_scale` to estimate E[f].
+Deterministic match output Q_OFFSET + ρ·tanh(cos(w,c)) + (1-ρ)·cos(w,x).
 """
 function match_output_noiseless(w::AbstractVector, x::AbstractVector,
                                  env::MatchingEnv)::Float64
-    return eval_mu(w, env) + dot(w, x)
+    return Q_OFFSET + env.rho * eval_mu(w, env) + (1.0 - env.rho) * eval_interaction(w, x)
 end
 
 """
-    calibrate_output_scale(env, firm_types, rng; n_samples=10_000) -> (f_mean, r_base)
+    calibrate_output_scale(env, firm_types, rng; sigma_w=0.5, n_samples=10_000) -> (f_mean, r_base)
 
-Monte Carlo calibration using clustered worker-firm pairs (worker = firm_type + N(0,I),
-matching the initialization distribution). Returns:
-- f_mean = E[f] (mean output, used for q_pub and f_bar)
+Monte Carlo calibration using random worker-firm pairs from the full population.
+Workers are drawn as perturbations of random firm types, then evaluated against
+*independently* drawn firms — matching the distribution firms actually face when
+searching. Returns:
+- f_mean = E[f] (mean output across random pairs, used for q_pub)
 - r_base = 0.60 * f_mean (reservation wage floor)
 """
 function calibrate_output_scale(env::MatchingEnv,
                           firm_types::Vector{Vector{Float64}},
                           rng::AbstractRNG;
+                          sigma_w::Float64 = 0.5,
                           n_samples::Int = 10_000)::Tuple{Float64,Float64}
     d = env.d
+    σ_per_dim = sigma_w / sqrt(d)
     n_firms = length(firm_types)
     w = Vector{Float64}(undef, d)
     total = 0.0
     for _ in 1:n_samples
-        x = firm_types[rand(rng, 1:n_firms)]
+        # Worker drawn near a random reference firm
+        ref = firm_types[rand(rng, 1:n_firms)]
         for k in 1:d
-            w[k] = clamp(x[k] + randn(rng), -3.0, 3.0)
+            w[k] = clamp(ref[k] + σ_per_dim * randn(rng), -3.0, 3.0)
         end
+        # Evaluated against an independently drawn firm (not the reference)
+        x = firm_types[rand(rng, 1:n_firms)]
         total += match_output_noiseless(w, x, env)
     end
     f_mean = total / n_samples
-    return (f_mean, 0.60 * f_mean)
+    return (f_mean, 0.70 * f_mean)
 end

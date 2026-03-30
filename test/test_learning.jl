@@ -114,12 +114,12 @@ d = 4
         n_bm = effective_history_size(broker)
         W = @view(broker.history_w[:, 1:n_bm])
         X = @view(broker.history_x[:, 1:n_bm])
-        WXI = vcat(W, X, W .* X)
+        WXI = vcat(W, X, W .* X, W .^ 2)
         broker_model = fit_ridge(WXI, @view(broker.history_q[1:n_bm]), lambda)
 
         # Test: broker predictions are finite and reasonable
         test_w = clamp.(randn(rng, d), -3.0, 3.0)
-        q_b = predict_ridge(broker_model, vcat(test_w, firms[1].type, test_w .* firms[1].type))
+        q_b = predict_ridge(broker_model, vcat(test_w, firms[1].type, test_w .* firms[1].type, test_w .^ 2))
         @test isfinite(q_b)
     end
 
@@ -133,7 +133,7 @@ d = 4
         @test predict_ridge(model1, w) == predict_ridge(model2, w)
     end
 
-    # Broker model on [w; x; w.*x] features produces finite predictions
+    # Broker model on [w; x; w.*x; w.^2] features produces finite predictions
     @testset "broker prediction with pooled model" begin
         rng = StableRNG(42)
         firms = [create_firm(j, d, rng) for j in 1:3]
@@ -141,9 +141,9 @@ d = 4
         n_b = effective_history_size(broker)
         W = @view(broker.history_w[:, 1:n_b])
         X = @view(broker.history_x[:, 1:n_b])
-        broker_model = fit_ridge(vcat(W, X, W .* X), @view(broker.history_q[1:n_b]), lambda)
+        broker_model = fit_ridge(vcat(W, X, W .* X, W .^ 2), @view(broker.history_q[1:n_b]), lambda)
         test_w = randn(rng, d)
-        q = predict_ridge(broker_model, vcat(test_w, firms[1].type, test_w .* firms[1].type))
+        q = predict_ridge(broker_model, vcat(test_w, firms[1].type, test_w .* firms[1].type, test_w .^ 2))
         @test isfinite(q)
     end
 

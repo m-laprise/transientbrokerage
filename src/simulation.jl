@@ -119,11 +119,11 @@ function collect_period_metrics(state::ModelState,
 end
 
 """
-    run_simulation(params; verify=false, r_squared_window=3) -> (ModelState, DataFrame)
+    run_simulation(params; verify=false, r_squared_window=5) -> (ModelState, DataFrame)
 
 Initialize the model and run for T periods, collecting per-period metrics.
-R-squared is computed both per-period and over a rolling window of `r_squared_window` periods.
-When `verify=true`, calls `verify_invariants` each period.
+Prediction quality (R-squared, bias, rank correlation) is computed over a rolling
+window of `r_squared_window` periods. When `verify=true`, calls `verify_invariants` each period.
 """
 function run_simulation(params::ModelParams; verify::Bool = false,
                         r_squared_window::Int = 5)

@@ -27,7 +27,7 @@ end
     enter_firm!(state, firm_idx, avail, candidates, wts)
 
 Replace the firm at `firm_idx` with a fresh entrant: new type, empty history,
-satisfaction at q_pub, and 3-5 employees drawn by type proximity from `avail`.
+satisfaction at q_pub, and 6-10 employees drawn by type proximity from `avail`.
 `candidates` and `wts` are pre-allocated buffers.
 """
 function enter_firm!(state::ModelState, firm_idx::Int, avail::Set{Int},
