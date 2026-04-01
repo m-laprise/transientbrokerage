@@ -192,7 +192,7 @@ end
 
 """Broker's network position measures, recomputed every M periods on the combined graph."""
 mutable struct CachedNetworkMeasures
-    betweenness::Float64      # Freeman betweenness centrality (normalized)
+    betweenness::Float64      # cross-mode betweenness (worker→firm paths, Faust 1997)
     constraint::Float64       # Burt's network constraint (low = spanning structural holes)
     effective_size::Float64   # Burt's effective size (non-redundant contacts)
 end

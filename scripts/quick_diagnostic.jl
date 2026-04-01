@@ -31,7 +31,7 @@ lines!(ax2, periods, mdf.broker_r_squared_rolling; color=:crimson, label="Broker
 lines!(ax2, periods, mdf.firm_r_squared_rolling; color=:steelblue, label="Firm")
 axislegend(ax2; position=:rb)
 
-ax3 = Axis(fig[2, 1]; title="Broker Betweenness", ylabel="Betweenness")
+ax3 = Axis(fig[2, 1]; title="Cross-mode Betweenness", ylabel="C_B(broker)")
 lines!(ax3, periods, mdf.betweenness; color=:steelblue)
 
 ax4 = Axis(fig[2, 2]; title="Mean Output by Channel", ylabel="Output")
@@ -65,7 +65,7 @@ tail = mdf[end-49:end, :]
 println("  Outsourcing rate: $(round(mean(tail.outsourcing_rate), digits=3))")
 println("  Broker R² (rolling): $(round(mean(filter(!isnan, tail.broker_r_squared_rolling)), digits=3))")
 println("  Firm R² (rolling): $(round(mean(filter(!isnan, tail.firm_r_squared_rolling)), digits=3))")
-println("  Betweenness: $(round(mean(tail.betweenness), digits=4))")
+println("  Cross-mode betweenness: $(round(mean(tail.betweenness), digits=4))")
 println("  Mean internal output: $(round(mean(filter(!isnan, tail.q_direct_mean)), digits=3))")
 println("  Mean brokered output: $(round(mean(filter(!isnan, tail.q_placed_mean)), digits=3))")
 println("  Broker pool: $(round(mean(tail.broker_pool_size), digits=0))")

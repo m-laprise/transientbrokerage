@@ -70,10 +70,10 @@ using Graphs: nv, is_connected
         @test length(state.broker.pool) == expected_pool
         @test all(state.workers[wid].status == available for wid in state.broker.pool)
         @test state.broker.last_reputation == state.cal.q_pub
-        @test size(state.broker.history_w) == (params.d, 5000)
-        @test size(state.broker.history_x) == (params.d, 5000)
-        @test length(state.broker.history_q) == 5000
-        @test length(state.broker.history_firm_idx) == 5000
+        @test size(state.broker.history_w) == (params.d, 10000)
+        @test size(state.broker.history_x) == (params.d, 10000)
+        @test length(state.broker.history_q) == 10000
+        @test length(state.broker.history_firm_idx) == 10000
         @test state.broker.history_count == 20  # seeded from 20 random initial matches
     end
 

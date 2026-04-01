@@ -1,8 +1,8 @@
 """
     measures.jl
 
-Prediction quality measures and network position measures (betweenness, Burt's
-constraint, effective size) on the combined graph.
+Prediction quality measures and network position measures (cross-mode betweenness,
+Burt's constraint, effective size) on the combined graph.
 """
 
 # ── Prediction quality ──
@@ -72,84 +72,6 @@ function build_combined_graph(state::ModelState)::Tuple{SimpleGraph{Int}, Int}
 end
 
 """
-    compute_betweenness(G, node) -> Float64
-
-Normalized Freeman betweenness centrality for a single node.
-Uses a parallel Brandes algorithm (thread-per-source-chunk) that scales with
-`Threads.nthreads()`.
-"""
-function compute_betweenness(G::SimpleGraph, node::Int)::Float64
-    n = nv(G)
-    n <= 2 && return 0.0
-    norm = 1.0 / ((n - 1) * (n - 2))
-
-    nt = Threads.nthreads()
-    partials = zeros(nt)
-
-    Threads.@threads for tid in 1:nt
-        # Thread-local BFS buffers
-        sigma = Vector{Float64}(undef, n)
-        dist = Vector{Int}(undef, n)
-        delta = Vector{Float64}(undef, n)
-        pred = [Int[] for _ in 1:n]
-        queue = Vector{Int}(undef, n)
-        stack = Vector{Int}(undef, n)
-
-        # Partition sources across threads
-        local_sum = 0.0
-        for s in tid:nt:n
-            # Initialize
-            fill!(sigma, 0.0)
-            fill!(dist, -1)
-            fill!(delta, 0.0)
-            for i in 1:n
-                empty!(pred[i])
-            end
-            sigma[s] = 1.0
-            dist[s] = 0
-            q_head = 1
-            q_tail = 1
-            queue[1] = s
-            s_top = 0
-
-            # BFS
-            while q_head <= q_tail
-                v = queue[q_head]
-                q_head += 1
-                s_top += 1
-                stack[s_top] = v
-                for w in neighbors(G, v)
-                    if dist[w] < 0
-                        q_tail += 1
-                        queue[q_tail] = w
-                        dist[w] = dist[v] + 1
-                    end
-                    if dist[w] == dist[v] + 1
-                        sigma[w] += sigma[v]
-                        push!(pred[w], v)
-                    end
-                end
-            end
-
-            # Back-propagation
-            while s_top > 0
-                w = stack[s_top]
-                s_top -= 1
-                for v in pred[w]
-                    delta[v] += (sigma[v] / sigma[w]) * (1.0 + delta[w])
-                end
-                if w == node && w != s
-                    local_sum += delta[w]
-                end
-            end
-        end
-        partials[tid] = local_sum
-    end
-
-    return sum(partials) * norm
-end
-
-"""
     compute_burt_constraint(G, node) -> Float64
 
 Burt's network constraint on node's ego network (Burt, 1992):
@@ -204,14 +126,105 @@ function compute_effective_size(G::SimpleGraph, node::Int)::Float64
 end
 
 """
+    compute_crossmode_betweenness(G, node, N_W, N_F) -> Float64
+
+Cross-mode betweenness centrality: fraction of worker→firm shortest paths
+passing through `node`. Only counts paths where the source is a worker
+(1:N_W) and the target is a firm (N_W+1:N_W+N_F), following Faust (1997).
+
+Uses a parallel Brandes algorithm (thread-per-source-chunk) that runs
+BFS only from worker sources and restricts the back-propagation to only count
+firm targets. Normalized by N_W × N_F (the number of cross-mode pairs).
+"""
+function compute_crossmode_betweenness(G::SimpleGraph, node::Int,
+                                       N_W::Int, N_F::Int)::Float64
+    n = nv(G)
+    n <= 2 && return 0.0
+    n_cross = N_W * N_F
+    n_cross == 0 && return 0.0
+    norm = 1.0 / n_cross
+
+    nt = Threads.nthreads()
+    partials = zeros(nt)
+
+    Threads.@threads for tid in 1:nt
+        # Thread-local BFS buffers
+        sigma = Vector{Float64}(undef, n)
+        dist = Vector{Int}(undef, n)
+        delta = Vector{Float64}(undef, n)
+        pred = [Int[] for _ in 1:n]
+        queue = Vector{Int}(undef, n)
+        stack = Vector{Int}(undef, n)
+
+        local_sum = 0.0
+        for s in tid:nt:n
+            # Only run BFS from worker nodes (skip firms and broker)
+            s <= N_W || continue
+
+            # Initialize
+            fill!(sigma, 0.0)
+            fill!(dist, -1)
+            fill!(delta, 0.0)
+            for i in 1:n
+                empty!(pred[i])
+            end
+            sigma[s] = 1.0
+            dist[s] = 0
+            q_head = 1
+            q_tail = 1
+            queue[1] = s
+            s_top = 0
+
+            # BFS
+            while q_head <= q_tail
+                v = queue[q_head]
+                q_head += 1
+                s_top += 1
+                stack[s_top] = v
+                for w in neighbors(G, v)
+                    if dist[w] < 0
+                        q_tail += 1
+                        queue[q_tail] = w
+                        dist[w] = dist[v] + 1
+                    end
+                    if dist[w] == dist[v] + 1
+                        sigma[w] += sigma[v]
+                        push!(pred[w], v)
+                    end
+                end
+            end
+
+            # Back-propagation with firm-target restriction:
+            # Only count w as a target if it is a firm node
+            while s_top > 0
+                w = stack[s_top]
+                s_top -= 1
+                target_indicator = (N_W < w <= N_W + N_F) ? 1.0 : 0.0
+                for v in pred[w]
+                    delta[v] += (sigma[v] / sigma[w]) * (target_indicator + delta[w])
+                end
+                if w == node && w != s
+                    local_sum += delta[w]
+                end
+            end
+        end
+        partials[tid] = local_sum
+    end
+
+    return sum(partials) * norm
+end
+
+"""
     update_cached_network_measures!(state)
 
-Build the combined graph and compute betweenness, Burt's constraint, and
-effective size for the broker node. Called every M periods.
+Build the combined graph and compute cross-mode betweenness, Burt's constraint,
+and effective size for the broker node. Called every M periods.
 """
 function update_cached_network_measures!(state::ModelState)
     G, broker_node = build_combined_graph(state)
-    state.cached_network.betweenness = compute_betweenness(G, broker_node)
+    N_W = state.params.N_W
+    N_F = length(state.firms)
+    state.cached_network.betweenness = compute_crossmode_betweenness(G, broker_node, N_W, N_F)
     state.cached_network.constraint = compute_burt_constraint(G, broker_node)
     state.cached_network.effective_size = compute_effective_size(G, broker_node)
     return nothing

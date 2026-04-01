@@ -1,6 +1,6 @@
 using Test
 using TransientBrokerage
-using Graphs: SimpleGraph, add_edge!, star_graph, nv, ne, watts_strogatz, betweenness_centrality
+using Graphs: SimpleGraph, add_edge!, star_graph, nv, ne
 
 @testset "Network Measures" begin
 
@@ -18,13 +18,6 @@ using Graphs: SimpleGraph, add_edge!, star_graph, nv, ne, watts_strogatz, betwee
         n_emp_edges = sum(length(f.employees) for f in state.firms)
         n_pool_edges = length(state.broker.pool)
         @test ne(G) == n_gs_edges + n_emp_edges + n_pool_edges
-    end
-
-    # Star graph: center has betweenness = 1.0 (normalized)
-    @testset "betweenness on star graph" begin
-        G = star_graph(6)  # node 1 is center, nodes 2-6 are leaves
-        @test compute_betweenness(G, 1) ≈ 1.0
-        @test compute_betweenness(G, 2) ≈ 0.0
     end
 
     # Star graph: center has low constraint (contacts are disconnected)
@@ -116,35 +109,65 @@ using Graphs: SimpleGraph, add_edge!, star_graph, nv, ne, watts_strogatz, betwee
         @test es ≈ 3.75
     end
 
-    # Parallel Brandes matches Graphs.jl reference on non-trivial graphs
-    @testset "betweenness matches Graphs.jl reference" begin
-        # Hand-built bridge graph (same as above)
-        G1 = SimpleGraph(5)
-        add_edge!(G1, 1, 2); add_edge!(G1, 1, 3)
-        add_edge!(G1, 1, 4); add_edge!(G1, 1, 5)
-        add_edge!(G1, 2, 3); add_edge!(G1, 4, 5)
-        ref1 = betweenness_centrality(G1)
-        for v in 1:nv(G1)
-            @test compute_betweenness(G1, v) ≈ ref1[v] atol=1e-12
-        end
+    # Cross-mode betweenness: star graph where broker connects disjoint workers and firms
+    # Workers: {1,2}, Firms: {3,4}, Broker: 5
+    # All 4 worker-firm paths pass through broker → crossmode = 1.0
+    @testset "crossmode betweenness: pure broker star" begin
+        G = SimpleGraph(5)
+        add_edge!(G, 5, 1); add_edge!(G, 5, 2)
+        add_edge!(G, 5, 3); add_edge!(G, 5, 4)
+        @test compute_crossmode_betweenness(G, 5, 2, 2) ≈ 1.0
+        # Worker node is never an intermediary (it's always a source/target)
+        @test compute_crossmode_betweenness(G, 1, 2, 2) ≈ 0.0
+        @test compute_crossmode_betweenness(G, 3, 2, 2) ≈ 0.0
+    end
 
-        # Watts-Strogatz small-world (realistic topology)
-        G2 = watts_strogatz(100, 6, 0.1; seed=42)
-        ref2 = betweenness_centrality(G2)
-        for v in [1, 25, 50, 75, 100]
-            @test compute_betweenness(G2, v) ≈ ref2[v] atol=1e-12
-        end
+    # Cross-mode betweenness with a bypass edge: worker 1 connected directly to firm 3
+    # Workers: {1,2}, Firms: {3,4}, Broker: 5
+    # Edges: 5-1, 5-2, 5-3, 5-4, 1-3
+    # Paths: 1→3 direct (no broker), 1→4 via 5, 2→3 via 5, 2→4 via 5
+    # Broker crossmode = 3/4 = 0.75
+    @testset "crossmode betweenness: star with bypass" begin
+        G = SimpleGraph(5)
+        add_edge!(G, 5, 1); add_edge!(G, 5, 2)
+        add_edge!(G, 5, 3); add_edge!(G, 5, 4)
+        add_edge!(G, 1, 3)  # bypass
+        @test compute_crossmode_betweenness(G, 5, 2, 2) ≈ 0.75
+    end
 
-        # Combined graph from actual model state
-        params = default_params(d=4, N_W=200, N_F=5)
-        state = initialize_model(params)
-        G3, broker_node = build_combined_graph(state)
-        ref3 = betweenness_centrality(G3)
-        @test compute_betweenness(G3, broker_node) ≈ ref3[broker_node] atol=1e-12
-        # Also spot-check a few worker and firm nodes
-        for v in [1, 10, 30, params.N_W + 1, params.N_W + 3]
-            @test compute_betweenness(G3, v) ≈ ref3[v] atol=1e-12
-        end
+    # Cross-mode betweenness on a chain: 1 - 4 - 2 - 3
+    # Workers: {1,2}, Firm: {3}, Broker: 4; N_W=2, N_F=1
+    # 1→3: goes 1→4→2→3 (through 4)
+    # 2→3: goes 2→3 directly (not through 4)
+    # Broker crossmode = 1/2 = 0.5
+    @testset "crossmode betweenness: chain" begin
+        G = SimpleGraph(4)
+        add_edge!(G, 1, 4); add_edge!(G, 4, 2); add_edge!(G, 2, 3)
+        @test compute_crossmode_betweenness(G, 4, 2, 1) ≈ 0.5
+    end
+
+    # Cross-mode betweenness: broker has no cross-mode paths through it
+    # Workers: {1,2}, Firm: {3}, Broker: 4
+    # Workers directly connected to firm, broker disconnected
+    @testset "crossmode betweenness: disconnected broker" begin
+        G = SimpleGraph(4)
+        add_edge!(G, 1, 3); add_edge!(G, 2, 3)
+        @test compute_crossmode_betweenness(G, 4, 2, 1) ≈ 0.0
+    end
+
+    # Cross-mode betweenness: multiple shortest paths (tie-breaking)
+    # Workers: {1,2}, Firm: {3}, Broker: 4, Extra node: 5
+    # Edges: 1-4, 1-5, 4-3, 5-3, 2-3
+    # 1→3: two shortest paths of length 2: 1→4→3 and 1→5→3
+    #       Node 4 gets credit = 1/2 (one of two paths)
+    # 2→3: direct
+    # Broker crossmode = (1/2) / 2 = 0.25
+    @testset "crossmode betweenness: tied shortest paths" begin
+        G = SimpleGraph(5)
+        add_edge!(G, 1, 4); add_edge!(G, 1, 5)
+        add_edge!(G, 4, 3); add_edge!(G, 5, 3)
+        add_edge!(G, 2, 3)
+        @test compute_crossmode_betweenness(G, 4, 2, 1) ≈ 0.25
     end
 
     # update_cached_network_measures! produces finite non-zero values

@@ -103,15 +103,18 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
     Label(fig[1, 0], "Market\nActivity"; fontsize=row_label_fs, font=:bold, rotation=π/2,
           tellheight=false)
 
-    ax1 = Axis(fig[1, 1]; title="Outsourcing rate", ylabel="Rate", ax_kw...)
+    ax1 = Axis(fig[1, 1]; title="Outsourcing rate", ylabel="Rate",
+               limits=(nothing, (0, 1)), ax_kw...)
     plot_metric!(ax1, mdf -> mdf.outsourcing_rate)
 
-    ax2 = Axis(fig[1, 2]; title="Matches per period", ylabel="Count", ax_kw...)
+    ax2 = Axis(fig[1, 2]; title="Matches per period", ylabel="Count",
+               limits=(nothing, (0, nothing)), ax_kw...)
     plot_metric!(ax2, mdf -> Float64.(mdf.n_direct); label="Internal", color=COL_INTERNAL)
     plot_metric!(ax2, mdf -> Float64.(mdf.n_placed); label="Brokered", color=COL_BROKER)
     axislegend(ax2; position=:rt, leg_kw...)
 
-    ax3 = Axis(fig[1, 3]; title="Available workers & firm size", ylabel="Count", ax_kw...)
+    ax3 = Axis(fig[1, 3]; title="Available workers & firm size", ylabel="Count",
+               limits=(nothing, (0, nothing)), ax_kw...)
     plot_metric!(ax3, mdf -> Float64.(mdf.n_available); label="Available", color=:teal)
     plot_metric!(ax3, mdf -> mdf.avg_firm_size .* 10; label="Firm size (×10)", color=:darkorange)
     axislegend(ax3; position=:rt, leg_kw...)
@@ -120,17 +123,20 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
     Label(fig[2, 0], "Prediction\nQuality"; fontsize=row_label_fs, font=:bold, rotation=π/2,
           tellheight=false)
 
-    ax4 = Axis(fig[2, 1]; title="Model quality: holdout R²", ylabel="R²", ax_kw...)
+    ax4 = Axis(fig[2, 1]; title="Model quality: holdout R²", ylabel="R²",
+               limits=(nothing, (0, 1)), ax_kw...)
     plot_metric!(ax4, mdf -> mdf.firm_r_squared_holdout; label="Firm", color=COL_INTERNAL)
     plot_metric!(ax4, mdf -> mdf.broker_r_squared_holdout; label="Broker", color=COL_BROKER)
     axislegend(ax4; position=:rb, leg_kw...)
 
-    ax5 = Axis(fig[2, 2]; title="Rank correlation (selected)", ylabel="Spearman ρ", ax_kw...)
+    ax5 = Axis(fig[2, 2]; title="Rank correlation (selected)", ylabel="Spearman ρ",
+               limits=(nothing, (-0.5, 1)), ax_kw...)
     plot_metric!(ax5, mdf -> mdf.firm_rank_corr_selected; label="Firm", color=COL_INTERNAL)
     plot_metric!(ax5, mdf -> mdf.broker_rank_corr_selected; label="Broker", color=COL_BROKER)
     axislegend(ax5; position=:rb, leg_kw...)
 
-    ax6 = Axis(fig[2, 3]; title="Wage accuracy: R² (selected)", ylabel="R²", ax_kw...)
+    ax6 = Axis(fig[2, 3]; title="Wage accuracy: R² (selected)", ylabel="R²",
+               limits=(nothing, (-1, 1)), ax_kw...)
     plot_metric!(ax6, mdf -> mdf.firm_r_squared_selected; label="Firm", color=COL_INTERNAL)
     plot_metric!(ax6, mdf -> mdf.broker_r_squared_selected; label="Broker", color=COL_BROKER)
     axislegend(ax6; position=:rb, leg_kw...)
@@ -140,15 +146,18 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
           tellheight=false)
     COL_GAP = :purple
 
-    ax7 = Axis(fig[3, 1]; title="Holdout R² gap", ylabel="Δ R²", ax_kw...)
+    ax7 = Axis(fig[3, 1]; title="Holdout R² gap", ylabel="Δ R²",
+               limits=(nothing, (-1, 1)), ax_kw...)
     plot_metric!(ax7, mdf -> mdf.gap_r_squared_holdout; color=COL_GAP)
     hlines!(ax7, [0.0]; color=:gray50, linewidth=0.8)
 
-    ax8 = Axis(fig[3, 2]; title="Rank corr. gap (selected)", ylabel="Δ ρ", ax_kw...)
+    ax8 = Axis(fig[3, 2]; title="Rank corr. gap (selected)", ylabel="Δ ρ",
+               limits=(nothing, (-1, 1)), ax_kw...)
     plot_metric!(ax8, mdf -> mdf.gap_rank_corr_selected; color=COL_GAP)
     hlines!(ax8, [0.0]; color=:gray50, linewidth=0.8)
 
-    ax9 = Axis(fig[3, 3]; title="R² gap (selected)", ylabel="Δ R²", ax_kw...)
+    ax9 = Axis(fig[3, 3]; title="R² gap (selected)", ylabel="Δ R²",
+               limits=(nothing, (-1, 1)), ax_kw...)
     plot_metric!(ax9, mdf -> mdf.gap_r_squared_selected; color=COL_GAP)
     hlines!(ax9, [0.0]; color=:gray50, linewidth=0.8)
 
@@ -156,15 +165,18 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
     Label(fig[4, 0], "Structural\nDynamics"; fontsize=row_label_fs, font=:bold, rotation=π/2,
           tellheight=false)
 
-    ax10 = Axis(fig[4, 1]; title="Mean match output", ylabel="Output", ax_kw...)
+    ax10 = Axis(fig[4, 1]; title="Mean match output", ylabel="Output",
+                limits=(nothing, (0, 2)), ax_kw...)
     plot_metric!(ax10, mdf -> mdf.q_direct_mean; label="Internal", color=COL_INTERNAL)
     plot_metric!(ax10, mdf -> mdf.q_placed_mean; label="Brokered", color=COL_BROKER)
     axislegend(ax10; position=:rb, leg_kw...)
 
-    ax11 = Axis(fig[4, 2]; title="Broker betweenness", ylabel="Betweenness", ax_kw...)
+    ax11 = Axis(fig[4, 2]; title="Cross-mode betweenness", ylabel="C_B(broker)",
+                limits=(nothing, (0, 1)), ax_kw...)
     plot_metric!(ax11, mdf -> mdf.betweenness; color=COL_BROKER)
 
-    ax12 = Axis(fig[4, 3]; title="Access share (brokered)", ylabel="Fraction", ax_kw...)
+    ax12 = Axis(fig[4, 3]; title="Access share (brokered)", ylabel="Fraction",
+                limits=(nothing, (0, 1)), ax_kw...)
     plot_metric!(ax12, access_fraction; color=:darkorange)
 
     # ── Row 5: Diagnostics ──
@@ -178,11 +190,11 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
     axislegend(ax13; position=:rb, leg_kw...)
 
     ax14 = Axis(fig[5, 2]; title="Broker reputation", xlabel="Period", ylabel="Reputation",
-                ax_kw..., xlabelsize=label_fs)
+                limits=(nothing, (0, 2)), ax_kw..., xlabelsize=label_fs)
     plot_metric!(ax14, mdf -> mdf.broker_reputation; color=COL_BROKER)
 
     ax15 = Axis(fig[5, 3]; title="Prediction bias (selected)", xlabel="Period", ylabel="Bias",
-                ax_kw..., xlabelsize=label_fs)
+                limits=(nothing, (-0.3, 0.3)), ax_kw..., xlabelsize=label_fs)
     plot_metric!(ax15, mdf -> mdf.broker_bias_selected; label="Broker", color=COL_BROKER)
     plot_metric!(ax15, mdf -> mdf.firm_bias_selected; label="Firm", color=COL_INTERNAL)
     axislegend(ax15; position=:rt, leg_kw...)
@@ -194,8 +206,8 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
 
     # Footer (row 6)
     footer = "Thin lines: individual seeds ($n_seeds). Thick: ensemble mean. " *
-             "Dashed: burn-in (t=$T_burn). Rolling window: $window periods."
-    Label(fig[6, 1:3], footer; fontsize=10, color=:gray30, halign=:center, tellwidth=false)
+             "Dashed: burn-in (t=$T_burn). Smoothing: $window-period rolling mean."
+    Label(fig[6, 1:3], footer; fontsize=12, color=:black, halign=:center, tellwidth=false)
 
     # Explicit layout sizing
     colsize!(fig.layout, 0, Fixed(30))         # row labels: narrow

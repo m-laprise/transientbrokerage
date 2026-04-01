@@ -40,7 +40,7 @@ export compute_reservation_wage, create_firm, create_broker
 export assign_initial_employment!, initialize_model
 export fit_ridge, predict_ridge, predict_ridge!, build_period_models, firm_features, broker_features, broker_feature_dim
 export compute_prediction_quality
-export build_combined_graph, compute_betweenness, compute_burt_constraint
+export build_combined_graph, compute_crossmode_betweenness, compute_burt_constraint
 export compute_effective_size, update_cached_network_measures!
 export internal_search, broker_allocate!
 export compute_wage, resolve_conflicts, finalize_match!

@@ -25,15 +25,26 @@ function fit_ridge(W::AbstractMatrix{Float64}, q::AbstractVector{Float64},
                    lambda::Float64)::RidgeModel
     d, n = size(W)
     # Center
-    w_mean = vec(sum(W, dims=2)) ./ n
+    w_mean = Vector{Float64}(undef, d)
+    fill!(w_mean, 0.0)
+    @inbounds for j in 1:n, k in 1:d
+        w_mean[k] += W[k, j]
+    end
+    w_mean ./= n
     q_mean = sum(q) / n
     # Build centered feature matrix
-    W_c = W .- w_mean
-    q_c = q .- q_mean
+    W_c = Matrix{Float64}(undef, d, n)
+    @inbounds for j in 1:n, k in 1:d
+        W_c[k, j] = W[k, j] - w_mean[k]
+    end
+    q_c = Vector{Float64}(undef, n)
+    @inbounds for j in 1:n
+        q_c[j] = q[j] - q_mean
+    end
     # Normal equations via BLAS: beta = (W_c W_c' + lambda I)^{-1} W_c q_c
     WWT = W_c * W_c'
     Wq = W_c * q_c
-    for k in 1:d
+    @inbounds for k in 1:d
         WWT[k, k] += lambda
     end
     # Cholesky solve (WWT + λI is symmetric positive definite)
@@ -111,33 +122,46 @@ w⊗x captures cross-dimensional interactions from the interaction matrix A.
 """
 function build_period_models(state::ModelState, lambda::Float64)::PeriodModels
     d = state.params.d
+    firms = state.firms
 
-    # Firm models: q ≈ beta'[w; w²] + alpha
-    firm_models = [begin
+    # Pre-allocate shared firm feature matrix [w; w²], reused across firms
+    max_firm_n = 0
+    for f in firms
+        n = effective_history_size(f)
+        n > max_firm_n && (max_firm_n = n)
+    end
+    FF = Matrix{Float64}(undef, 2d, max_firm_n)
+
+    firm_models = Vector{RidgeModel}(undef, length(firms))
+    for (idx, firm) in enumerate(firms)
         n = effective_history_size(firm)
         W = @view(firm.history_w[:, 1:n])
-        fit_ridge(vcat(W, W .^ 2), @view(firm.history_q[1:n]), lambda)
-    end for firm in state.firms]
+        @views FF[1:d, 1:n] .= W
+        @views @. FF[d+1:2d, 1:n] = W ^ 2
+        firm_models[idx] = fit_ridge(@view(FF[:, 1:n]), @view(firm.history_q[1:n]), lambda)
+    end
 
     # Broker model: q ≈ beta'[w; x; w⊗x; w²] + alpha
     broker = state.broker
     n_b = effective_history_size(broker)
-    W = @view(broker.history_w[:, 1:n_b])
-    X = @view(broker.history_x[:, 1:n_b])
+    W_b = @view(broker.history_w[:, 1:n_b])
+    X_b = @view(broker.history_x[:, 1:n_b])
     # Build feature matrix: [w; x; outer_product; w²]
     n_bf = broker_feature_dim(d)
     BF = Matrix{Float64}(undef, n_bf, n_b)
+    d2 = d * d
     @inbounds for i in 1:n_b
-        offset = 0
-        for k in 1:d; BF[offset + k, i] = W[k, i]; end
-        offset += d
-        for k in 1:d; BF[offset + k, i] = X[k, i]; end
-        offset += d
-        for l in 1:d, k in 1:d
-            offset += 1
-            BF[offset, i] = W[k, i] * X[l, i]
+        for k in 1:d; BF[k, i] = W_b[k, i]; end
+        for k in 1:d; BF[d + k, i] = X_b[k, i]; end
+        base = 2d
+        for l in 1:d
+            off = base + (l - 1) * d
+            xi_l = X_b[l, i]
+            for k in 1:d
+                BF[off + k, i] = W_b[k, i] * xi_l
+            end
         end
-        for k in 1:d; BF[d*d + 2d + k, i] = W[k, i]^2; end
+        for k in 1:d; BF[d2 + 2d + k, i] = W_b[k, i] * W_b[k, i]; end
     end
     broker_model = fit_ridge(BF, @view(broker.history_q[1:n_b]), lambda)
 

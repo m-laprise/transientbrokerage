@@ -34,7 +34,7 @@ The simulation is designed to demonstrate the following propositions.
 
 **1. A broker provides value in a matching market because of its structural or informational advantages.** A broker helps create a match between principals who, without the broker's intervention, could not easily find each other (structural advantage) or were unaware that they would benefit from a match (informational advantage). In other words, the broker's service is valuable both because it can find counterparties that clients cannot reach and because it can assess match quality better than its clients can.
 
-- ***The existence of a structural advantage depends purely on network topology.*** It can be measured using traditional measures of betweenness centrality, constraint, and effective size.
+- ***The existence of a structural advantage depends purely on network topology.*** It can be measured using cross-mode betweenness centrality, constraint, and effective size.
 
 - ***The emergence of an informational advantage depends on the value of the data a broker and its clients accumulate, which in turn depends on the form and difficulty of the matching problem.*** When the matching problem is hard to solve, local or limited experience can be insufficient relative to a broker's high volume of cross-market data.
 
@@ -364,7 +364,7 @@ $$R_j^t = \bigcup_{i \in E_j^t} N_S(i) \setminus E_j^t$$
 
 The broker maintains a **pool** $\text{Pool}^t$ of workers it can propose for matching. The pool has a fixed target size $P$ (default $\lceil 0.20 \cdot N_W \rceil = 200$ at $N_W = 1000$), representing the broker's operational capacity for sourcing, vetting, and maintaining candidate relationships. Each period, workers who were placed or staffed in the previous period leave the pool (they are no longer available candidates), and the broker recruits replacement workers drawn uniformly at random from available workers not already in the pool, topping the pool back up to $\min(P, |\text{available} \setminus \text{Pool}^t|)$. The pool thus remains at or near its target size throughout the simulation, turning over as candidates are placed and replaced. Each period, the broker evaluates available pool members against its current clients and proposes matches using a greedy best-pair heuristic (§5b).
 
-**Combined graph for network measures**. Each measurement period, all three relationship types are assembled into a single graph: $N_W + N_F + 1$ nodes (workers, firms, and the broker), with edges from $G_S$, $G_E^t$, and the broker's pool. Network measures computed on this graph (§8; betweenness centrality, Burt's constraint, effective size) are standard and directly comparable to the published structural holes literature (Burt, 1992, 2005).
+**Combined graph for network measures**. Each measurement period, all three relationship types are assembled into a single graph: $N_W + N_F + 1$ nodes (workers, firms, and the broker), with edges from $G_S$, $G_E^t$, and the broker's pool. Network measures computed on this graph (§8; cross-mode betweenness centrality, Burt's constraint, effective size) draw on the structural holes literature (Burt, 1992, 2005) and the two-mode network analysis literature (Faust, 1997).
 
 **Firm turnover**. Firms exit independently each period with probability $\eta$ (the entry/exit rate; default 0.05), yielding an expected firm lifetime of 20 quarters (5 years), consistent with U.S. establishment survival rates (Knaup, 2005; Bureau of Labor Statistics, 2024b).
 
@@ -584,7 +584,7 @@ Each period proceeds through six steps. The pseudocode below specifies the exact
 > 6.1. &emsp;Construct combined graph (§4):
 > &emsp;&emsp;Nodes: workers $1..N_W$, firms $N_W{+}1..N_W{+}N_F$, broker node $N_W{+}N_F{+}1$
 > &emsp;&emsp;Edges: $G_S$ edges among workers + employment edges $(i, j)$ for $i \in E_j^t$ + broker-pool edges $(i, \text{broker})$ for $i \in \text{Pool}^t$
-> 6.2. &emsp;Compute on combined graph: Freeman betweenness centrality (all nodes; record broker's); Burt's constraint (broker's ego network); effective size (broker's ego network)
+> 6.2. &emsp;Compute on combined graph: cross-mode betweenness centrality $C_B^{\times}(b)$ (worker→firm paths through broker; §8); Burt's constraint (broker's ego network); effective size (broker's ego network)
 > 6.3. &emsp;Compute prediction quality ($R^2$, bias, rank correlation; rolling window) for broker and each firm from accumulated (predicted, realized) pairs. Compute access vs. assessment (fraction of brokered placements where $i^* \in R_j^t$).
 >
 > **7. PERIOD RECORDING** (every period):
@@ -605,7 +605,11 @@ The network measures are the most expensive single computation; they read the fu
 
 Computed on the combined graph (§4) each measurement period. No agent uses these measures in its decisions; they are outputs for analysis.
 
-**Betweenness centrality.** Standard Freeman betweenness centrality (Freeman, 1977) of the broker node in the combined graph. Measures the fraction of shortest paths between all other pairs that pass through the broker.
+**Cross-mode betweenness centrality.** A two-mode adaptation of Freeman betweenness (Freeman, 1977; Faust, 1997) restricted to worker–firm shortest paths. In the combined graph, standard betweenness counts all $\binom{n}{2}$ node pairs, but the vast majority are worker–worker pairs (since $N_W \gg N_F$), which dilute the broker's role as a labor market intermediary. Following Faust's (1997) treatment of centrality in affiliation networks, we restrict the summation to cross-mode pairs: the broker's betweenness is the fraction of worker-to-firm shortest paths that pass through it, normalized by $N_W \times N_F$:
+
+$$C_B^{\times}(b) = \frac{1}{N_W \cdot N_F} \sum_{i \in \mathcal{W}} \sum_{j \in \mathcal{F}} \frac{\sigma_{ij}(b)}{\sigma_{ij}}$$
+
+where $\sigma_{ij}$ is the number of shortest paths from worker $i$ to firm $j$, and $\sigma_{ij}(b)$ is the number of those paths passing through broker node $b$. This measures the broker's intermediation in the market-relevant sense: bridging workers to firms, not workers to workers.
 
 **Burt's constraint.** Computed on the broker's ego network in the combined graph (Burt, 1992):
 
@@ -1052,6 +1056,8 @@ Calvo-Armengol, A., & Jackson, M. O. (2004). The effects of social networks on e
 Calvo-Armengol, A., & Jackson, M. O. (2007). Networks in labor markets: Wage and employment dynamics and inequality. *Journal of Economic Theory*, *132*(1), 27–46.
 
 Card, D., Heining, J., & Kline, P. (2013). Workplace heterogeneity and the rise of West German wage inequality. *Quarterly Journal of Economics*, *128*(3), 967–1015.
+
+Faust, K. (1997). Centrality in affiliation networks. *Social Networks*, *19*(2), 157–191.
 
 Finlay, W., & Coverdill, J. E. (2002). *Headhunters: Matchmaking in the labor market*. Cornell University Press.
 

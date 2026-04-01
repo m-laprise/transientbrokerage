@@ -20,8 +20,9 @@ function internal_search(firm::Firm,
     half_n = n ÷ 2
 
     # Partition available workers into referral and general pools
-    referral_buf = Int[]
-    general_buf = Int[]
+    # Use sizehint! to avoid repeated resizing
+    referral_buf = sizehint!(Int[], min(length(firm.referral_pool), length(available)))
+    general_buf = sizehint!(Int[], length(available))
     for w in available
         if w in firm.referral_pool
             push!(referral_buf, w)
@@ -33,7 +34,7 @@ function internal_search(firm::Firm,
     # Draw floor(n/2) from referral, remainder from general (§5a)
     n_referral = min(half_n, length(referral_buf))
     n_general = min(n - n_referral, length(general_buf))
-    candidates = Int[]
+    candidates = sizehint!(Int[], n_referral + n_general)
     if n_referral > 0
         append!(candidates, sample(rng, referral_buf, n_referral; replace=false))
     end

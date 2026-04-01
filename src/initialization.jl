@@ -138,7 +138,7 @@ function create_broker(id::Int, params::ModelParams, workers::Vector{Worker},
     P = ceil(Int, params.pool_target_frac * params.N_W)
     available_ids = [w.id for w in workers if w.status == available]
     seed_pool = Set(sample(rng, available_ids, min(P, length(available_ids)); replace=false))
-    cap = 5000
+    cap = 10_000
     Broker(id=id,
            pool=seed_pool,
            history_w=Matrix{Float64}(undef, params.d, cap),
