@@ -126,13 +126,13 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
     axislegend(ax4; position=:rb, leg_kw...)
 
     ax5 = Axis(fig[2, 2]; title="Rank correlation (selected)", ylabel="Spearman ρ", ax_kw...)
-    plot_metric!(ax5, mdf -> mdf.firm_rank_corr_rolling; label="Firm", color=COL_INTERNAL)
-    plot_metric!(ax5, mdf -> mdf.broker_rank_corr_rolling; label="Broker", color=COL_BROKER)
+    plot_metric!(ax5, mdf -> mdf.firm_rank_corr_selected; label="Firm", color=COL_INTERNAL)
+    plot_metric!(ax5, mdf -> mdf.broker_rank_corr_selected; label="Broker", color=COL_BROKER)
     axislegend(ax5; position=:rb, leg_kw...)
 
     ax6 = Axis(fig[2, 3]; title="Wage accuracy: R² (selected)", ylabel="R²", ax_kw...)
-    plot_metric!(ax6, mdf -> mdf.firm_r_squared_rolling; label="Firm", color=COL_INTERNAL)
-    plot_metric!(ax6, mdf -> mdf.broker_r_squared_rolling; label="Broker", color=COL_BROKER)
+    plot_metric!(ax6, mdf -> mdf.firm_r_squared_selected; label="Firm", color=COL_INTERNAL)
+    plot_metric!(ax6, mdf -> mdf.broker_r_squared_selected; label="Broker", color=COL_BROKER)
     axislegend(ax6; position=:rb, leg_kw...)
 
     # ── Row 3: Broker Advantage (gaps: broker minus firm) ──
@@ -183,8 +183,8 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
 
     ax15 = Axis(fig[5, 3]; title="Prediction bias (selected)", xlabel="Period", ylabel="Bias",
                 ax_kw..., xlabelsize=label_fs)
-    plot_metric!(ax15, mdf -> mdf.broker_bias_rolling; label="Broker", color=COL_BROKER)
-    plot_metric!(ax15, mdf -> mdf.firm_bias_rolling; label="Firm", color=COL_INTERNAL)
+    plot_metric!(ax15, mdf -> mdf.broker_bias_selected; label="Broker", color=COL_BROKER)
+    plot_metric!(ax15, mdf -> mdf.firm_bias_selected; label="Firm", color=COL_INTERNAL)
     axislegend(ax15; position=:rt, leg_kw...)
 
     # Burn-in indicator on all panels
@@ -237,9 +237,9 @@ function make_configs(geom::Symbol)
      (tag="d04_simple",
       label="4-dim types [$geo_label]: (d=4, ρ=0.50, η=0.05)",
       kwargs=(d=4, rho=0.50, firm_geometry=geom)),
-     # (tag="d12_complex",
-     #  label="12-dim types [$geo_label]: (d=12, ρ=0.50, η=0.05)",
-     #  kwargs=(d=12, rho=0.50, firm_geometry=geom)),
+     (tag="d12_complex",
+      label="12-dim types [$geo_label]: (d=12, ρ=0.50, η=0.05)",
+      kwargs=(d=12, rho=0.50, firm_geometry=geom)),
      (tag="rho10_weakquality",
       label="Weak quality [$geo_label]: (d=8, ρ=0.10, η=0.05)",
       kwargs=(d=8, rho=0.10, firm_geometry=geom)),

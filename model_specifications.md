@@ -143,26 +143,27 @@ Firms exit independently each period with probability $\eta$ (default 0.05) and 
 
 Workers and firms are described by type vectors in $\mathbb{R}^d$ (default $d = 8$). These types are the observable characteristics that determine productive compatibility through the matching function (§1).
 
-**Firm types.** Firm types lie on the surface of the unit sphere in $\mathbb{R}^d$. The geometry of the firm distribution is controlled by the parameter `firm_geometry`, which takes one of three values:
+**Firm types.** All firm types lie on the surface of the unit sphere in $\mathbb{R}^d$. How they are distributed on the sphere determines the structure of the matching problem and the value of cross-firm data to the broker. Three firm geometries are defined, varying in the dimensionality and regularity of the firm type manifold.
 
-- **`:complex`** (default) — sinusoidal curve spanning all $d$ dimensions. The curve is generated once at initialization and parameterized by a position $t \in [0, 1]$:
+*Complex geometry* (main specification). Firms lie along a smooth one-dimensional curve that spans all $d$ dimensions. The curve is parameterized by a position $t \in [0, 1]$:
 
 $$\mathbf{x}(t) = \frac{\tilde{\mathbf{x}}(t)}{\|\tilde{\mathbf{x}}(t)\|}, \qquad \tilde{x}_k(t) = \sin(2\pi f_k t + \phi_k), \quad k = 1, \ldots, d$$
 
-where $f_k$ and $\phi_k$ are random parameters drawn once per simulation. The $N_F$ firms are evenly spaced along this curve at positions $t_1, \ldots, t_{N_F}$.
+where $f_k$ and $\phi_k$ are random parameters drawn once per simulation. The $N_F$ firms are evenly spaced along this curve. Because each dimension has its own independent frequency, the curve spans all $d$ dimensions: firms nearby on the curve have similar types, while firms far apart point in genuinely different directions across all of $\mathbb{R}^d$. This full-dimensional diversity is what makes the interaction (§1c) vary in fundamentally different ways across firms, and what makes cross-firm data valuable to the broker (§1d).
 
-- **`:simple`** — great circle (2D subspace). Firms are evenly spaced along a great circle that spans only 2 of the $d$ dimensions.
+*Simple geometry.* Firms lie along a great circle, the intersection of the unit sphere with a two-dimensional plane through the origin. The circle is defined by two orthonormal vectors $\mathbf{a}, \mathbf{b} \in \mathbb{R}^d$:
 
-- **`:unstructured`** — anisotropic Gaussian blob on the unit sphere. Firm types are drawn from a Gaussian distribution and projected onto the unit sphere, with no curve structure.
+$$\mathbf{x}(t) = \cos(\theta t) \, \mathbf{a} + \sin(\theta t) \, \mathbf{b}$$
 
-Firm types have no perturbation noise: they lie exactly on the curve (`:complex`, `:simple`) or sphere (`:unstructured`).
+where $\theta$ is calibrated so that the spacing between adjacent firms matches the complex geometry. Firms are evenly spaced. Because the great circle spans only a two-dimensional subspace of $\mathbb{R}^d$, the firm type variation is low-dimensional regardless of $d$.
 
-Two properties of the `:complex` construction matter for the model's dynamics.
+*Unstructured geometry.* Firm types are drawn independently from an anisotropic distribution on the sphere. Each firm type is generated as
 
-- Firms that are nearby on the curve have similar types (high cosine similarity), while firms that are far apart on the curve point in different directions. This creates a natural notion of "similar firms" and "dissimilar firms."
-- Because each of the $d$ dimensions has its own independent frequency, the curve spans all $d$ dimensions of the type space. This means the interaction component of match quality (§1c) varies in genuinely different ways across firms, which is what makes cross-firm data valuable for the broker.
+$$\mathbf{x} = \frac{\mathbf{z}}{\|\mathbf{z}\|}, \qquad \mathbf{z} = \mathbf{m} + \mathbf{Q} \boldsymbol{\Lambda}^{1/2} \boldsymbol{\xi}, \qquad \boldsymbol{\xi} \sim N(\mathbf{0}, \mathbf{I}_d)$$
 
-The curve parameters are stored and reused when entrant firms replace exiting ones (§4). Entrants receive a type at a random position $t \sim U[0,1]$ on the same curve (or a fresh draw from the same distribution under `:unstructured`), along with 6-10 initial employees whose match outputs seed the firm's history.
+where $\mathbf{m}$ is a random unit vector (the center of the distribution), $\mathbf{Q}$ is a random orthonormal matrix, and $\boldsymbol{\Lambda}$ is a diagonal matrix of anisotropic scales drawn once at initialization. The scales decay so that the distribution is elongated along some directions and compressed along others. Unlike the structured geometries, firms have no ordering: there is no notion of "adjacent" or "distant" firms, and pairwise distances are approximately uniform.
+
+The three geometries test whether the model's dynamics depend on the structure of the firm type manifold (§13c). Entrant firms replacing exiting ones (§4) are drawn from the same geometry: at a random position on the curve for structured geometries, or as a fresh draw from the same distribution for unstructured.
 
 **Worker types.** Each worker is a noisy version of a randomly chosen firm type:
 
@@ -248,7 +249,7 @@ Bounded in $[-1, 1]$. For a fixed firm $j$, $\text{sim}(w, Ax_j)$ varies smoothl
 
   - Workers are drawn as perturbations of firm types with dispersion $\sigma_w$ (§0). When $\sigma_w$ is comparable to inter-firm spacing (the default $\sigma_w = 0.5$), workers overlap with multiple firms' neighborhoods, creating meaningful variation in match quality that requires data to learn.
 
-  - Firms must point in different directions across all $d$ dimensions. The sinusoidal firm curve (`:complex` geometry) achieves this by assigning each dimension an independent random frequency and phase. Because firm types span the full $d$-dimensional space, the interaction $\text{sim}(w, Ax)$ varies in fundamentally different ways across firms, and a firm observing $\text{sim}(w, Ax_j)$ for its own fixed $x_j$ cannot infer how the same workers would match at firms pointing in other directions. The `:simple` geometry (great circle spanning only 2 dimensions) makes the interaction too simple for firms to need cross-firm data, collapsing the broker's advantage. The `:unstructured` geometry (anisotropic Gaussian blob) provides an intermediate case without curve structure.
+  - Firms must point in different directions across all $d$ dimensions. The sinusoidal firm curve (§0, complex geometry) achieves this by assigning each dimension an independent random frequency and phase. Because firm types span the full $d$-dimensional space, the interaction $\text{sim}(\mathbf{w}, \mathbf{A}\mathbf{x})$ varies in fundamentally different ways across firms, and a firm observing $\text{sim}(\mathbf{w}, \mathbf{A}\mathbf{x}_j)$ for its own fixed $\mathbf{x}_j$ cannot infer how the same workers would match at firms pointing in other directions. The simple geometry (great circle spanning only 2 dimensions) makes the interaction lower-dimensional, reducing the broker's advantage. The unstructured geometry (anisotropic distribution on the sphere) removes curve structure entirely.
 
 - **$\rho$ (mixing weight).** At low $\rho$, the interaction dominates and cross-firm data is essential; the broker's advantage is large. At high $\rho$, general quality dominates and firms can learn from their own hires; the broker's advantage shrinks.
 
@@ -464,10 +465,9 @@ At the start of the simulation, the state of the world must be initialized.
 > **INITIALIZE (Claude generated; review required)**
 >
 > *Firm types and matching function.*
-> I.1. &emsp;Generate firm curve: per-dimension frequencies $f_k \sim U[1,3] \cdot \sqrt{d_{\text{ref}} / d}$ (where $d_{\text{ref}} = 8$), phases $\phi_k \sim U[0,2\pi]$. Store curve parameters.
-> I.2. &emsp;Sample $N_F$ firm types according to `firm_geometry`: for `:complex`, evenly along the sinusoidal curve, $x_j[k] = \sin(2\pi f_k t_j + \phi_k)$, normalized to the unit sphere; for `:simple`, evenly along a great circle; for `:unstructured`, from an anisotropic Gaussian projected onto the unit sphere. Firm types have no perturbation noise — they lie exactly on the curve/sphere.
-> I.3. &emsp;Draw ideal worker $c$ as perturbation of a random firm type with $\sigma_w / \sqrt{d}$ per-dimension noise (like an $(N_W + 1)$th worker).
-> I.4. &emsp;Draw interaction matrix $\mathbf{A} \in \mathbb{R}^{d \times d}$ with iid $N(0,1)$ entries. Build MatchingEnv with $d$, $\rho$, $c$, $\mathbf{A}$. No variance calibration step needed.
+> I.1. &emsp;Generate firm type geometry (§0) and draw $N_F$ firm types on the unit sphere. Store geometry parameters for entrant firms.
+> I.2. &emsp;Draw ideal worker $c$ as perturbation of a random firm type with $\sigma_w / \sqrt{d}$ per-dimension noise (like an $(N_W + 1)$th worker).
+> I.3. &emsp;Draw interaction matrix $\mathbf{A} \in \mathbb{R}^{d \times d}$ with iid $N(0,1)$ entries.
 >
 > *Worker types.*
 > I.5. &emsp;For each worker $i$: draw reference firm $j(i) \sim U\{1,\ldots,N_F\}$; set $w_i = x_{j(i)} + \epsilon_i$, $\epsilon_i \sim N(0, \sigma_w^2/d \cdot I_d)$.
@@ -927,7 +927,7 @@ Parameters are organized into five categories reflecting their role in the analy
 | $p_{\text{vac}}$ | Per-period vacancy probability (§5) | 0.50 | ~25 vacancies/period across 50 firms | Base |
 | $\sigma_w$ | Worker type dispersion | 0.5 | Expected distance from worker to reference firm, dimension-invariant (§0, §12c) | Base |
 | $L$ | Fee amortization period | 4 | Expected useful duration of a hire for per-period cost comparisons (§6a). M1 reuses as staffing assignment length (§9). | Base |
-| `firm_geometry` | Firm type geometry | `:complex` | One of `:complex` (sinusoidal curve spanning all $d$ dims), `:simple` (great circle, 2D subspace), `:unstructured` (anisotropic Gaussian blob on unit sphere). See §0. | Base |
+| Firm geometry | Firm type distribution | Complex | Complex (sinusoidal curve, all $d$ dims), simple (great circle, 2D), or unstructured (anisotropic on sphere). See §0. | Base |
 
 **Calibration parameters.** Set during model development to ensure the DGP is well-behaved across the parameter space. Constant in production runs.
 
@@ -936,7 +936,7 @@ Parameters are organized into five categories reflecting their role in the analy
 | $r_{\text{base}}$ | Reservation wage floor | $0.70 \cdot E[f]$ | Calibrated at init from Monte Carlo sample of random (not clustered) worker-firm pairs. Network premium (0.20) and noise scale (0.05) hardcoded in §3b. | Base |
 | $\lambda$ | Ridge regression regularization | 1.0 | Regularization for firm and broker regression models (§2a, §2b) | Base |
 | $\sigma_\varepsilon$ | Match output noise SD | 0.25 | Signal bounded in $[-1,1]$; SNR $\approx$ 4:1 | Base |
-| $\mathbf{A}$ | Interaction matrix | $d \times d$, iid $N(0,1)$ | Drawn once at initialization. Stored in MatchingEnv. Introduces cross-dimensional interactions in $\text{sim}(w, Ax)$ (§1c). | Base |
+| $\mathbf{A}$ | Interaction matrix | $d \times d$, iid $N(0,1)$ | Drawn once at initialization. Introduces cross-dimensional interactions in $\text{sim}(\mathbf{w}, \mathbf{A}\mathbf{x})$ (§1c). | Base |
 
 In the table, $\bar{f}$ denotes the mean absolute match output $E[|f(w,x)|]$, computed from a Monte Carlo sample at initialization. Parameters expressed as multiples of $r_{\text{base}}$ scale automatically with the output distribution, ensuring that the economic logic (surplus margins, fee incentives, staffing profitability) is stable across different $d$ and $A$ specifications.
 
@@ -975,8 +975,8 @@ In the table, $\bar{f}$ denotes the mean absolute match output $E[|f(w,x)|]$, co
 
 The initialization procedure generates the matching environment, agents, and network in the following order. Definitions of types, the matching function, and learning are in §§0-2; this section specifies only the procedural steps and calibration choices.
 
-1. **Firm geometry and types** (§0). Generate firm types according to `firm_geometry`. Store geometry parameters for entrant firms.
-2. **Matching function** (§1). Draw ideal worker $c$ and interaction matrix $\mathbf{A}$. Build MatchingEnv.
+1. **Firm geometry and types** (§0). Generate firm types on the unit sphere according to the chosen geometry. Store geometry parameters for entrant firms.
+2. **Matching function** (§1). Draw ideal worker $\mathbf{c}$ and interaction matrix $\mathbf{A}$.
 3. **Calibration.** Compute $E[f]$ from 10,000 random worker-firm pairs (workers drawn near random firm types, evaluated against independently drawn firms). Set $\bar{q}_{\text{pub}} = E[f]$ and $r_{\text{base}} = 0.70 \cdot E[f]$.
 4. **Worker types** (§0). Each worker drawn as perturbation of a random firm type with noise $\sigma_w / \sqrt{d}$ per dimension. Workers sorted by first principal component for network construction.
 5. **Social network $G_S$** (§4). Watts-Strogatz with $N_W$ nodes, degree $k_S$, rewiring $p_{\text{rewire}}$. Node ordering from step 4.

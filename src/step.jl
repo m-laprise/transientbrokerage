@@ -75,7 +75,7 @@ function step_period!(state::ModelState)
         j = rand(rng, 1:N_F)
         w = state.workers[wid].type
         x = state.firms[j].type
-        q_true = match_output_noiseless!(Ax_buf, w, x, state.env)
+        q_true = Q_OFFSET + match_output_noiseless!(Ax_buf, w, x, state.env)
         push!(state.accum.firm_holdout_pred, predict_ridge!(models.firm_models[j], firm_buf, w))
         push!(state.accum.firm_holdout_real, q_true)
         push!(state.accum.broker_holdout_pred, predict_ridge!(models.broker_model, broker_buf, w, x))

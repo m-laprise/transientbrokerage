@@ -116,7 +116,7 @@ struct CalibrationConstants
     q_pub::Float64                # public benchmark E[f] (= f_bar; fallback prediction, satisfaction init)
 end
 
-"""Prediction quality over a window: R-squared, bias, and rank correlation."""
+"""Prediction quality metrics: R-squared, bias, and rank correlation."""
 struct PredictionQuality
     r_squared::Float64
     bias::Float64

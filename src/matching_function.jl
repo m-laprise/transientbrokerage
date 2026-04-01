@@ -66,7 +66,9 @@ const Q_OFFSET = 1.0
 """
     match_output(w, x, env, rng) -> Float64
 
-Stochastic match output q = Q_OFFSET + ρ·tanh(sim(w,c)) + (1-ρ)·sim(w, Ax) + ε.
+Stochastic match output q = Q_OFFSET + ρ·sim(w,c) + (1-ρ)·sim(w, Ax) + ε.
+The offset Q_OFFSET shifts the signal positive for downstream economic computations
+(wages, surplus, satisfaction). Noise ε ~ N(0, σ_ε²).
 """
 function match_output(w::AbstractVector, x::AbstractVector,
                       env::MatchingEnv, rng::AbstractRNG)::Float64
@@ -76,17 +78,18 @@ end
 """
     match_output_noiseless(w, x, env) -> Float64
 
-Deterministic match output Q_OFFSET + ρ·tanh(sim(w,c)) + (1-ρ)·sim(w, Ax).
+Raw deterministic signal ρ·sim(w,c) + (1-ρ)·sim(w, Ax), without offset or noise.
+Used for diagnostics, holdout evaluation, and SVD analysis.
 """
 function match_output_noiseless(w::AbstractVector, x::AbstractVector,
                                  env::MatchingEnv)::Float64
-    return Q_OFFSET + env.rho * eval_mu(w, env) + (1.0 - env.rho) * eval_interaction(w, x, env)
+    return env.rho * eval_mu(w, env) + (1.0 - env.rho) * eval_interaction(w, x, env)
 end
 
 """In-place version using pre-allocated Ax buffer."""
 function match_output_noiseless!(Ax_buf::Vector{Float64}, w::AbstractVector,
                                   x::AbstractVector, env::MatchingEnv)::Float64
-    return Q_OFFSET + env.rho * eval_mu(w, env) + (1.0 - env.rho) * eval_interaction!(Ax_buf, w, x, env)
+    return env.rho * eval_mu(w, env) + (1.0 - env.rho) * eval_interaction!(Ax_buf, w, x, env)
 end
 
 """
@@ -110,7 +113,7 @@ function calibrate_output_scale(env::MatchingEnv,
             w[k] = ref[k] + σ_per_dim * randn(rng)
         end
         x = firm_types[rand(rng, 1:n_firms)]
-        total += match_output_noiseless(w, x, env)
+        total += Q_OFFSET + match_output_noiseless(w, x, env)
     end
     f_mean = total / n_samples
     return (f_mean, 0.70 * f_mean)
