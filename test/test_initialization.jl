@@ -28,14 +28,14 @@ using Graphs: nv, is_connected
 
     @testset "worker properties" begin
         @test all(1 <= w.node_id <= params.N_W for w in state.workers)
-        @test all(all(-3.0 .<= w.type .<= 3.0) for w in state.workers)
+        @test all(all(isfinite.(w.type)) for w in state.workers)
         @test all(length(w.type) == params.d for w in state.workers)
     end
 
     @testset "firm properties" begin
         @test all(length(f.type) == params.d for f in state.firms)
-        # Firm types are on the unit sphere + small perturbation
-        @test all(0.5 < sqrt(sum(f.type .^ 2)) < 1.5 for f in state.firms)
+        # Firm types are on the unit sphere
+        @test all(isapprox(sqrt(sum(f.type .^ 2)), 1.0; atol=1e-10) for f in state.firms)
     end
 
     @testset "initial employment: 6-10 per firm, no double-counting" begin
@@ -108,38 +108,34 @@ end
 
     d = 4
 
-    # Nearby positions on the curve produce similar firm types
+    # Complex curve: nearby positions produce similar firm types
     @testset "nearby positions produce similar types" begin
-        curve = generate_firm_curve(d, StableRNG(42))
-        t1 = sample_firm_type(curve, 0.50, d, StableRNG(1))
-        t2 = sample_firm_type(curve, 0.51, d, StableRNG(2))
-        t_far = sample_firm_type(curve, 0.90, d, StableRNG(3))
+        geo = generate_firm_geometry(:complex, d, 50, StableRNG(42))
+        t1 = sample_firm_type(geo, 0.50, d, StableRNG(1))
+        t2 = sample_firm_type(geo, 0.51, d, StableRNG(2))
+        t_far = sample_firm_type(geo, 0.90, d, StableRNG(3))
         near_dist = sum((t1 .- t2).^2)
         far_dist = sum((t1 .- t_far).^2)
         @test near_dist < far_dist
     end
 
-    # Firm types are within [-3, 3]
-    @testset "firm types clamped" begin
-        curve = generate_firm_curve(d, StableRNG(42))
-        types = generate_firm_types(curve, 100, d, StableRNG(1))
-        @test all(all(-3.0 .<= t .<= 3.0) for t in types)
-    end
-
-    # Firm types are near the unit sphere (norm ≈ 1 plus small perturbation)
-    @testset "firm types near unit sphere" begin
-        curve = generate_firm_curve(d, StableRNG(42))
-        types = generate_firm_types(curve, 100, d, StableRNG(1))
-        norms = [sqrt(sum(t .^ 2)) for t in types]
-        @test all(0.5 .< norms .< 1.5)  # near unit sphere with perturbation
+    # All three geometries produce finite, unit-norm types
+    @testset "all geometries produce valid types" begin
+        for mode in (:unstructured, :simple, :complex)
+            geo = generate_firm_geometry(mode, d, 50, StableRNG(42))
+            types = generate_firm_types(geo, 50, d, StableRNG(1))
+            @test all(all(isfinite.(t)) for t in types)
+            norms = [sqrt(sum(t .^ 2)) for t in types]
+            @test all(isapprox.(norms, 1.0; atol=0.01))
+        end
     end
 
     # Deterministic with fixed seed
     @testset "deterministic" begin
-        c1 = generate_firm_curve(d, StableRNG(42))
-        c2 = generate_firm_curve(d, StableRNG(42))
-        t1 = sample_firm_type(c1, 0.5, d, StableRNG(1))
-        t2 = sample_firm_type(c2, 0.5, d, StableRNG(1))
+        g1 = generate_firm_geometry(:complex, d, 50, StableRNG(42))
+        g2 = generate_firm_geometry(:complex, d, 50, StableRNG(42))
+        t1 = sample_firm_type(g1, 0.5, d, StableRNG(1))
+        t2 = sample_firm_type(g2, 0.5, d, StableRNG(1))
         @test t1 == t2
     end
 end

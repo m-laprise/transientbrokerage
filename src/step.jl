@@ -66,7 +66,8 @@ function step_period!(state::ModelState)
     # Uses existing workers (not synthetic), evaluated at random firms they may or may not be near.
     d = params.d
     firm_buf = Vector{Float64}(undef, 2d)
-    broker_buf = Vector{Float64}(undef, 4d)
+    broker_buf = Vector{Float64}(undef, broker_feature_dim(d))
+    Ax_buf = Vector{Float64}(undef, d)
     N_W = length(state.workers)
     N_F = length(state.firms)
     for _ in 1:(3 * N_F)
@@ -74,7 +75,7 @@ function step_period!(state::ModelState)
         j = rand(rng, 1:N_F)
         w = state.workers[wid].type
         x = state.firms[j].type
-        q_true = match_output_noiseless(w, x, state.env)
+        q_true = match_output_noiseless!(Ax_buf, w, x, state.env)
         push!(state.accum.firm_holdout_pred, predict_ridge!(models.firm_models[j], firm_buf, w))
         push!(state.accum.firm_holdout_real, q_true)
         push!(state.accum.broker_holdout_pred, predict_ridge!(models.broker_model, broker_buf, w, x))

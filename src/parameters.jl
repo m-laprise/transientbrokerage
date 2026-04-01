@@ -13,6 +13,7 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
     defaults = Dict{Symbol,Any}(
         :d => 4,
         :rho => 0.50,
+        :firm_geometry => :complex,
         :N_W => 1000,
         :N_F => 50,
         :eta => 0.05,
@@ -41,6 +42,7 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
     p = ModelParams(
         defaults[:d],
         defaults[:rho],
+        defaults[:firm_geometry],
         defaults[:N_W],
         defaults[:N_F],
         defaults[:eta],
@@ -74,6 +76,7 @@ Assert that all parameter values satisfy model constraints. Throws on violation.
 function validate_params(p::ModelParams)
     @assert p.d >= 2 "d must be ≥ 2, got $(p.d)"
     @assert 0.0 <= p.rho <= 1.0 "rho must be in [0, 1], got $(p.rho)"
+    @assert p.firm_geometry in (:unstructured, :simple, :complex) "firm_geometry must be :unstructured, :simple, or :complex"
     @assert p.N_W >= 1 "N_W must be ≥ 1, got $(p.N_W)"
     @assert p.N_F >= 1 "N_F must be ≥ 1, got $(p.N_F)"
     @assert 0.0 < p.eta < 1.0 "eta must be in (0, 1), got $(p.eta)"

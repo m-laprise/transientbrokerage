@@ -26,14 +26,15 @@ mkpath(DATADIR)
 # Helpers
 # ---------------------------------------------------------------------------
 
-"""Run `n_seeds` simulations at `params` (overriding T and seed), return vector of DataFrames."""
+"""Run `n_seeds` simulations at `params` (overriding T and seed), return vector of DataFrames.
+Seeds are parallelized across available threads."""
 function run_ensemble(; base_params_kwargs, T::Int, n_seeds::Int)
-    mdfs = DataFrame[]
-    for s in 1:n_seeds
+    mdfs = Vector{DataFrame}(undef, n_seeds)
+    Threads.@threads for s in 1:n_seeds
         params = default_params(; T=T, seed=s, base_params_kwargs...)
         _, mdf = run_simulation(params)
         mdf[!, :seed] = fill(s, nrow(mdf))
-        push!(mdfs, mdf)
+        mdfs[s] = mdf
     end
     return mdfs
 end
@@ -217,64 +218,77 @@ end
 
 T = 800
 N_SEEDS = 5
+RERUN = "--rerun" in ARGS
+
+# Parse --geometry flag: complex (default), simple, unstructured, or all
+GEOMETRY_ARG = let
+    idx = findfirst(a -> startswith(a, "--geometry="), ARGS)
+    idx !== nothing ? Symbol(split(ARGS[idx], "=")[2]) : :complex
+end
+GEOMETRIES = GEOMETRY_ARG == :all ? [:unstructured, :simple, :complex] : [GEOMETRY_ARG]
 
 # Each config varies one parameter from the default (d=8, rho=0.50, eta=0.05)
-# Labels: evocative description first, exact parameters in parentheses
-configs = [
-    (tag="baseline",
-     label="Baseline: 8-dim types, moderate quality share, 5% turnover (d=8, ρ=0.50, η=0.05)",
-     kwargs=(d=8, rho=0.50)),
-    (tag="d04_simple",
-     label="Simple matching: 4-dim types (d=4, ρ=0.50, η=0.05)",
-     kwargs=(d=4, rho=0.50)),
-    (tag="d12_complex",
-     label="Complex matching: 12-dim types (d=12, ρ=0.50, η=0.05)",
-     kwargs=(d=12, rho=0.50)),
-    (tag="rho10_weakquality",
-     label="Weak general quality: mostly match-specific (d=8, ρ=0.10, η=0.05)",
-     kwargs=(d=8, rho=0.10)),
-    (tag="rho90_strongquality",
-     label="Strong general quality: worker type dominates (d=8, ρ=0.90, η=0.05)",
-     kwargs=(d=8, rho=0.90)),
-    (tag="eta01_stable",
-     label="Stable market: 1% firm turnover, ~100-period lifetimes (d=8, ρ=0.50, η=0.01)",
-     kwargs=(d=8, rho=0.50, eta=0.01)),
-    (tag="eta10_volatile",
-     label="Volatile market: 10% firm turnover, ~10-period lifetimes (d=8, ρ=0.50, η=0.10)",
-     kwargs=(d=8, rho=0.50, eta=0.10)),
-    (tag="rho00_pureinteraction",
-     label="Pure interaction: no general quality (d=8, ρ=0.00, η=0.05)",
-     kwargs=(d=8, rho=0.0)),
-    (tag="rho100_purequality",
-     label="Pure general quality: no match-specific component (d=8, ρ=1.00, η=0.05)",
-     kwargs=(d=8, rho=1.0)),
-]
-
-RERUN = "--rerun" in ARGS  # pass --rerun to force re-simulation
-
-println("Running base model exploration (T=$T, $N_SEEDS seeds per config, $(length(configs)) configs)")
-println("Data cache: $DATADIR")
-RERUN && println("  --rerun: forcing re-simulation of all configs")
-println()
-
-for (i, c) in enumerate(configs)
-    println("[$i/$(length(configs))] $(c.label)")
-    datafile = joinpath(DATADIR, "$(c.tag).jld2")
-    if !RERUN && isfile(datafile)
-        println("  Loading cached data: $datafile")
-        mdfs = JLD2.load(datafile, "mdfs")
-    else
-        mdfs = run_ensemble(; base_params_kwargs=c.kwargs, T=T, n_seeds=N_SEEDS)
-        JLD2.save(datafile, "mdfs", mdfs, "label", c.label,
-                  "kwargs", Dict(pairs(c.kwargs)), "T", T, "n_seeds", N_SEEDS)
-        println("  Saved data: $datafile")
-    end
-    plot_ensemble(mdfs, c.label, "$(c.tag).png")
+function make_configs(geom::Symbol)
+    geo_label = geom == :complex ? "complex curve" : geom == :simple ? "great circle" : "unstructured"
+    geo_short = string(geom)
+    [(tag="baseline",
+      label="Baseline [$geo_label]: (d=8, ρ=0.50, η=0.05)",
+      kwargs=(d=8, rho=0.50, firm_geometry=geom)),
+     (tag="d04_simple",
+      label="4-dim types [$geo_label]: (d=4, ρ=0.50, η=0.05)",
+      kwargs=(d=4, rho=0.50, firm_geometry=geom)),
+     # (tag="d12_complex",
+     #  label="12-dim types [$geo_label]: (d=12, ρ=0.50, η=0.05)",
+     #  kwargs=(d=12, rho=0.50, firm_geometry=geom)),
+     (tag="rho10_weakquality",
+      label="Weak quality [$geo_label]: (d=8, ρ=0.10, η=0.05)",
+      kwargs=(d=8, rho=0.10, firm_geometry=geom)),
+     (tag="rho90_strongquality",
+      label="Strong quality [$geo_label]: (d=8, ρ=0.90, η=0.05)",
+      kwargs=(d=8, rho=0.90, firm_geometry=geom)),
+     (tag="eta01_stable",
+      label="Stable market [$geo_label]: (d=8, ρ=0.50, η=0.01)",
+      kwargs=(d=8, rho=0.50, eta=0.01, firm_geometry=geom)),
+     (tag="eta10_volatile",
+      label="Volatile market [$geo_label]: (d=8, ρ=0.50, η=0.10)",
+      kwargs=(d=8, rho=0.50, eta=0.10, firm_geometry=geom)),
+     (tag="rho00_pureinteraction",
+      label="Pure interaction [$geo_label]: (d=8, ρ=0.00, η=0.05)",
+      kwargs=(d=8, rho=0.0, firm_geometry=geom)),
+     (tag="rho100_purequality",
+      label="Pure quality [$geo_label]: (d=8, ρ=1.00, η=0.05)",
+      kwargs=(d=8, rho=1.0, firm_geometry=geom)),
+    ]
 end
 
-# ---------------------------------------------------------------------------
-# SVD and matching matrix figures for configs that vary d or rho
-# ---------------------------------------------------------------------------
+println("Running base model exploration (T=$T, $N_SEEDS seeds, geometries=$(GEOMETRIES))")
+RERUN && println("  --rerun: forcing re-simulation")
+println()
+
+for geom in GEOMETRIES
+    configs = make_configs(geom)
+    geo_dir = string(geom)
+    outdir = joinpath(OUTDIR, geo_dir)
+    datadir = joinpath(DATADIR, geo_dir)
+    mkpath(outdir); mkpath(datadir)
+    println("━━━ Geometry: $geom ($outdir) ━━━")
+
+    for (i, c) in enumerate(configs)
+        println("[$i/$(length(configs))] $(c.label)")
+        datafile = joinpath(datadir, "$(c.tag).jld2")
+        if !RERUN && isfile(datafile)
+            println("  Loading cached data: $datafile")
+            mdfs = JLD2.load(datafile, "mdfs")
+        else
+            mdfs = run_ensemble(; base_params_kwargs=c.kwargs, T=T, n_seeds=N_SEEDS)
+            JLD2.save(datafile, "mdfs", mdfs, "label", c.label,
+                      "kwargs", Dict(pairs(c.kwargs)), "T", T, "n_seeds", N_SEEDS)
+            println("  Saved data: $datafile")
+        end
+        plot_ensemble(mdfs, c.label, joinpath(geo_dir, "$(c.tag).png"))
+    end
+
+    # SVD and matching matrix figures for configs that vary d or rho
 
 """
     build_ordered_matching_matrix(state) -> (F, firm_order, worker_order)
@@ -406,26 +420,26 @@ function plot_matching_matrix(F::Matrix{Float64}; d::Int, rho::Float64,
     println("  Saved: $filename")
 end
 
-# Generate SVD + matrix figures for configs that vary d or rho
-println("Generating SVD and matching matrix figures...")
-svd_configs = filter(c -> begin
-        d = get(Dict(pairs(c.kwargs)), :d, 8)
-        rho = get(Dict(pairs(c.kwargs)), :rho, 0.50)
-        d != 8 || rho != 0.50
-    end, configs)
-pushfirst!(svd_configs, configs[1])
-for c in svd_configs
-    kw = Dict(pairs(c.kwargs))
-    cd = get(kw, :d, 8)
-    crho = get(kw, :rho, 0.50)
-    params = default_params(; d=cd, rho=crho, seed=42)
-    state = initialize_model(params)
-    F, _, _ = build_ordered_matching_matrix(state)
-    plot_svd_matching(F; d=cd, rho=crho, filename="$(c.tag)_svd.png")
-    plot_matching_matrix(F; d=cd, rho=crho, filename="$(c.tag)_matrix.png")
+    println("  Generating SVD and matching matrix figures...")
+    svd_configs = filter(c -> begin
+            kd = get(Dict(pairs(c.kwargs)), :d, 8)
+            krho = get(Dict(pairs(c.kwargs)), :rho, 0.50)
+            kd != 8 || krho != 0.50
+        end, configs)
+    pushfirst!(svd_configs, configs[1])
+    for c in svd_configs
+        kw = Dict(pairs(c.kwargs))
+        cd = get(kw, :d, 8)
+        crho = get(kw, :rho, 0.50)
+        params = default_params(; d=cd, rho=crho, firm_geometry=geom, seed=42)
+        state = initialize_model(params)
+        F, _, _ = build_ordered_matching_matrix(state)
+        plot_svd_matching(F; d=cd, rho=crho, filename=joinpath(geo_dir, "$(c.tag)_svd.png"))
+        plot_matching_matrix(F; d=cd, rho=crho, filename=joinpath(geo_dir, "$(c.tag)_matrix.png"))
+    end
+    println()
 end
 
-println()
 println("Figures: $OUTDIR")
 println("Data: $DATADIR")
 println("Done.")

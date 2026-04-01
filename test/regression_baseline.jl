@@ -17,16 +17,16 @@ using TransientBrokerage
     # N_F=50, p_vac=0.50, sigma_w=0.5, 6-10 initial workers, broker seeded with 20
     # Features: firm=[w; w.^2], broker=[w; x; w.*x; w.^2]
     expected = [
-        (28, 36, 200, 52),  # period 1
-        (31, 57, 200, 57),  # period 2
-        (38, 84, 200, 60),  # period 3
-        (28, 100, 200, 64),  # period 4
-        (26, 112, 200, 65),  # period 5
-        (23, 130, 200, 65),  # period 6
-        (29, 149, 200, 68),  # period 7
-        (22, 164, 200, 69),  # period 8
-        (17, 176, 200, 73),  # period 9
-        (23, 191, 200, 75),  # period 10
+        (24, 31, 200, 54),  # period 1
+        (22, 47, 200, 57),  # period 2
+        (28, 69, 200, 59),  # period 3
+        (20, 84, 200, 60),  # period 4
+        (26, 103, 200, 63),  # period 5
+        (25, 117, 200, 67),  # period 6
+        (26, 134, 200, 69),  # period 7
+        (31, 153, 200, 73),  # period 8
+        (19, 166, 200, 75),  # period 9
+        (23, 180, 200, 77),  # period 10
     ]
 
     for (t, (exp_matches, exp_hist, exp_pool, exp_next_id)) in enumerate(expected)

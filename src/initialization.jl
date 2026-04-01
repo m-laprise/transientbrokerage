@@ -19,38 +19,95 @@ function compute_reservation_wage(deg::Int, max_deg::Int, r_base::Float64,
 end
 
 """
-    generate_firm_curve(d, rng; d_ref=8) -> FirmCurve
+    generate_firm_geometry(mode, d, N_F, rng) -> FirmGeometry
 
-Create a random smooth 1D curve on the unit sphere in R^d for sampling firm types.
-Each dimension has an independent sinusoidal frequency and phase, so the curve spans
-all d dimensions. Frequencies are scaled by `√(d_ref / d)` so that the curve's arc
-length (and hence mean inter-firm spacing) is approximately invariant to `d`.
+Create firm geometry parameters for the given mode:
+- :complex — sinusoidal curve spanning all d dimensions (d-ref frequency scaling)
+- :simple — great circle between two random unit vectors
+- :unstructured — anisotropic Gaussian blob, normalized to unit sphere
 """
-function generate_firm_curve(d::Int, rng::AbstractRNG; d_ref::Int=8)::FirmCurve
-    freq_scale = sqrt(d_ref / d)
-    FirmCurve((1.0 .+ 2.0 .* rand(rng, d)) .* freq_scale, 2π .* rand(rng, d))
+function generate_firm_geometry(mode::Symbol, d::Int, N_F::Int, rng::AbstractRNG)::FirmGeometry
+    empty_d = Float64[]
+    empty_dd = zeros(0, 0)
+
+    if mode == :complex
+        freq_scale = sqrt(8 / d)  # d_ref = 8
+        freqs = (1.0 .+ 2.0 .* rand(rng, d)) .* freq_scale
+        phases = 2π .* rand(rng, d)
+        return FirmGeometry(mode, freqs, phases,
+                            empty_d, empty_d, 0.0,
+                            empty_d, empty_dd, empty_d)
+    elseif mode == :simple
+        a = randn(rng, d); a ./= norm(a)
+        b = randn(rng, d); b ./= norm(b)
+        # Orthogonalize b from a, then set angle to achieve target adj spacing
+        b .-= dot(b, a) .* a; b ./= norm(b)
+        # Target: adj ≈ 0.28 for N_F=50. With slerp, adj = 2*sin(θ/(2*(N_F-1))).
+        # For adj=0.28: θ = 2*(N_F-1)*arcsin(0.14) ≈ 98*0.1405 ≈ 13.8.
+        # This wraps around the great circle ~2.2 times — use modular slerp.
+        theta = 2.0 * (N_F - 1) * asin(0.14)
+        return FirmGeometry(mode, empty_d, empty_d,
+                            a, b, theta,
+                            empty_d, empty_dd, empty_d)
+    elseif mode == :unstructured
+        # Anisotropic Gaussian: random center, random rotation, calibrated scales
+        center = randn(rng, d); center ./= norm(center)
+        # Random orthonormal basis via QR
+        axes = Matrix(qr(randn(rng, d, d)).Q)
+        # Strongly anisotropic scales: first dimension ~10× last, so the blob
+        # is elongated like an ellipsoid. After sphere projection, nearby firms
+        # along the major axis are close, firms across the minor axes are far.
+        raw_scales = [1.0 / k^0.8 for k in 1:d]  # power-law: ~6:1 ratio
+        raw_scales .*= 1.0 / raw_scales[1]  # largest scale = 1.0 (wide spread before projection)
+        return FirmGeometry(mode, empty_d, empty_d,
+                            empty_d, empty_d, 0.0,
+                            center, axes, raw_scales)
+    else
+        error("Unknown firm geometry: $mode")
+    end
 end
 
 """
-    sample_firm_type(curve, t, d, rng) -> Vector{Float64}
+    sample_firm_type(geo, t, d, rng) -> Vector{Float64}
 
-Sample a firm type at position `t` ∈ [0, 1] along the sinusoidal curve on the
-unit sphere, with small perturbation.
+Sample a firm type. Meaning of `t` depends on the geometry:
+- :complex — position on sinusoidal curve (deterministic given t)
+- :simple — position on great circle (deterministic given t)
+- :unstructured — ignored; draws a fresh random point from the blob
 """
-function sample_firm_type(curve::FirmCurve, t::Float64, d::Int, rng::AbstractRNG)::Vector{Float64}
-    x = [sin(2π * curve.freqs[k] * t + curve.phases[k]) for k in 1:d]
-    x ./= norm(x)  # project onto unit sphere
-    x .+= 0.1 .* randn(rng, d)
-    return x
+function sample_firm_type(geo::FirmGeometry, t::Float64, d::Int, rng::AbstractRNG)::Vector{Float64}
+    if geo.mode == :complex
+        x = [sin(2π * geo.freqs[k] * t + geo.phases[k]) for k in 1:d]
+        x ./= norm(x)
+        return x
+    elseif geo.mode == :simple
+        # Great circle parameterized by angle: x(t) = cos(φ)·a + sin(φ)·b
+        φ = t * geo.arc_theta
+        x = cos(φ) .* geo.arc_a .+ sin(φ) .* geo.arc_b
+        x ./= norm(x)
+        return x
+    elseif geo.mode == :unstructured
+        z = geo.axes * (geo.scales .* randn(rng, d))
+        x = geo.center .+ z
+        x ./= norm(x)
+        return x
+    else
+        error("Unknown firm geometry: $(geo.mode)")
+    end
 end
 
 """
-    generate_firm_types(curve, N_F, d, rng) -> Vector{Vector{Float64}}
+    generate_firm_types(geo, N_F, d, rng) -> Vector{Vector{Float64}}
 
-N_F firm types evenly spaced around the small circle.
+N_F firm types from the geometry. For structured modes (:complex, :simple),
+firms are evenly spaced along the curve. For :unstructured, N_F random draws.
 """
-function generate_firm_types(curve::FirmCurve, N_F::Int, d::Int, rng::AbstractRNG)::Vector{Vector{Float64}}
-    [sample_firm_type(curve, t, d, rng) for t in range(0.0, 1.0; length=N_F)]
+function generate_firm_types(geo::FirmGeometry, N_F::Int, d::Int, rng::AbstractRNG)::Vector{Vector{Float64}}
+    if geo.mode == :unstructured
+        return [sample_firm_type(geo, 0.0, d, rng) for _ in 1:N_F]
+    else
+        return [sample_firm_type(geo, t, d, rng) for t in range(0.0, 1.0; length=N_F)]
+    end
 end
 
 """
@@ -65,9 +122,9 @@ function create_firm(id::Int, type::Vector{Float64}, d::Int)::Firm
          history_count=0)
 end
 
-"""Convenience: create a firm with a random type drawn from N(0,I) clipped to [-3,3]."""
+"""Convenience: create a firm with a random type drawn from N(0,I)."""
 function create_firm(id::Int, d::Int, rng::AbstractRNG)::Firm
-    create_firm(id, clamp.(randn(rng, d), -3.0, 3.0), d)
+    create_firm(id, randn(rng, d), d)
 end
 
 """
@@ -162,9 +219,9 @@ function initialize_model(params::ModelParams)::ModelState
     rng = StableRNG(params.seed)
     d = params.d
 
-    # 1. Firm curve and types (needed before matching function for ideal worker draw)
-    firm_curve = generate_firm_curve(d, rng)
-    firm_type_vecs = generate_firm_types(firm_curve, params.N_F, d, rng)
+    # 1. Firm geometry and types (needed before matching function for ideal worker draw)
+    firm_geo = generate_firm_geometry(params.firm_geometry, d, params.N_F, rng)
+    firm_type_vecs = generate_firm_types(firm_geo, params.N_F, d, rng)
 
     # 2. Matching function (ideal worker c drawn from firm types)
     env = generate_matching_function(d, params.rho,
@@ -185,7 +242,6 @@ function initialize_model(params::ModelParams)::ModelState
     for i in 1:params.N_W
         ref = firm_type_vecs[rand(rng, 1:params.N_F)]
         @views X[:, i] .= ref .+ σ_per_dim .* randn(rng, d)
-        @views clamp!(X[:, i], -3.0, 3.0)
     end
     pc1_scores = vec(predict(fit(PCA, X; maxoutdim=1), X))
     sort_order = sortperm(pc1_scores)
@@ -239,7 +295,7 @@ function initialize_model(params::ModelParams)::ModelState
     cached_network = CachedNetworkMeasures(NaN, NaN, NaN)
 
     return ModelState(params=params, rng=rng, period=0, env=env, cal=cal,
-                      firm_curve=firm_curve,
+                      firm_geo=firm_geo,
                       workers=workers, firms=firms, broker=broker, G_S=G_S,
                       open_vacancies=Set{Int}(), next_firm_id=params.N_F + 1,
                       accum=accum, cached_network=cached_network)

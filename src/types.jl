@@ -77,6 +77,7 @@ end
 struct ModelParams
     d::Int                       # type dimensionality
     rho::Float64                 # mixing weight: ρ · quality + (1-ρ) · interaction
+    firm_geometry::Symbol        # :unstructured, :simple, or :complex
     N_W::Int                     # worker count
     N_F::Int                     # firm count
     eta::Float64                 # firm exit rate
@@ -105,6 +106,7 @@ struct MatchingEnv
     rho::Float64                             # mixing weight: ρ · quality + (1-ρ) · interaction
     c::Vector{Float64}                       # ideal worker type vector (drawn like an extra worker)
     c_norm::Float64                          # precomputed ‖c‖
+    A::Matrix{Float64}                       # d×d interaction matrix (iid N(0,1) entries)
 end
 
 """Output-scale constants derived from Monte Carlo calibration."""
@@ -195,11 +197,24 @@ mutable struct CachedNetworkMeasures
     effective_size::Float64   # Burt's effective size (non-redundant contacts)
 end
 
-"""Smooth 1D curve on the unit sphere in R^d for generating firm types.
-Sinusoidal with independent frequency and phase per dimension, projected onto the sphere."""
-struct FirmCurve
-    freqs::Vector{Float64}     # per-dimension frequencies, scaled for d-invariant arc length
-    phases::Vector{Float64}    # per-dimension phases in [0, 2π]
+"""Parameters for generating firm types. Supports three geometries:
+- :unstructured — anisotropic Gaussian blob, normalized to unit sphere
+- :simple — great circle (slerp between two random unit vectors)
+- :complex — sinusoidal curve spanning all d dimensions
+"""
+struct FirmGeometry
+    mode::Symbol               # :unstructured, :simple, or :complex
+    # Complex mode fields (sinusoidal curve)
+    freqs::Vector{Float64}     # per-dimension frequencies
+    phases::Vector{Float64}    # per-dimension phases
+    # Simple mode fields (great circle)
+    arc_a::Vector{Float64}     # start unit vector
+    arc_b::Vector{Float64}     # end unit vector
+    arc_theta::Float64         # angle between a and b
+    # Unstructured mode fields (anisotropic Gaussian)
+    center::Vector{Float64}    # blob center (unit vector)
+    axes::Matrix{Float64}      # d×d rotation matrix (random orthonormal basis)
+    scales::Vector{Float64}    # per-axis standard deviations
 end
 
 """Complete simulation state: all agents, network, environment, and accumulators."""
@@ -209,7 +224,7 @@ Base.@kwdef mutable struct ModelState
     period::Int = 0
     env::MatchingEnv
     cal::CalibrationConstants
-    firm_curve::FirmCurve
+    firm_geo::FirmGeometry
     workers::Vector{Worker}
     firms::Vector{Firm}
     broker::Broker                # single broker (v9 simplification)

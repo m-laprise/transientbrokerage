@@ -9,7 +9,7 @@ function make_search_state(; seed=42)
     rng = StableRNG(seed + 1)
     for firm in state.firms
         for _ in 1:20
-            w = clamp.(randn(rng, params.d), -3.0, 3.0)
+            w = randn(rng, params.d)
             firm.history_count += 1
             firm.history_w[:, firm.history_count] = w
             firm.history_q[firm.history_count] = sum(w .* firm.type)
@@ -68,7 +68,7 @@ end
         state = make_search_state()
         rng = StableRNG(77)
         for _ in 1:30
-            w = clamp.(randn(rng, d), -3.0, 3.0)
+            w = randn(rng, d)
             record_broker_history!(state.broker, w, state.firms[1].type, 1,
                                    sum(w .* state.firms[1].type))
         end
@@ -106,7 +106,7 @@ end
         state = make_search_state()
         rng = StableRNG(77)
         for _ in 1:30
-            w = clamp.(randn(rng, d), -3.0, 3.0)
+            w = randn(rng, d)
             record_broker_history!(state.broker, w, state.firms[1].type, 1,
                                    sum(w .* state.firms[1].type))
         end
@@ -114,15 +114,11 @@ end
         wid = first(state.broker.pool)
         w = state.workers[wid].type
         x = state.firms[1].type
-        # Via vcat
-        q_vcat = predict_ridge(models.broker_model, broker_features(w, x))
-        # Via pre-filled buffer (what broker_allocate! does internally)
-        buf = Vector{Float64}(undef, 4d)
-        buf[1:d] .= w
-        buf[d+1:2d] .= x
-        @views buf[2d+1:3d] .= buf[1:d] .* buf[d+1:2d]
-        @views buf[3d+1:4d] .= buf[1:d] .^ 2
-        q_buf = predict_ridge(models.broker_model, buf)
-        @test q_vcat == q_buf
+        # Via broker_features (allocating)
+        q_alloc = predict_ridge(models.broker_model, broker_features(w, x))
+        # Via predict_ridge! (buffer, what broker_allocate! uses internally)
+        buf = Vector{Float64}(undef, broker_feature_dim(d))
+        q_buf = predict_ridge!(models.broker_model, buf, w, x)
+        @test q_alloc ≈ q_buf
     end
 end

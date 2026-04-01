@@ -27,26 +27,17 @@ function fit_ridge(W::AbstractMatrix{Float64}, q::AbstractVector{Float64},
     # Center
     w_mean = vec(sum(W, dims=2)) ./ n
     q_mean = sum(q) / n
-    # W_centered is d × n
-    # Normal equations: beta = (WW' + lambda*I)^{-1} W (q - q_mean)
-    # where W is centered
-    q_centered = q .- q_mean
-    # For small d (typical: 4-12), direct solve is fine
-    WWT = zeros(d, d)
-    Wq = zeros(d)
-    @inbounds for i in 1:n
-        for k1 in 1:d
-            wk1 = W[k1, i] - w_mean[k1]
-            Wq[k1] += wk1 * q_centered[i]
-            for k2 in 1:d
-                WWT[k1, k2] += wk1 * (W[k2, i] - w_mean[k2])
-            end
-        end
-    end
+    # Build centered feature matrix
+    W_c = W .- w_mean
+    q_c = q .- q_mean
+    # Normal equations via BLAS: beta = (W_c W_c' + lambda I)^{-1} W_c q_c
+    WWT = W_c * W_c'
+    Wq = W_c * q_c
     for k in 1:d
         WWT[k, k] += lambda
     end
-    beta = WWT \ Wq
+    # Cholesky solve (WWT + λI is symmetric positive definite)
+    beta = cholesky!(Symmetric(WWT)) \ Wq
     intercept = q_mean - dot(beta, w_mean)
     return RidgeModel(beta, intercept)
 end
@@ -69,8 +60,21 @@ end
 """Construct firm feature vector [w; w.^2] for prediction."""
 firm_features(w::AbstractVector) = vcat(w, w .^ 2)
 
-"""Construct broker feature vector [w; x; w.*x; w.^2] for prediction."""
-broker_features(w::AbstractVector, x::AbstractVector) = vcat(w, x, w .* x, w .^ 2)
+"""Construct broker feature vector [w; x; vec(w*x'); w.^2] for prediction.
+Includes full outer product w⊗x (d² features) to capture cross-dimensional interactions."""
+function broker_features(w::AbstractVector, x::AbstractVector)
+    d = length(w)
+    wx = Vector{Float64}(undef, d * d)
+    idx = 0
+    @inbounds for l in 1:d, k in 1:d
+        idx += 1
+        wx[idx] = w[k] * x[l]
+    end
+    return vcat(w, x, wx, w .^ 2)
+end
+
+"""Broker feature dimension: 2d + d² + d = d² + 3d."""
+broker_feature_dim(d::Int) = d * d + 3 * d
 
 """Write firm features [w; w.^2] into `buf` and predict. Zero-allocation hot path."""
 function predict_ridge!(model::RidgeModel, buf::Vector{Float64}, w::AbstractVector)
@@ -80,14 +84,20 @@ function predict_ridge!(model::RidgeModel, buf::Vector{Float64}, w::AbstractVect
     return dot(model.beta, buf) + model.intercept
 end
 
-"""Write broker features [w; x; w.*x; w.^2] into `buf` and predict. Zero-allocation hot path."""
+"""Write broker features [w; x; vec(w*x'); w.^2] into `buf` and predict. Zero-allocation hot path."""
 function predict_ridge!(model::RidgeModel, buf::Vector{Float64},
                         w::AbstractVector, x::AbstractVector)
     d = length(w)
     @views buf[1:d] .= w
     @views buf[d+1:2d] .= x
-    @views @. buf[2d+1:3d] = w * x
-    @views @. buf[3d+1:4d] = w ^ 2
+    # Full outer product w⊗x
+    offset = 2d
+    @inbounds for l in 1:d, k in 1:d
+        offset += 1
+        buf[offset] = w[k] * x[l]
+    end
+    # w²
+    @views @. buf[2d + d*d + 1 : 2d + d*d + d] = w ^ 2
     return dot(model.beta, buf) + model.intercept
 end
 
@@ -95,24 +105,41 @@ end
 """
     build_period_models(state, lambda) -> PeriodModels
 
-Fit ridge regression models for all firms (features = [w; w.^2]) and for
-the broker (features = [w; x; w.*x; w.^2]).
+Fit ridge regression models for all firms (features = [w; w²], 2d dims) and for
+the broker (features = [w; x; w⊗x; w²], d²+3d dims). The full outer product
+w⊗x captures cross-dimensional interactions from the interaction matrix A.
 """
 function build_period_models(state::ModelState, lambda::Float64)::PeriodModels
-    # Firm models: q ≈ beta'[w; w.^2] + c
+    d = state.params.d
+
+    # Firm models: q ≈ beta'[w; w²] + alpha
     firm_models = [begin
         n = effective_history_size(firm)
         W = @view(firm.history_w[:, 1:n])
         fit_ridge(vcat(W, W .^ 2), @view(firm.history_q[1:n]), lambda)
     end for firm in state.firms]
 
-    # Broker model: q ≈ beta'[w; x; w.*x; w.^2] + c
+    # Broker model: q ≈ beta'[w; x; w⊗x; w²] + alpha
     broker = state.broker
     n_b = effective_history_size(broker)
     W = @view(broker.history_w[:, 1:n_b])
     X = @view(broker.history_x[:, 1:n_b])
-    WXI = vcat(W, X, W .* X, W .^ 2)
-    broker_model = fit_ridge(WXI, @view(broker.history_q[1:n_b]), lambda)
+    # Build feature matrix: [w; x; outer_product; w²]
+    n_bf = broker_feature_dim(d)
+    BF = Matrix{Float64}(undef, n_bf, n_b)
+    @inbounds for i in 1:n_b
+        offset = 0
+        for k in 1:d; BF[offset + k, i] = W[k, i]; end
+        offset += d
+        for k in 1:d; BF[offset + k, i] = X[k, i]; end
+        offset += d
+        for l in 1:d, k in 1:d
+            offset += 1
+            BF[offset, i] = W[k, i] * X[l, i]
+        end
+        for k in 1:d; BF[d*d + 2d + k, i] = W[k, i]^2; end
+    end
+    broker_model = fit_ridge(BF, @view(broker.history_q[1:n_b]), lambda)
 
     return PeriodModels(firm_models, broker_model)
 end

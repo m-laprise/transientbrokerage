@@ -8,7 +8,7 @@ using LinearAlgebra: dot
 function make_firm_with_history(d::Int, n_obs::Int, rng::StableRNG)
     firm = create_firm(1, d, rng)
     for i in 1:n_obs
-        w = clamp.(randn(rng, d), -3.0, 3.0)
+        w = randn(rng, d)
         firm.history_count += 1
         firm.history_w[:, firm.history_count] = w
         firm.history_q[firm.history_count] = dot(w, firm.type) + randn(rng)
@@ -19,12 +19,12 @@ end
 # Create a broker with pooled history across multiple firms
 function make_broker_with_history(d::Int, firms::Vector{Firm}, n_per_firm::Int, rng::StableRNG)
     params = default_params(d=d, N_W=100, N_F=length(firms))
-    workers = [Worker(id=i, node_id=i, type=clamp.(randn(rng, d), -3.0, 3.0),
+    workers = [Worker(id=i, node_id=i, type=randn(rng, d),
                        reservation_wage=1.0) for i in 1:100]
     broker = create_broker(1, params, workers, rng)
     for (j, firm) in enumerate(firms)
         for _ in 1:n_per_firm
-            w = clamp.(randn(rng, d), -3.0, 3.0)
+            w = randn(rng, d)
             record_broker_history!(broker, w, firm.type, j, dot(w, firm.type) + randn(rng))
         end
     end
@@ -51,7 +51,7 @@ d = 4
         firm = create_firm(1, d, rng)
         # Generate clean linear data: q = w'x + small noise
         for i in 1:100
-            w = clamp.(randn(rng, d), -3.0, 3.0)
+            w = randn(rng, d)
             firm.history_count += 1
             firm.history_w[:, firm.history_count] = w
             firm.history_q[firm.history_count] = dot(w, firm.type) + 0.1 * randn(rng)
@@ -61,7 +61,7 @@ d = 4
         # Predictions should be close to true w'x for test workers
         errors = Float64[]
         for _ in 1:100
-            w = clamp.(randn(rng, d), -3.0, 3.0)
+            w = randn(rng, d)
             push!(errors, (predict_ridge(model, w) - dot(w, firm.type))^2)
         end
         @test mean(errors) < 0.5  # RMSE < 0.7 on a function with output scale ~4
@@ -69,13 +69,13 @@ d = 4
 
     # Prediction quality improves with more observations (same firm, growing history)
     @testset "learning curve: R-squared increases with n" begin
-        firm_type = clamp.(randn(StableRNG(42), d), -3.0, 3.0)
+        firm_type = randn(StableRNG(42), d)
         r2_vals = Float64[]
         for n_obs in [5, 20, 100]
             firm = create_firm(1, copy(firm_type), d)
             train_rng = StableRNG(n_obs)
             for _ in 1:n_obs
-                w = clamp.(randn(train_rng, d), -3.0, 3.0)
+                w = randn(train_rng, d)
                 firm.history_count += 1
                 firm.history_w[:, firm.history_count] = w
                 firm.history_q[firm.history_count] = dot(w, firm.type) + randn(train_rng)
@@ -86,7 +86,7 @@ d = 4
             predicted = Float64[]
             realized = Float64[]
             for _ in 1:200
-                w = clamp.(randn(test_rng, d), -3.0, 3.0)
+                w = randn(test_rng, d)
                 push!(predicted, predict_ridge(model, w))
                 push!(realized, dot(w, firm.type) + randn(test_rng))
             end
@@ -114,12 +114,13 @@ d = 4
         n_bm = effective_history_size(broker)
         W = @view(broker.history_w[:, 1:n_bm])
         X = @view(broker.history_x[:, 1:n_bm])
-        WXI = vcat(W, X, W .* X, W .^ 2)
-        broker_model = fit_ridge(WXI, @view(broker.history_q[1:n_bm]), lambda)
+        broker_model = fit_ridge(
+            hcat([broker_features(W[:, i], X[:, i]) for i in 1:n_bm]...),
+            @view(broker.history_q[1:n_bm]), lambda)
 
         # Test: broker predictions are finite and reasonable
-        test_w = clamp.(randn(rng, d), -3.0, 3.0)
-        q_b = predict_ridge(broker_model, vcat(test_w, firms[1].type, test_w .* firms[1].type, test_w .^ 2))
+        test_w = randn(rng, d)
+        q_b = predict_ridge(broker_model, broker_features(test_w, firms[1].type))
         @test isfinite(q_b)
     end
 
@@ -133,7 +134,7 @@ d = 4
         @test predict_ridge(model1, w) == predict_ridge(model2, w)
     end
 
-    # Broker model on [w; x; w.*x; w.^2] features produces finite predictions
+    # Broker model on full outer product features produces finite predictions
     @testset "broker prediction with pooled model" begin
         rng = StableRNG(42)
         firms = [create_firm(j, d, rng) for j in 1:3]
@@ -141,9 +142,10 @@ d = 4
         n_b = effective_history_size(broker)
         W = @view(broker.history_w[:, 1:n_b])
         X = @view(broker.history_x[:, 1:n_b])
-        broker_model = fit_ridge(vcat(W, X, W .* X, W .^ 2), @view(broker.history_q[1:n_b]), lambda)
+        BF = hcat([broker_features(W[:, i], X[:, i]) for i in 1:n_b]...)
+        broker_model = fit_ridge(BF, @view(broker.history_q[1:n_b]), lambda)
         test_w = randn(rng, d)
-        q = predict_ridge(broker_model, vcat(test_w, firms[1].type, test_w .* firms[1].type, test_w .^ 2))
+        q = predict_ridge(broker_model, broker_features(test_w, firms[1].type))
         @test isfinite(q)
     end
 

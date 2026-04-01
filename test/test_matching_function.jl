@@ -8,8 +8,8 @@ using Statistics: var
     d, rho = 8, 0.50
 
     function test_firm_types(d, rng)
-        curve = generate_firm_curve(d, rng)
-        generate_firm_types(curve, 50, d, rng)
+        geo = generate_firm_geometry(:complex, d, 50, rng)
+        generate_firm_types(geo, 50, d, rng)
     end
 
     # generate_matching_function returns a valid MatchingEnv
@@ -27,9 +27,9 @@ using Statistics: var
         ftypes = test_firm_types(d, StableRNG(10))
         env = generate_matching_function(d, rho, ftypes, StableRNG(42))
         rng = StableRNG(99)
-        mus = [eval_mu(clamp.(randn(rng, d), -3.0, 3.0), env) for _ in 1:100]
-        ints = [eval_interaction(clamp.(randn(rng, d), -3.0, 3.0),
-                                 clamp.(randn(rng, d), -3.0, 3.0)) for _ in 1:100]
+        mus = [eval_mu(randn(rng, d), env) for _ in 1:100]
+        ints = [eval_interaction(randn(rng, d),
+                                 randn(rng, d), env) for _ in 1:100]
         @test all(-1.0 .<= mus .<= 1.0)       # tanh(cos) ∈ [-1,1]
         @test all(-1.0 .<= ints .<= 1.0)      # cosine sim
     end
@@ -39,9 +39,9 @@ using Statistics: var
         ftypes = test_firm_types(d, StableRNG(10))
         env0 = generate_matching_function(d, 0.0, ftypes, StableRNG(42))
         env1 = generate_matching_function(d, 1.0, ftypes, StableRNG(42))
-        w = clamp.(randn(StableRNG(1), d), -3.0, 3.0)
-        x = clamp.(randn(StableRNG(2), d), -3.0, 3.0)
-        @test match_output_noiseless(w, x, env0) ≈ TransientBrokerage.Q_OFFSET + eval_interaction(w, x)
+        w = randn(StableRNG(1), d)
+        x = randn(StableRNG(2), d)
+        @test match_output_noiseless(w, x, env0) ≈ TransientBrokerage.Q_OFFSET + eval_interaction(w, x, env0)
         @test match_output_noiseless(w, x, env1) ≈ TransientBrokerage.Q_OFFSET + eval_mu(w, env1)
     end
 
@@ -51,9 +51,9 @@ using Statistics: var
         env = generate_matching_function(d, rho, ftypes, StableRNG(42))
         test_rng = StableRNG(77)
         @test all(1:20) do _
-            w = clamp.(randn(test_rng, d), -3.0, 3.0)
-            x = clamp.(randn(test_rng, d), -3.0, 3.0)
-            expected = TransientBrokerage.Q_OFFSET + rho * eval_mu(w, env) + (1.0 - rho) * eval_interaction(w, x)
+            w = randn(test_rng, d)
+            x = randn(test_rng, d)
+            expected = TransientBrokerage.Q_OFFSET + rho * eval_mu(w, env) + (1.0 - rho) * eval_interaction(w, x, env)
             match_output_noiseless(w, x, env) ≈ expected
         end
     end
@@ -62,8 +62,8 @@ using Statistics: var
     @testset "eval_mu smoothness" begin
         ftypes = test_firm_types(d, StableRNG(10))
         env = generate_matching_function(d, rho, ftypes, StableRNG(42))
-        w = clamp.(randn(StableRNG(1), d), -3.0, 3.0)
-        w_near = clamp.(w .+ randn(StableRNG(2), d) .* 0.01, -3.0, 3.0)
+        w = randn(StableRNG(1), d)
+        w_near = w .+ randn(StableRNG(2), d) .* 0.01
         @test abs(eval_mu(w, env) - eval_mu(w_near, env)) < 0.1
     end
 
@@ -81,8 +81,8 @@ using Statistics: var
     @testset "Seed determinism" begin
         ftypes = test_firm_types(d, StableRNG(10))
         env = generate_matching_function(d, rho, ftypes, StableRNG(42))
-        w = clamp.(randn(StableRNG(1), d), -3.0, 3.0)
-        x = clamp.(randn(StableRNG(1), d), -3.0, 3.0)
+        w = randn(StableRNG(1), d)
+        x = randn(StableRNG(1), d)
         q1 = match_output(w, x, env, StableRNG(10))
         q2 = match_output(w, x, env, StableRNG(10))
         @test q1 == q2
@@ -99,7 +99,7 @@ using Statistics: var
         n_f = length(ftypes)
         total = sum(1:10_000) do _
             ref = ftypes[rand(check_rng, 1:n_f)]
-            w = clamp.(ref .+ σ_per_dim .* randn(check_rng, d), -3.0, 3.0)
+            w = ref .+ σ_per_dim .* randn(check_rng, d)
             x = ftypes[rand(check_rng, 1:n_f)]  # independent firm
             match_output_noiseless(w, x, env)
         end
@@ -112,8 +112,8 @@ using Statistics: var
         p = default_params()
         ftypes = test_firm_types(p.d, StableRNG(10))
         env = generate_matching_function(p.d, p.rho, ftypes, StableRNG(p.seed))
-        w = clamp.(randn(StableRNG(1), p.d), -3.0, 3.0)
-        x = clamp.(randn(StableRNG(2), p.d), -3.0, 3.0)
+        w = randn(StableRNG(1), p.d)
+        x = randn(StableRNG(2), p.d)
         q = match_output(w, x, env, StableRNG(3))
         @test isfinite(q)
         f_mean, r_base = calibrate_output_scale(env, ftypes, StableRNG(4))

@@ -52,7 +52,7 @@ using StableRNGs: StableRNG
     # MatchingEnv, CalibrationConstants, and CachedNetworkMeasures have correct dimensions
     @testset "Supporting struct construction" begin
         d = 8
-        env = MatchingEnv(d, 0.5, ones(d), sqrt(d * 1.0))
+        env = MatchingEnv(d, 0.5, ones(d), sqrt(d * 1.0), zeros(d, d))
         @test env.d == d
         @test env.rho == 0.5
         @test length(env.c) == d
@@ -75,7 +75,7 @@ using StableRNGs: StableRNG
         @test !ismutable(default_params())
 
         # MatchingEnv and CalibrationConstants are immutable
-        env = MatchingEnv(8, 0.5, zeros(8), 0.0)
+        env = MatchingEnv(8, 0.5, zeros(8), 0.0, zeros(8, 8))
         @test !ismutable(env)
         cal = CalibrationConstants(1.0, 1.0, 1.0)
         @test !ismutable(cal)
@@ -197,7 +197,7 @@ using StableRNGs: StableRNG
         validate_params(p)
 
         # Sub-structs construct without error
-        env = MatchingEnv(p.d, 0.5, zeros(p.d), 0.0)
+        env = MatchingEnv(p.d, 0.5, zeros(p.d), 0.0, zeros(p.d, p.d))
         cal = CalibrationConstants(1.0, 1.0, 1.0)
         accum = PeriodAccumulators()
         reset_accumulators!(accum)

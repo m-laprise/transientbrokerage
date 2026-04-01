@@ -120,7 +120,7 @@ using StableRNGs: StableRNG
         firm = create_firm(1, 4, rng)
         cap = size(firm.history_w, 2)
         for i in 1:(cap + 50)
-            record_history!(firm, clamp.(randn(rng, 4), -3.0, 3.0), randn(rng))
+            record_history!(firm, randn(rng, 4), randn(rng))
         end
         n = effective_history_size(firm)
         model = fit_ridge(@view(firm.history_w[:, 1:n]), @view(firm.history_q[1:n]), 1.0)

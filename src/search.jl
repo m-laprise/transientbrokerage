@@ -88,17 +88,14 @@ function broker_allocate!(broker::Broker,
     n_c = length(clients)
     broker_model = models.broker_model
     d = length(workers[pool[1]].type)
-    buf = Vector{Float64}(undef, 4d)  # [w; x; w.*x; w.^2]
+    n_bf = broker_feature_dim(d)
+    buf = Vector{Float64}(undef, n_bf)
 
     # Build quality matrix Q[worker_idx, client_idx]
     Q = Matrix{Float64}(undef, n_w, n_c)
     for (ci, (_, firm)) in enumerate(clients)
-        buf[d+1:2d] .= firm.type
         for (wi, wid) in enumerate(pool)
-            buf[1:d] .= workers[wid].type
-            @views buf[2d+1:3d] .= buf[1:d] .* buf[d+1:2d]
-            @views buf[3d+1:4d] .= buf[1:d] .^ 2
-            Q[wi, ci] = predict_ridge(broker_model, buf)
+            Q[wi, ci] = predict_ridge!(broker_model, buf, workers[wid].type, firm.type)
         end
     end
 
