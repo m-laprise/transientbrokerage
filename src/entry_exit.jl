@@ -20,6 +20,10 @@ function exit_firm!(state::ModelState, firm_idx::Int, avail::Set{Int})
     end
     empty!(firm.employees)
     delete!(state.open_vacancies, firm_idx)
+    # Terminate active staffing assignments at this firm (§9g step 5.1)
+    if state.params.enable_staffing
+        terminate_firm_assignments!(state, firm_idx, avail)
+    end
     return nothing
 end
 

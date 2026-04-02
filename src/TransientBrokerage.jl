@@ -19,6 +19,7 @@ include("learning.jl")
 include("measures.jl")
 include("search.jl")
 include("matching.jl")
+include("staffing.jl")
 include("entry_exit.jl")
 include("step.jl")
 include("invariants.jl")
@@ -47,6 +48,9 @@ export compute_wage, resolve_conflicts, finalize_match!
 export record_history!, record_broker_history!
 export update_satisfaction!, penalize_no_proposal!, record_match!
 export outsourcing_decision, broker_reputation, update_broker_reputation!
+export broker_prefers_staffing, firm_accepts_staffing
+export create_staffing_assignment!, process_staffing_economics!
+export release_staffed_worker!, terminate_firm_assignments!
 export exit_firm!, enter_firm!, process_entry_exit!
 export step_period!, verify_invariants
 export collect_period_metrics, run_simulation, diagnostic_summary

@@ -32,9 +32,13 @@ using StableRNGs: StableRNG
         @test f.periods_alive == 0
 
         # StaffingAssignment uses positional args (no @kwdef)
-        sa = StaffingAssignment(1, 1, 1, 4, zeros(8), zeros(8), 5.0, 3.0, 2.5)
+        # Fields: worker_id, firm_idx, firm_id, periods_remaining, reservation_wage, bill_rate, realized_q, predicted_q
+        sa = StaffingAssignment(1, 2, 100, 4, 0.7, 5.0, 3.0, 2.5)
         @test sa.worker_id == 1
+        @test sa.firm_idx == 2
+        @test sa.firm_id == 100
         @test sa.periods_remaining == 4
+        @test sa.reservation_wage == 0.7
         @test sa.bill_rate == 5.0
 
         b = Broker(;
@@ -103,9 +107,10 @@ using StableRNGs: StableRNG
         @test p.mu_b == 0.25
         @test p.c_emp_frac == 0.15
         @test p.p_vac == 0.50
-        @test p.pool_target_frac == 0.20
+        @test p.pool_target_frac == 0.10
         @test p.n_candidates_frac == 0.015
         @test p.network_measure_interval == 10
+        @test p.enable_staffing == false
         @test p.T == 200
         @test p.T_burn == 30
         @test p.seed == 42

@@ -113,9 +113,10 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
     plot_metric!(ax2, mdf -> Float64.(mdf.n_placed); label="Brokered", color=COL_BROKER)
     axislegend(ax2; position=:rt, leg_kw...)
 
-    ax3 = Axis(fig[1, 3]; title="Available workers & firm size", ylabel="Count",
+    ax3 = Axis(fig[1, 3]; title="Available, broker pool & firm size", ylabel="Count",
                limits=(nothing, (0, nothing)), ax_kw...)
     plot_metric!(ax3, mdf -> Float64.(mdf.n_available); label="Available", color=:teal)
+    plot_metric!(ax3, mdf -> Float64.(mdf.broker_pool_size); label="Broker pool", color=COL_BROKER)
     plot_metric!(ax3, mdf -> mdf.avg_firm_size .* 10; label="Firm size (×10)", color=:darkorange)
     axislegend(ax3; position=:rt, leg_kw...)
 
@@ -183,10 +184,10 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
     Label(fig[5, 0], "Diagnostics"; fontsize=row_label_fs, font=:bold, rotation=π/2,
           tellheight=false)
 
-    ax13 = Axis(fig[5, 1]; title="Broker pool & history", xlabel="Period", ylabel="Count",
+    ax13 = Axis(fig[5, 1]; title="Broker history & firm referral reach", xlabel="Period", ylabel="Count",
                 ax_kw..., xlabelsize=label_fs)
-    plot_metric!(ax13, mdf -> Float64.(mdf.broker_pool_size); label="Pool", color=:teal)
-    plot_metric!(ax13, mdf -> Float64.(mdf.broker_history_size); label="History", color=:darkorange)
+    plot_metric!(ax13, mdf -> Float64.(mdf.broker_history_size); label="Broker history", color=:darkorange)
+    plot_metric!(ax13, mdf -> mdf.avg_referral_pool_size; label="Avg referral pool", color=COL_INTERNAL)
     axislegend(ax13; position=:rb, leg_kw...)
 
     ax14 = Axis(fig[5, 2]; title="Broker reputation", xlabel="Period", ylabel="Reputation",
@@ -216,6 +217,134 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
     end
     rowsize!(fig.layout, 0, Fixed(22))         # suptitle: minimal
     rowsize!(fig.layout, 6, Fixed(18))         # footer: minimal
+    rowgap!(fig.layout, 5)
+    colgap!(fig.layout, 10)
+
+    save(joinpath(OUTDIR, filename), fig)
+    println("  Saved: $filename")
+    return fig
+end
+
+"""Generate 2×3 surplus apportionment figure (Fig. S8 in specs)."""
+function plot_surplus_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::String;
+                               window::Int=20)
+    n_seeds = length(mdfs)
+    periods = mdfs[1].period
+    T_burn = 30
+
+    title_fs = 12; label_fs = 10; tick_fs = 9; row_label_fs = 12
+    leg_kw = (; labelsize=9, patchsize=(10, 10), padding=(3, 3, 2, 2),
+                rowgap=0, patchlabelgap=3, framewidth=0.5)
+
+    function plot_metric!(ax, metric_fn; label="", color=COL_INTERNAL)
+        seed_vals = [rolling_mean(metric_fn(mdf), window) for mdf in mdfs]
+        for sv in seed_vals
+            lines!(ax, periods, sv; color=(color, 0.45), linewidth=0.8)
+        end
+        ensemble = [mean(filter(!isnan, [sv[t] for sv in seed_vals])) for t in eachindex(periods)]
+        lines!(ax, periods, ensemble; color=color, linewidth=2.5, label=label)
+    end
+
+    ax_kw = (; titlesize=title_fs, ylabelsize=label_fs,
+               xticklabelsize=tick_fs, yticklabelsize=tick_fs)
+
+    fig = Figure(; size=(1100, 500), figure_padding=(5, 5, 5, 5))
+    Label(fig[0, 1:3], suptitle * " — Surplus"; fontsize=16, font=:bold, halign=:center, tellwidth=false)
+
+    COL_WORKER = :forestgreen
+    COL_FIRM = COL_INTERNAL
+    COL_BROK = COL_BROKER
+    COL_DIRECT = COL_INTERNAL
+    COL_PLACED = COL_BROKER
+    COL_STAFFED = :darkorange
+
+    # ── Row 1: Three-way split ──
+    Label(fig[1, 0], "Three-way\nSplit"; fontsize=row_label_fs, font=:bold, rotation=π/2,
+          tellheight=false)
+
+    ax1 = Axis(fig[1, 1]; title="Surplus by party", ylabel="Surplus",
+               limits=(nothing, (nothing, nothing)), ax_kw...)
+    plot_metric!(ax1, mdf -> mdf.total_realized_surplus; label="Total", color=:gray40)
+    plot_metric!(ax1, mdf -> mdf.worker_surplus; label="Worker", color=COL_WORKER)
+    plot_metric!(ax1, mdf -> mdf.firm_surplus_direct .+ mdf.firm_surplus_placed .+ mdf.firm_surplus_staffed;
+                 label="Firm", color=COL_FIRM)
+    plot_metric!(ax1, mdf -> mdf.broker_surplus_placement .+ mdf.broker_surplus_staffing;
+                 label="Broker", color=COL_BROK)
+    axislegend(ax1; position=:rt, leg_kw...)
+
+    ax2 = Axis(fig[1, 2]; title="Surplus shares", ylabel="Fraction",
+               limits=(nothing, (0, 1)), ax_kw...)
+    plot_metric!(ax2, mdf -> begin
+        tot = mdf.total_realized_surplus
+        [t > 0 ? mdf.worker_surplus[i] / t : NaN for (i, t) in enumerate(tot)]
+    end; label="Worker", color=COL_WORKER)
+    plot_metric!(ax2, mdf -> begin
+        tot = mdf.total_realized_surplus
+        fs = mdf.firm_surplus_direct .+ mdf.firm_surplus_placed .+ mdf.firm_surplus_staffed
+        [t > 0 ? fs[i] / t : NaN for (i, t) in enumerate(tot)]
+    end; label="Firm", color=COL_FIRM)
+    plot_metric!(ax2, mdf -> begin
+        tot = mdf.total_realized_surplus
+        bs = mdf.broker_surplus_placement .+ mdf.broker_surplus_staffing
+        [t > 0 ? bs[i] / t : NaN for (i, t) in enumerate(tot)]
+    end; label="Broker", color=COL_BROK)
+    axislegend(ax2; position=:rt, leg_kw...)
+
+    ax3 = Axis(fig[1, 3]; title="Outsourcing rate", ylabel="Rate",
+               limits=(nothing, (0, 1)), ax_kw...)
+    plot_metric!(ax3, mdf -> mdf.outsourcing_rate)
+
+    # ── Row 2: Channel decomposition ──
+    Label(fig[2, 0], "Channel\nDecomp."; fontsize=row_label_fs, font=:bold, rotation=π/2,
+          tellheight=false)
+
+    ax4 = Axis(fig[2, 1]; title="Firm surplus share by channel", xlabel="Period", ylabel="Fraction",
+               limits=(nothing, (0, 1)), ax_kw..., xlabelsize=label_fs)
+    plot_metric!(ax4, mdf -> begin
+        tot = mdf.firm_surplus_direct .+ mdf.firm_surplus_placed .+ mdf.firm_surplus_staffed
+        [t != 0 ? mdf.firm_surplus_direct[i] / t : NaN for (i, t) in enumerate(tot)]
+    end; label="Direct", color=COL_DIRECT)
+    plot_metric!(ax4, mdf -> begin
+        tot = mdf.firm_surplus_direct .+ mdf.firm_surplus_placed .+ mdf.firm_surplus_staffed
+        [t != 0 ? mdf.firm_surplus_placed[i] / t : NaN for (i, t) in enumerate(tot)]
+    end; label="Placed", color=COL_PLACED)
+    plot_metric!(ax4, mdf -> begin
+        tot = mdf.firm_surplus_direct .+ mdf.firm_surplus_placed .+ mdf.firm_surplus_staffed
+        [t != 0 ? mdf.firm_surplus_staffed[i] / t : NaN for (i, t) in enumerate(tot)]
+    end; label="Staffed", color=COL_STAFFED)
+    axislegend(ax4; position=:rt, leg_kw...)
+
+    ax5 = Axis(fig[2, 2]; title="Broker revenue share by channel", xlabel="Period", ylabel="Fraction",
+               limits=(nothing, (0, 1)), ax_kw..., xlabelsize=label_fs)
+    plot_metric!(ax5, mdf -> begin
+        tot = mdf.broker_surplus_placement .+ mdf.broker_surplus_staffing
+        [t != 0 ? mdf.broker_surplus_placement[i] / t : NaN for (i, t) in enumerate(tot)]
+    end; label="Placement", color=COL_PLACED)
+    plot_metric!(ax5, mdf -> begin
+        tot = mdf.broker_surplus_placement .+ mdf.broker_surplus_staffing
+        [t != 0 ? mdf.broker_surplus_staffing[i] / t : NaN for (i, t) in enumerate(tot)]
+    end; label="Staffing", color=COL_STAFFED)
+    axislegend(ax5; position=:rt, leg_kw...)
+
+    ax6 = Axis(fig[2, 3]; title="Mean output by channel", xlabel="Period",
+               ylabel="Mean q", ax_kw..., xlabelsize=label_fs)
+    plot_metric!(ax6, mdf -> mdf.q_direct_mean; label="Direct", color=COL_DIRECT)
+    plot_metric!(ax6, mdf -> mdf.q_placed_mean; label="Placed", color=COL_PLACED)
+    axislegend(ax6; position=:rb, leg_kw...)
+
+    # Burn-in indicator
+    for ax in [ax1, ax2, ax3, ax4, ax5, ax6]
+        vlines!(ax, [T_burn]; color=:gray30, linestyle=:dash, linewidth=1.5)
+    end
+
+    footer = "Thin lines: individual seeds ($n_seeds). Thick: ensemble mean. " *
+             "Dashed: burn-in (t=$T_burn). Smoothing: $window-period rolling mean."
+    Label(fig[3, 1:3], footer; fontsize=12, color=:black, halign=:center, tellwidth=false)
+
+    colsize!(fig.layout, 0, Fixed(30))
+    for r in 1:2; rowsize!(fig.layout, r, Auto(1)); end
+    rowsize!(fig.layout, 0, Fixed(22))
+    rowsize!(fig.layout, 3, Fixed(18))
     rowgap!(fig.layout, 5)
     colgap!(fig.layout, 10)
 
@@ -298,6 +427,7 @@ for geom in GEOMETRIES
             println("  Saved data: $datafile")
         end
         plot_ensemble(mdfs, c.label, joinpath(geo_dir, "$(c.tag).png"))
+        plot_surplus_ensemble(mdfs, c.label, joinpath(geo_dir, "$(c.tag)_surplus.png"))
     end
 
     # SVD and matching matrix figures for configs that vary d or rho

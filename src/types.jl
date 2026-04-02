@@ -39,12 +39,11 @@ end
 """A broker-mediated staffing contract with fixed duration and locked bill rate."""
 mutable struct StaffingAssignment
     worker_id::Int
-    firm_id::Int
-    broker_id::Int
+    firm_idx::Int                   # array position in state.firms
+    firm_id::Int                    # unique firm ID for staleness detection on exit
     periods_remaining::Int
-    worker_type::Vector{Float64}
-    firm_type::Vector{Float64}
-    bill_rate::Float64              # locked at assignment start (§9c)
+    reservation_wage::Float64       # worker's r_i, needed for per-period surplus
+    bill_rate::Float64              # locked at assignment start (§9c): r_i + μ_b · q̂_b
     realized_q::Float64             # output drawn once at formation, repeated each period (§9g step 3.3.1)
     predicted_q::Float64            # broker's prediction q̂_b, used for per-period profit
 end
@@ -53,7 +52,7 @@ end
 struct ProposedMatch
     firm_idx::Int           # index into state.firms (not firm.id)
     worker_id::Int
-    source::Symbol          # :internal or :broker
+    source::Symbol          # :internal, :broker, or :staffing (Model 1)
     q_hat_firm::Float64     # firm's prediction (used for wage, §3.1.1)
     q_hat_broker::Float64   # broker's prediction (drives allocation; 0.0 for internal)
     wage::Float64           # computed before conflict resolution (§3.1)
@@ -95,6 +94,7 @@ struct ModelParams
     sigma_w::Float64             # worker type dispersion around firm curve (default 0.5)
     n_candidates_frac::Float64   # candidates as fraction of N_W (default 0.015)
     network_measure_interval::Int # M
+    enable_staffing::Bool        # Model 1 toggle: when false, all matches are direct hire or placement
     T::Int                       # total periods
     T_burn::Int                  # burn-in periods discarded from analysis (default 30)
     seed::Int
@@ -159,6 +159,15 @@ Base.@kwdef mutable struct PeriodAccumulators
     # Cumulative revenue (not reset each period)
     cumulative_placement_revenue::Float64 = 0.0
     cumulative_staffing_revenue::Float64 = 0.0
+    # Surplus apportionment (per-period flows, reset each period)
+    total_realized_surplus::Float64 = 0.0
+    worker_surplus::Float64 = 0.0
+    firm_surplus_direct::Float64 = 0.0
+    firm_surplus_placed::Float64 = 0.0
+    firm_surplus_staffed::Float64 = 0.0
+    broker_surplus_placement::Float64 = 0.0
+    broker_surplus_staffing::Float64 = 0.0
+    n_active_staffing::Int = 0
 end
 
 """Zero all per-period fields in `a`, preserving cumulative revenue totals."""
@@ -187,6 +196,15 @@ function reset_accumulators!(a::PeriodAccumulators)
     a.placement_revenue = 0.0
     a.staffing_revenue = 0.0
     # cumulative fields are NOT reset
+    # Surplus apportionment
+    a.total_realized_surplus = 0.0
+    a.worker_surplus = 0.0
+    a.firm_surplus_direct = 0.0
+    a.firm_surplus_placed = 0.0
+    a.firm_surplus_staffed = 0.0
+    a.broker_surplus_placement = 0.0
+    a.broker_surplus_staffing = 0.0
+    a.n_active_staffing = 0
     return nothing
 end
 
@@ -230,6 +248,7 @@ Base.@kwdef mutable struct ModelState
     broker::Broker                # single broker (v9 simplification)
     G_S::SimpleGraph{Int}         # social network
     open_vacancies::Set{Int} = Set{Int}()
+    broker_clients::Set{Int} = Set{Int}()  # firms outsourcing to broker this period (for network measures)
     next_firm_id::Int
     accum::PeriodAccumulators = PeriodAccumulators()
     cached_network::CachedNetworkMeasures

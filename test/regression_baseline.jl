@@ -14,19 +14,20 @@ using TransientBrokerage
 
     # Frozen values: (matches, broker_history_count, broker_pool_size, next_firm_id)
     # Generated with --check-bounds=yes (Pkg.test default)
-    # N_F=50, p_vac=0.50, sigma_w=0.5, 6-10 initial workers, broker seeded with 20
-    # Features: firm=[w; w.^2], broker=[w; x; w.*x; w.^2]
+    # N_F=50, p_vac=0.50, sigma_w=0.5, pool_target_frac=0.10, broker seeded with 20
+    # Pool replenishment: 50/50 referral (G_S neighbors of pool) / random
+    # Features: firm=[w; w.^2], broker=[w; x; w⊗x; w.^2]
     expected = [
-        (24, 31, 200, 54),  # period 1
-        (22, 47, 200, 57),  # period 2
-        (28, 69, 200, 59),  # period 3
-        (20, 84, 200, 60),  # period 4
-        (26, 103, 200, 63),  # period 5
-        (25, 117, 200, 67),  # period 6
-        (26, 134, 200, 69),  # period 7
-        (31, 153, 200, 73),  # period 8
-        (19, 166, 200, 75),  # period 9
-        (23, 180, 200, 77),  # period 10
+        (22, 32, 100, 54),  # period 1
+        (34, 62, 100, 55),  # period 2
+        (20, 75, 100, 59),  # period 3
+        (23, 92, 100, 60),  # period 4
+        (22, 108, 100, 61),  # period 5
+        (26, 123, 100, 65),  # period 6
+        (24, 143, 100, 67),  # period 7
+        (25, 163, 100, 68),  # period 8
+        (22, 181, 100, 69),  # period 9
+        (23, 201, 100, 73),  # period 10
     ]
 
     for (t, (exp_matches, exp_hist, exp_pool, exp_next_id)) in enumerate(expected)

@@ -39,7 +39,8 @@ end
 
 Assemble the combined graph for network measures (§4, §8 step 6.1).
 Nodes: workers 1:N_W, firms N_W+1:N_W+N_F, broker N_W+N_F+1.
-Edges: G_S (worker-worker), G_E (worker-firm employment), broker pool (worker-broker).
+Edges: G_S (worker-worker), G_E (worker-firm employment),
+       broker-pool (worker-broker), broker-client (broker-firm).
 Returns the graph and the broker node index.
 """
 function build_combined_graph(state::ModelState)::Tuple{SimpleGraph{Int}, Int}
@@ -66,6 +67,11 @@ function build_combined_graph(state::ModelState)::Tuple{SimpleGraph{Int}, Int}
     # Broker pool edges (worker-broker)
     for wid in state.broker.pool
         add_edge!(G, wid, broker_node)
+    end
+
+    # Broker client edges (broker-firm for current outsourcing firms)
+    for j in state.broker_clients
+        add_edge!(G, broker_node, N_W + j)
     end
 
     return (G, broker_node)

@@ -4,11 +4,9 @@ This document details the specifications of an agent-based model of labor interm
 
 ## Theory Overview
 
-Dominant theories of brokerage (see e.g. Stovel, Golub, and Milgrom, *PNAS* 2011) describe brokerage as a fragile position at the intersection of social groups, a position that requires stabilizing to avoid collapsing. This view of brokerage fails to explain or predict how so many actors that started in position of brokerage, from Randstad, Amazon, and Visa to Bloomberg and Elsevier, have managed to rise in market power, profit, and prominence even as networks transformed around them and their structural advantage eroded.
+The structural-hole theory of brokerage (Burt, 1992) locates the broker's value in its network position, bridging disconnected parties. Structural-hole brokerage, when performed at scale, can be self-liquidating: each successful match creates a direct tie that densifies the network and closes the holes that created bridging opportunities in the first place, unless the broker aggressively recruits new, distant clients.
 
-The structural-hole theory of brokerage (Burt, 1992) locates the broker's value in its network position, bridging disconnected parties. Structural-hole brokerage, when performed at scale, is self-liquidating: each successful match creates a direct tie that densifies the network and closes the holes that created bridging opportunities in the first place.
-
-I propose a complementary mechanism. Brokerage is outsourced relational work: the broker constructs viable matches between parties who cannot easily evaluate each other. This relational work generates an informational byproduct that the broker can leverage. The broker accumulates knowledge of how to match heterogeneous parties. Structural position provides the access that feeds learning, but while each successful match erodes the broker's structural advantage, it also strengthens its informational position (by adding an observation to its experience of the matching function).
+I propose a complementary view of brokerage. Brokerage is outsourced relational work: the broker constructs viable matches between parties who cannot easily evaluate each other. This relational work generates an informational byproduct that the broker can leverage. The broker accumulates knowledge of how to match heterogeneous parties. Structural position provides the access that feeds learning, but while each successful match erodes the broker's structural advantage, it also strengthens its informational position (by adding an observation to its experience of the matching function).
 
 The broker converts structural capital into informational capital through the act of brokering. When the matching problem is sufficiently complex, the informational capital compounds faster than structural capital erodes, and this compounding advantage can support a transition from intermediation to capture, transforming the broker into a principal selling the resource it was formerly intermediating or data and analytics. This is *transient brokerage*, a process that highlights the broker's power rather than its fragility.
 
@@ -32,7 +30,7 @@ The simulation is designed to demonstrate the following propositions.
 
 ### Premise
 
-**1. A broker provides value in a matching market because of its structural or informational advantages.** A broker helps create a match between principals who, without the broker's intervention, could not easily find each other (structural advantage) or were unaware that they would benefit from a match (informational advantage). In other words, the broker's service is valuable both because it can find counterparties that clients cannot reach and because it can assess match quality better than its clients can.
+**1. A broker provides value in a matching market because of its structural or informational advantages.** A broker helps create a match between principals who, without the broker's intervention, could not easily find each other (access; structural advantage) or were unaware that they would benefit from a match (matchmaking; informational advantage). In other words, the broker's service is valuable both because it can find counterparties that clients cannot reach and because it can assess match quality better than its clients can.
 
 - ***The existence of a structural advantage depends purely on network topology.*** It can be measured using cross-mode betweenness centrality, constraint, and effective size.
 
@@ -590,6 +588,7 @@ Each period proceeds through six steps. The pseudocode below specifies the exact
 > **7. PERIOD RECORDING** (every period):
 > 7.1. &emsp;Record period aggregates: match quality by channel ($\bar{q}_c^t$); vacancy rate by channel (unfilled / total); outsourcing rate ($|J^t| / |V^t|$); broker pool size $|\text{Pool}^t|$; mean firm referral pool size $\overline{|R_j^t|}$.
 > 7.2. &emsp;Record broker state: cumulative revenue $\Pi_b$; reputation $\text{rep}^t$; pool size; $|\mathcal{H}_b^t|$.
+> 7.3. &emsp;Record per-period surplus apportionment (§8, surplus formulas): total realized surplus $\sum(q_{ij} - r_i)$; worker surplus; broker surplus (placement fees + staffing profit); firm surplus by channel (direct, placed, staffed). Sum is over all matches producing output this period (new hires + active staffing assignments).
 
 </small>
 
@@ -650,6 +649,16 @@ The broker-firm gap in holdout $R^2$ is the purest measure of the informational 
 
 **Vacancy rate by channel.** Fraction of openings that remain unfilled per period, broken down by search channel (internal search vs. broker-mediated) and by model. A vacancy persists when no candidate yields positive predicted surplus (§5a) or when the broker's candidate pool is depleted (§5b).
 
+**Surplus apportionment.** Each match producing realized output $q_{ij}$ generates a total realized surplus $q_{ij} - r_i$ above the worker's reservation wage. This surplus is divided among three parties. The formulas depend on the channel:
+
+| | Worker surplus | Firm surplus | Broker surplus |
+|---|---|---|---|
+| **Direct hire** | $\beta_W \max(\hat{q}_j - r_i, 0)$ | $q_{ij} - r_i - \beta_W \max(\hat{q}_j - r_i, 0)$ | $0$ |
+| **Placement** | $\beta_W \max(\hat{q}_j - r_i, 0)$ | $q_{ij} - r_i - \beta_W \max(\hat{q}_j - r_i, 0) - \alpha \hat{w}_{ij}$ | $\alpha \hat{w}_{ij}$ |
+| **Staffing (§9)** | $0$ | $q_{ij} - r_i - \mu_b \hat{q}_b$ | $\mu_b \hat{q}_b$ |
+
+where $\hat{w}_{ij} = r_i + \beta_W \max(\hat{q}_j - r_i, 0)$ is the wage. The three-way split sums to $q_{ij} - r_i$ in each channel. Under staffing, the worker receives only $r_i$ (§9b); the surplus share that would have gone to the worker is captured by the broker through the bill rate's value premium. The broker's staffing surplus is gross revenue ($\mu_b \hat{q}_b$); its net profit is $\mu_b \hat{q}_b - c_{\text{emp}}$ after employment overhead costs (§9c). Placement fees are received at formation (one-time); staffing revenue accrues per period for $L$ periods. Satisfaction tracking (§6a) uses different accounting: the firm amortizes the placement fee over $L$ periods for cross-channel comparability. Per-period surplus totals sum over all new hires and all active staffing assignments producing output that period.
+
 ---
 
 ## Part II. Model Variants
@@ -664,9 +673,12 @@ In Model 2, the difference is that the broker can additionally offer a data prod
 
 #### 9a. Setup
 
-Under worker capture, the broker can employ workers directly and supply them to client firms on a recurring basis. This arrangement, called staffing, gives the broker a per-period revenue stream and creates a double lock-in that freezes the client firm's learning and referral network growth (§9f).
+Under worker capture, the broker can employ workers directly and supply them to client firms on a recurring basis. This arrangement, called staffing, gives the broker a per-period revenue stream and freezes the client firm's learning and referral network growth (§9f).
 
-**Agent state additions.** Worker status (§0) gains a third state: **staffed**, employed by the broker and assigned to a firm. A staffed worker does not appear in the firm's employee set $E_j^t$, does not contribute to the firm's referral reach, and the firm does not observe the worker's type or update its history $\mathcal{H}_j^t$ from the assignment (§9f). The broker gains **active staffing assignments**: a list of current contracts, each specifying the worker, firm, bill rate, and remaining periods. The broker's experience history $\mathcal{H}_b^t$ grows from staffing assignments in the same way as from placements. Staffed workers leave the broker's pool (they are no longer available candidates) and are replaced by new recruits during pool maintenance (§4).
+**Agent state additions.**
+
+- Worker status (§0) gains a third state: **staffed**, employed by the broker and assigned to a firm. A staffed worker does not appear in the firm's employee set $E_j^t$, does not contribute to the firm's referral reach, and the firm does not observe the worker's type or update its history $\mathcal{H}_j^t$ from the assignment (§9f). 
+- The broker gains **active staffing assignments**: a list of current contracts, each specifying the worker, firm, bill rate, and remaining periods. The broker's experience history $\mathcal{H}_b^t$ grows from staffing assignments in the same way as from placements. Staffed workers leave the broker's pool (they are no longer available candidates) and are replaced by new recruits during pool maintenance (§4).
 
 #### 9b. Staffing wages
 
@@ -674,7 +686,9 @@ Under staffing, the worker is employed by the broker, not the firm. The broker p
 
 $$\text{wage}_{i}^{\text{staff}} = r_i$$
 
-Under direct hire, the worker would earn $r_i + \beta_W \cdot \max(\hat{q}_j - r_i, 0)$ (§3a). The forgone surplus share is captured by the broker through the bill rate's value premium (§9c). This wage differential reflects the empirically documented temporary-worker wage penalty (Autor & Houseman, 2010; Houseman, Kalleberg, & Erickcek, 2003). The firm does not pay the worker directly; it pays the broker a per-period bill rate (§9c).
+Under direct hire, the worker would earn $r_i + \beta_W \cdot \max(\hat{q}_j - r_i, 0)$ (§3a). The forgone surplus share is captured by the broker through the bill rate's value premium (§9c). This wage differential reflects the temporary-worker wage penalty (Autor & Houseman, 2010; Houseman, Kalleberg, & Erickcek, 2003). The firm does not pay the worker directly; it pays the broker a per-period bill rate (§9c).
+
+Because workers prefer permanent positions, a staffing offer (wage $= r_i$) always loses in conflict resolution (§3.2) to a direct hire offer with positive surplus (wage $> r_i$). Staffing therefore only succeeds for workers who have no competing internal offer in the same period.
 
 #### 9c. Staffing bill rate and economics
 
@@ -682,20 +696,20 @@ Under staffing, the broker bills the client firm a per-period rate with two comp
 
 $$\psi_b^t = r_i + \mu_b \cdot \hat{q}_b(w_{i^*}, x_j)$$
 
-The parameter $\mu_b$ is the value-capture rate: the fraction of predicted match output the broker charges each period as compensation for identifying and supplying the worker. The default $\mu_b = 0.25$ produces bill rates comparable to the industry average gross margin of 25--41% reported across temporary staffing firms for matches of average output (Bonet et al., 2013; Autor, 2009), while allowing the bill rate to vary with $\hat{q}$. Higher-output matches command higher bill rates; lower-output matches command lower ones.
+The parameter $\mu_b$ is the value-capture rate: the fraction of predicted match output the broker charges each period as compensation for identifying and supplying the worker. The default $\mu_b = 0.25$ produces bill rates comparable to the industry average gross margin of 25-41% reported across temporary staffing firms (Bonet et al., 2013; Autor, 2009), while allowing the bill rate to vary with $\hat{q}$.
 
 The broker's per-period profit on a staffed assignment is the bill rate minus the worker's wage and employment costs:
 
 $$\pi_b^{\text{staff}} = \psi_b^t - r_i - c_{\text{emp}}
 = \mu_b \cdot \hat{q} - c_{\text{emp}}$$
 
-where $c_{\text{emp}}$ is the per-period cost of being the employer of record, covering statutory employer costs and administrative overhead (default $0.15 \cdot r_{\text{base}}$; §12c). Because the worker's wage cancels, the margin depends entirely on the predicted match output: the broker earns more from matches it predicts will generate high value.
+where $c_{\text{emp}}$ is the per-period cost of being the employer of record, covering statutory employer costs and administrative overhead (default $0.15 \cdot r_{\text{base}}$). Because the worker's wage cancels, the margin depends entirely on the predicted match output: the broker earns more from matches it predicts will generate high value.
 
 **Assignment duration and total profit.** Each staffing assignment lasts $L$ periods (default 4; fixed per assignment). The broker's total profit is:
 
 $$\Pi^{\text{staff}} = L \cdot (\mu_b \cdot \hat{q} - c_{\text{emp}})$$
 
-Staffing assignments are short (default $L = 4$ quarters), so time discounting is economically immaterial and omitted. The bill rate is locked in at the $\hat{q}$ predicted at the start of the assignment and does not adjust with realized output. The broker bears risk because it commits to $L$ periods of wage payments regardless of whether realized output matches the prediction.
+Staffing assignments are short (default $L = 4$ quarters), so time discounting is immaterial. The bill rate is locked in at the $\hat{q}$ predicted at the start of the assignment and does not adjust with realized output.
 
 **Satisfaction and output realization.** Match output $q_{ij}$ is realized once at the start of the assignment. The firm's satisfaction is updated once at formation with net outcome $q_{ij} - \mu_b \cdot \hat{q}_b(w_{i^*}, x_j)$, deducting only the value premium (the reservation wage $r_i$ is a pass-through cost the firm would bear under any channel; §6a). No further satisfaction updates occur during the $L$-period assignment. The broker adds $(w_{i^*}, x_j, q_{ij})$ to $\mathcal{H}_b$ at formation.
 
@@ -902,6 +916,10 @@ The boundary between the regions may shift with $\eta$ (entry/exit rate), which 
 **Fig. S7.** Prediction confidence decomposition.
 - *Purpose:* Makes the informational advantage visible at the micro level by showing how each agent's prediction uncertainty evolves. Complements Fig. S5 (which measures accuracy ex post) with an ex ante view of how much each agent "knows" when making predictions. Under Model 1, locked-in firms' epistemic uncertainty should stop declining, providing a micro-level signature of the lock-in mechanism.
 - *Content:* Three sub-panels sharing a time axis: R-squared, bias, and rank correlation over time (broker and average firm). Under Model 1, a second set of firm lines stratified by staffing exposure shows locked-in firms' prediction quality plateauing while non-clients continue to improve.
+
+**Fig. S8.** Surplus apportionment over time.
+- *Purpose:* Shows how the total realized surplus from matching is divided among workers, firms, and the broker, and how this division changes as the broker's informational advantage grows and (under Model 1) the staffing channel emerges. Under staffing, the worker's surplus share vanishes and the broker captures a per-period stream, making the redistributive consequences of capture directly visible.
+- *Content:* 2×3 panel layout. Panel A (row 1, col 1): total per-period surplus and three-way split (worker, firm, broker) as lines. Panel B (row 1, col 2): worker, firm, and broker shares as fractions of total surplus. Panel C (row 1, col 3): outsourcing rate (repeated from Fig. 1B for interpretive context). Panel D (row 2, col 1): firm surplus decomposed by channel (direct / placed / staffed). Panel E (row 2, col 2): broker revenue decomposed by channel (placement fees / staffing profit); under the base model, only placement fees appear. Panel F (row 2, col 3): per-match surplus ($q_{ij} - r_i$) averaged by channel.
 
 ## Part III. Calibration and Verification
 

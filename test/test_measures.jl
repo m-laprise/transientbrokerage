@@ -13,11 +13,20 @@ using Graphs: SimpleGraph, add_edge!, star_graph, nv, ne
         @test nv(G) == params.N_W + length(state.firms) + 1
         @test broker_node == nv(G)
 
-        # Count expected edges
+        # At init, no periods run → broker_clients is empty
         n_gs_edges = ne(state.G_S)
         n_emp_edges = sum(length(f.employees) for f in state.firms)
         n_pool_edges = length(state.broker.pool)
         @test ne(G) == n_gs_edges + n_emp_edges + n_pool_edges
+
+        # After a step, broker_clients has entries → broker-firm edges appear
+        step_period!(state)
+        G2, _ = build_combined_graph(state)
+        n_client_edges = length(state.broker_clients)
+        n_emp_edges2 = sum(length(f.employees) for f in state.firms)
+        n_pool_edges2 = length(state.broker.pool)
+        @test ne(G2) == n_gs_edges + n_emp_edges2 + n_pool_edges2 + n_client_edges
+        @test n_client_edges > 0  # at least some firms outsource
     end
 
     # Star graph: center has low constraint (contacts are disconnected)

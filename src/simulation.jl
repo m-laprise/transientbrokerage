@@ -71,6 +71,26 @@ function collect_period_metrics(state::ModelState)
         # Market state
         n_available = count(w -> w.status == available, state.workers),
         avg_firm_size = mean(length(f.employees) for f in state.firms),
+        avg_referral_pool_size = mean(length(f.referral_pool) for f in state.firms),
+        n_broker_clients = length(state.broker_clients),
+        # Surplus apportionment (§8 step 7.3)
+        total_realized_surplus = a.total_realized_surplus,
+        worker_surplus = a.worker_surplus,
+        firm_surplus_direct = a.firm_surplus_direct,
+        firm_surplus_placed = a.firm_surplus_placed,
+        firm_surplus_staffed = a.firm_surplus_staffed,
+        broker_surplus_placement = a.broker_surplus_placement,
+        broker_surplus_staffing = a.broker_surplus_staffing,
+        n_active_staffing = a.n_active_staffing,
+        # Staffing metrics (Model 1; zero when enable_staffing=false)
+        n_staffing_new = a.new_staffing,
+        n_staffed = length(a.q_staffed),
+        q_staffed_mean = safe_mean(a.q_staffed),
+        staffing_revenue = a.staffing_revenue,
+        cumulative_staffing_revenue = a.cumulative_staffing_revenue,
+        flow_capture_rate = let np = a.new_placements; ns = a.new_staffing
+            (np + ns) > 0 ? ns / (np + ns) : NaN
+        end,
     )
 end
 

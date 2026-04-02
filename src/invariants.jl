@@ -62,9 +62,25 @@ function verify_invariants(state::ModelState)
     end
 
     # Staffing assignment consistency
+    staffed_by_assignment = Set{Int}()
     for assignment in state.broker.active_assignments
         w = state.workers[assignment.worker_id]
         @assert w.status == staffed "Staffed worker $(assignment.worker_id) has status=$(w.status)"
+        @assert assignment.periods_remaining > 0 "Assignment for worker $(assignment.worker_id) has periods_remaining=$(assignment.periods_remaining)"
+        @assert 1 <= assignment.firm_idx <= length(state.firms) "Assignment firm_idx $(assignment.firm_idx) out of bounds"
+        # Lock-in: staffed worker must NOT be in any firm's employee set
+        @assert assignment.worker_id ∉ state.firms[assignment.firm_idx].employees "Staffed worker $(assignment.worker_id) found in firm $(assignment.firm_idx) employees (lock-in violated)"
+        push!(staffed_by_assignment, assignment.worker_id)
+    end
+    # Every staffed worker must have a corresponding assignment
+    for w in state.workers
+        if w.status == staffed
+            @assert w.id in staffed_by_assignment "Worker $(w.id) has status=staffed but no active assignment"
+        end
+    end
+    # No staffed worker in broker pool
+    for wid in state.broker.pool
+        @assert state.workers[wid].status != staffed "Staffed worker $wid found in broker pool"
     end
 
     # Finite satisfaction

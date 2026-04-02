@@ -60,10 +60,11 @@ end
 """
     finalize_match!(match, state) -> Float64
 
-Realize match output, update worker status, firm employees, histories, and satisfaction.
-Returns realized output.
+Realize match output, update worker status, firm employees, histories, satisfaction,
+and surplus. For direct hires and placements only; staffing uses `create_staffing_assignment!`.
 """
 function finalize_match!(match::ProposedMatch, state::ModelState)::Float64
+    @assert match.source in (:internal, :broker) "finalize_match! called with source=$(match.source); staffing should use create_staffing_assignment!"
     worker = state.workers[match.worker_id]
     firm = state.firms[match.firm_idx]
 
@@ -95,6 +96,19 @@ function finalize_match!(match::ProposedMatch, state::ModelState)::Float64
     end
     update_satisfaction!(firm, match.source, q_realized, state.params.omega;
                          cost_above_ri=cost)
+
+    # Surplus apportionment (§8, step 7.3)
+    # Uses full placement fee (α·wage) so the three-way split reflects actual surplus flows.
+    a = state.accum
+    a.total_realized_surplus += q_realized - r_i
+    a.worker_surplus += match.wage - r_i
+    if match.source == :internal
+        a.firm_surplus_direct += q_realized - match.wage
+    else  # :broker placement
+        fee = state.params.alpha * match.wage
+        a.firm_surplus_placed += q_realized - match.wage - fee
+        a.broker_surplus_placement += fee
+    end
 
     return q_realized
 end

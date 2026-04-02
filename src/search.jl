@@ -82,7 +82,8 @@ function broker_allocate!(broker::Broker,
                           params::ModelParams,
                           rng::AbstractRNG,
                           models::PeriodModels)::Vector{Tuple{Int, Int, Float64}}
-    pool = collect(intersect(broker.pool, available_pool))
+    @assert broker.pool ⊆ available_pool "Broker pool contains non-available workers"
+    pool = collect(broker.pool)
     (isempty(pool) || isempty(clients)) && return Tuple{Int, Int, Float64}[]
 
     n_w = length(pool)
