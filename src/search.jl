@@ -12,7 +12,7 @@ return the best candidate with positive surplus. Returns `(0, 0.0)` if none foun
 """
 function internal_search(firm::Firm,
                          workers::Vector{Worker},
-                         available::Set{Int},
+                         available::BitVector,
                          params::ModelParams,
                          rng::AbstractRNG,
                          model::RidgeModel)::Tuple{Int, Float64}
@@ -20,14 +20,14 @@ function internal_search(firm::Firm,
     half_n = n ÷ 2
 
     # Partition available workers into referral and general pools
-    # Use sizehint! to avoid repeated resizing
-    referral_buf = sizehint!(Int[], min(length(firm.referral_pool), length(available)))
-    general_buf = sizehint!(Int[], length(available))
-    for w in available
-        if w in firm.referral_pool
-            push!(referral_buf, w)
+    referral_buf = sizehint!(Int[], length(firm.referral_pool))
+    general_buf = Int[]
+    for wid in eachindex(available)
+        available[wid] || continue
+        if wid in firm.referral_pool
+            push!(referral_buf, wid)
         else
-            push!(general_buf, w)
+            push!(general_buf, wid)
         end
     end
 
@@ -78,7 +78,7 @@ Greedy best-pair allocation (§5b). Returns (firm_idx, worker_id, q_hat_broker) 
 function broker_allocate!(broker::Broker,
                           clients::Vector{Tuple{Int, Firm}},
                           workers::Vector{Worker},
-                          available_pool::Set{Int},
+                          available_pool::BitVector,
                           params::ModelParams,
                           rng::AbstractRNG,
                           models::PeriodModels)::Vector{Tuple{Int, Int, Float64}}

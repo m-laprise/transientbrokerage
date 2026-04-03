@@ -133,14 +133,14 @@ end
 Terminate all staffing assignments at firm `firm_idx` (§9g step 5.1). Workers
 return to available and are added to `avail`. Called by `exit_firm!`.
 """
-function terminate_firm_assignments!(state::ModelState, firm_idx::Int, avail::Set{Int})
+function terminate_firm_assignments!(state::ModelState, firm_idx::Int, avail::BitVector)
     assignments = state.broker.active_assignments
     i = length(assignments)
     while i >= 1
         if assignments[i].firm_idx == firm_idx
             wid = assignments[i].worker_id
             release_staffed_worker!(state.workers, wid)
-            push!(avail, wid)
+            avail[wid] = true
             assignments[i] = assignments[end]
             pop!(assignments)
         end

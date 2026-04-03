@@ -222,15 +222,18 @@ end
         state = initialize_model(params)
         for _ in 1:20; step_period!(state); end
 
-        wid = get_avail_pool_worker(state)
+        # Clear any pre-existing assignments at firm_idx so we test exactly one
         firm_idx = 1
+        filter!(a -> a.firm_idx != firm_idx, state.broker.active_assignments)
+
+        wid = get_avail_pool_worker(state)
         pm = ProposedMatch(firm_idx, wid, :staffing, 1.5, 1.5, state.workers[wid].reservation_wage)
         create_staffing_assignment!(state, pm, 1.5)
 
         @test state.workers[wid].status == staffed
         n_before = length(state.broker.active_assignments)
 
-        avail = Set(w.id for w in state.workers if w.status == available)
+        avail = let bv = falses(length(state.workers)); for w in state.workers; w.status == available && (bv[w.id] = true); end; bv end
         exit_firm!(state, firm_idx, avail)
 
         @test state.workers[wid].status == available
@@ -255,7 +258,7 @@ end
         end
         @test length(state.broker.active_assignments) == 3
 
-        avail = Set(w.id for w in state.workers if w.status == available)
+        avail = let bv = falses(length(state.workers)); for w in state.workers; w.status == available && (bv[w.id] = true); end; bv end
         exit_firm!(state, firm_idx, avail)
 
         @test isempty(state.broker.active_assignments)

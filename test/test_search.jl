@@ -27,12 +27,12 @@ end
         state = make_search_state()
         firm = state.firms[1]
         empty!(firm.referral_pool)
-        avail = Set(w.id for w in state.workers if w.status == available)
+        avail = let bv = falses(length(state.workers)); for w in state.workers; w.status == available && (bv[w.id] = true); end; bv end
         models = build_period_models(state, lambda)
         wid, q_hat = internal_search(firm, state.workers, avail,
                                       state.params,
                                       state.rng, models.firm_models[1])
-        @test wid == 0 || wid in avail
+        @test wid == 0 || avail[wid]
     end
 
     # When all candidates have very high reservation wages, search returns 0
@@ -42,7 +42,7 @@ end
         for w in state.workers
             w.reservation_wage = 1e6
         end
-        avail = Set(w.id for w in state.workers if w.status == available)
+        avail = let bv = falses(length(state.workers)); for w in state.workers; w.status == available && (bv[w.id] = true); end; bv end
         models = build_period_models(state, lambda)
         wid, _ = internal_search(firm, state.workers, avail,
                                   state.params,
@@ -55,7 +55,7 @@ end
         state = make_search_state()
         empty!(state.broker.pool)
         clients = [(1, state.firms[1])]
-        avail = Set(w.id for w in state.workers if w.status == available)
+        avail = let bv = falses(length(state.workers)); for w in state.workers; w.status == available && (bv[w.id] = true); end; bv end
         models = build_period_models(state, lambda)
         result = broker_allocate!(state.broker, clients, state.workers, avail,
                                    state.params,
@@ -73,7 +73,7 @@ end
                                    sum(w .* state.firms[1].type))
         end
         clients = [(1, state.firms[1])]
-        avail = Set(w.id for w in state.workers if w.status == available)
+        avail = let bv = falses(length(state.workers)); for w in state.workers; w.status == available && (bv[w.id] = true); end; bv end
         models = build_period_models(state, lambda)
         result = broker_allocate!(state.broker, clients, state.workers, avail,
                                    state.params,
@@ -93,7 +93,7 @@ end
             w.reservation_wage = 1e6
         end
         clients = [(1, state.firms[1])]
-        avail = Set(w.id for w in state.workers if w.status == available)
+        avail = let bv = falses(length(state.workers)); for w in state.workers; w.status == available && (bv[w.id] = true); end; bv end
         models = build_period_models(state, lambda)
         result = broker_allocate!(state.broker, clients, state.workers, avail,
                                    state.params,

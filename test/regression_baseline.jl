@@ -18,16 +18,16 @@ using TransientBrokerage
     # Pool replenishment: 50/50 referral (random-walk on G_S) / random
     # Features: firm=[w; w.^2], broker=[w; x; w⊗x; w.^2]
     expected = [
-        (21, 32, 100, 54),  # period 1
-        (30, 59, 100, 58),  # period 2
-        (21, 74, 100, 61),  # period 3
-        (21, 90, 100, 63),  # period 4
-        (26, 107, 100, 65),  # period 5
-        (30, 130, 100, 67),  # period 6
-        (21, 145, 100, 68),  # period 7
-        (27, 164, 100, 68),  # period 8
-        (18, 178, 100, 70),  # period 9
-        (27, 198, 100, 73),  # period 10
+        (29, 28, 100, 55),  # period 1
+        (28, 49, 100, 55),  # period 2
+        (17, 59, 100, 55),  # period 3
+        (30, 75, 100, 57),  # period 4
+        (22, 89, 100, 59),  # period 5
+        (25, 104, 100, 61),  # period 6
+        (21, 122, 100, 66),  # period 7
+        (18, 131, 100, 68),  # period 8
+        (29, 153, 100, 69),  # period 9
+        (24, 172, 100, 72),  # period 10
     ]
 
     for (t, (exp_matches, exp_hist, exp_pool, exp_next_id)) in enumerate(expected)

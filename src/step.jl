@@ -28,7 +28,11 @@ function step_period!(state::ModelState)
     sizehint!(state.accum.broker_holdout_pred, n_holdout)
     sizehint!(state.accum.broker_holdout_real, n_holdout)
 
-    avail = Set(w.id for w in state.workers if w.status == available)
+    N_W = length(state.workers)
+    avail = falses(N_W)
+    for w in state.workers
+        w.status == available && (avail[w.id] = true)
+    end
 
     # ── Step 0: Referral pools ──
     compute_all_referral_pools!(state.firms, state.workers, state.G_S)
@@ -74,7 +78,6 @@ function step_period!(state::ModelState)
     firm_buf = Vector{Float64}(undef, 2d)
     broker_buf = Vector{Float64}(undef, broker_feature_dim(d))
     Ax_buf = Vector{Float64}(undef, d)
-    N_W = length(state.workers)
     N_F = length(state.firms)
     for _ in 1:n_holdout
         wid = rand(rng, 1:N_W)
@@ -203,9 +206,9 @@ function step_period!(state::ModelState)
 
     # ── Step 5: Entry/exit ──
     # Rebuild avail (matching may have changed it)
-    empty!(avail)
+    fill!(avail, false)
     for w in state.workers
-        w.status == available && push!(avail, w.id)
+        w.status == available && (avail[w.id] = true)
     end
     process_entry_exit!(state, avail)
 

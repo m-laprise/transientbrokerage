@@ -7,7 +7,7 @@ using StableRNGs: StableRNG
     N_W = params.N_W
 
     # Helper: build available set from state
-    make_avail(state) = Set(w.id for w in state.workers if w.status == available)
+    make_avail(state) = let bv = falses(length(state.workers)); for w in state.workers; w.status == available && (bv[w.id] = true); end; bv end
 
     # exit_firm! releases employees and clears vacancy
     @testset "exit_firm! releases employees" begin
@@ -25,7 +25,7 @@ using StableRNGs: StableRNG
         @test all(state.workers[wid].employer_id == 0 for wid in emp_ids)
         @test firm_idx ∉ state.open_vacancies
         # Released employees added to available set
-        @test all(wid in avail for wid in emp_ids)
+        @test all(avail[wid] for wid in emp_ids)
     end
 
     # enter_firm! creates a fresh firm with employees
@@ -34,8 +34,8 @@ using StableRNGs: StableRNG
         avail = make_avail(state)
         exit_firm!(state, 1, avail)
         old_next_id = state.next_firm_id
-        candidates = Int[]
-        wts = Float64[]
+        candidates = Vector{Int}(undef, N_W)
+        wts = Vector{Float64}(undef, N_W)
 
         enter_firm!(state, 1, avail, candidates, wts)
         new_firm = state.firms[1]
@@ -56,14 +56,14 @@ using StableRNGs: StableRNG
         state = initialize_model(params)
         avail = make_avail(state)
         exit_firm!(state, 1, avail)
-        candidates = Int[]
-        wts = Float64[]
+        candidates = Vector{Int}(undef, N_W)
+        wts = Vector{Float64}(undef, N_W)
         enter_firm!(state, 1, avail, candidates, wts)
         new_firm = state.firms[1]
         for wid in new_firm.employees
             @test state.workers[wid].status == employed
             @test state.workers[wid].employer_id == new_firm.id
-            @test wid ∉ avail
+            @test !avail[wid]
         end
     end
 
@@ -73,8 +73,8 @@ using StableRNGs: StableRNG
         n_before = count(w -> w.status == available, state.workers) +
                    count(w -> w.status == employed, state.workers)
         avail = make_avail(state)
-        candidates = Int[]
-        wts = Float64[]
+        candidates = Vector{Int}(undef, N_W)
+        wts = Vector{Float64}(undef, N_W)
         exit_firm!(state, 1, avail)
         enter_firm!(state, 1, avail, candidates, wts)
         n_after = count(w -> w.status == available, state.workers) +

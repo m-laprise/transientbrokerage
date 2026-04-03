@@ -11,12 +11,12 @@ Vacate a firm slot: release employees to available, clear from open_vacancies.
 The firm struct remains at `firm_idx` until `enter_firm!` replaces it.
 Workers retain their positions in G_S and broker pool.
 """
-function exit_firm!(state::ModelState, firm_idx::Int, avail::Set{Int})
+function exit_firm!(state::ModelState, firm_idx::Int, avail::BitVector)
     firm = state.firms[firm_idx]
     for wid in firm.employees
         state.workers[wid].status = available
         state.workers[wid].employer_id = 0
-        push!(avail, wid)
+        avail[wid] = true
     end
     empty!(firm.employees)
     delete!(state.open_vacancies, firm_idx)
@@ -35,7 +35,7 @@ satisfaction at q_pub, and 6-10 employees drawn by type proximity from `avail`.
 Reuses existing history buffers to avoid allocation. `candidates` and `wts` are
 pre-allocated buffers.
 """
-function enter_firm!(state::ModelState, firm_idx::Int, avail::Set{Int},
+function enter_firm!(state::ModelState, firm_idx::Int, avail::BitVector,
                      candidates::Vector{Int}, wts::Vector{Float64})
     rng = state.rng
     q_pub = state.cal.q_pub
@@ -58,18 +58,23 @@ function enter_firm!(state::ModelState, firm_idx::Int, avail::Set{Int},
     firm.periods_alive = 0
 
     n_initial = rand(rng, 6:10)
-    nc = length(avail)
+    # Gather available worker IDs from BitVector (cache-friendly linear scan)
+    nc = 0
+    @inbounds for wid in eachindex(avail)
+        if avail[wid]
+            nc += 1
+            candidates[nc] = wid
+        end
+    end
     n_hire = min(n_initial, nc)
     if n_hire > 0
-        resize!(candidates, nc)
-        copyto!(candidates, avail)
         chosen = sample_by_proximity(rng, candidates, nc, state.workers,
                                       firm.type, wts, n_hire)
         for wid in chosen
             state.workers[wid].status = employed
             state.workers[wid].employer_id = firm.id
             push!(firm.employees, wid)
-            delete!(avail, wid)
+            avail[wid] = false
             q = match_output(state.workers[wid].type, firm.type, state.env, rng)
             record_history!(firm, state.workers[wid].type, q)
         end
@@ -84,11 +89,12 @@ end
 Each firm exits with probability eta and is immediately replaced by an entrant (§8 step 5).
 `avail` is the shared available set from the step loop, updated in place.
 """
-function process_entry_exit!(state::ModelState, avail::Set{Int})
+function process_entry_exit!(state::ModelState, avail::BitVector)
     rng = state.rng
     eta = state.params.eta
-    candidates = Vector{Int}(undef, length(avail))
-    wts = Vector{Float64}(undef, length(avail))
+    N_W = length(avail)
+    candidates = Vector{Int}(undef, N_W)
+    wts = Vector{Float64}(undef, N_W)
     for j in eachindex(state.firms)
         if rand(rng) < eta
             exit_firm!(state, j, avail)

@@ -186,21 +186,26 @@ firm's prediction model.
 """
 function assign_initial_employment!(firms::Vector{Firm}, workers::Vector{Worker},
                                     env::MatchingEnv, rng::AbstractRNG)
-    avail = Set(1:length(workers))
-    candidates = collect(avail)
-    wts = Vector{Float64}(undef, length(workers))
+    N_W = length(workers)
+    avail = trues(N_W)
+    candidates = Vector{Int}(undef, N_W)
+    wts = Vector{Float64}(undef, N_W)
     for firm in firms
         n_initial = rand(rng, 6:10)
-        resize!(candidates, length(avail))
-        copyto!(candidates, avail)
-        nc = length(candidates)
+        nc = 0
+        @inbounds for wid in 1:N_W
+            if avail[wid]
+                nc += 1
+                candidates[nc] = wid
+            end
+        end
         n_hire = min(n_initial, nc)
         chosen = sample_by_proximity(rng, candidates, nc, workers, firm.type, wts, n_hire)
         for wid in chosen
             workers[wid].status = employed
             workers[wid].employer_id = firm.id
             push!(firm.employees, wid)
-            delete!(avail, wid)
+            avail[wid] = false
             # Record realized output to firm history
             q = match_output(workers[wid].type, firm.type, env, rng)
             record_history!(firm, workers[wid].type, q)
