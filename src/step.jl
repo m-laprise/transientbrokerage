@@ -29,15 +29,65 @@ function step_period!(state::ModelState)
     sizehint!(state.accum.broker_holdout_real, n_holdout)
 
     N_W = length(state.workers)
+
+    # ── Step 0: Broker pool maintenance ──
+    # Purge non-available workers, top up to target P before candidate generation.
+    # Runs before matching so newly available workers (from previous period's
+    # entry/exit) can be recruited into the pool and proposed by the broker.
+    # Replenishment is half referral (G_S neighbors of pool) and half random.
+    pool = state.broker.pool
+    for wid in collect(pool)
+        state.workers[wid].status == available || delete!(pool, wid)
+    end
+    P = ceil(Int, params.pool_target_frac * params.N_W)
+    n_gap = P - length(pool)
+    if n_gap > 0
+        max_retries = 5 * n_gap
+
+        # Referral half: G_S neighbors of current pool members (skip if pool empty)
+        n_referral_target = isempty(pool) ? 0 : n_gap ÷ 2
+        n_general_target = n_gap - n_referral_target
+        n_added_ref = 0
+        if n_referral_target > 0
+            pool_vec = collect(pool)
+            attempts = 0
+            while n_added_ref < n_referral_target && attempts < max_retries
+                attempts += 1
+                seed_wid = pool_vec[rand(rng, 1:length(pool_vec))]
+                nbrs = neighbors(state.G_S, seed_wid)
+                isempty(nbrs) && continue
+                candidate = nbrs[rand(rng, 1:length(nbrs))]
+                if state.workers[candidate].status == available && candidate ∉ pool
+                    push!(pool, candidate)
+                    n_added_ref += 1
+                end
+            end
+        end
+
+        # General half (+ unfilled referral slots): random available workers
+        n_general_target += n_referral_target - n_added_ref
+        n_added_gen = 0
+        attempts = 0
+        while n_added_gen < n_general_target && attempts < max_retries
+            attempts += 1
+            wid = rand(rng, 1:N_W)
+            if state.workers[wid].status == available && wid ∉ pool
+                push!(pool, wid)
+                n_added_gen += 1
+            end
+        end
+    end
+
+    # Build available BitVector (after pool maintenance, for candidate generation)
     avail = falses(N_W)
     for w in state.workers
         w.status == available && (avail[w.id] = true)
     end
 
-    # ── Step 0: Referral pools ──
+    # ── Step 1: Referral pools ──
     compute_all_referral_pools!(state.firms, state.workers, state.G_S)
 
-    # ── Step 1: Vacancy management and outsourcing decisions ──
+    # ── Step 2: Vacancy management and outsourcing decisions ──
     # 1.1 Carry forward unfilled vacancies (already in state.open_vacancies)
     # 1.2 New vacancies for firms without one
     for j in eachindex(state.firms)
@@ -69,27 +119,14 @@ function step_period!(state::ModelState)
     state.accum.outsourcing_rate = n_vacancies > 0 ?
         length(current_broker_firms) / n_vacancies : 0.0
 
-    # ── Step 2: Candidate generation and evaluation ──
+    # ── Step 3: Candidate generation and evaluation ──
     models = build_period_models(state, params.lambda)
 
-    # Holdout evaluation: sample actual workers at random firms, noiseless truth (no selection bias)
-    # Uses existing workers (not synthetic), evaluated at random firms they may or may not be near.
     d = params.d
+    N_F = length(state.firms)
     firm_buf = Vector{Float64}(undef, 2d)
     broker_buf = Vector{Float64}(undef, broker_feature_dim(d))
     Ax_buf = Vector{Float64}(undef, d)
-    N_F = length(state.firms)
-    for _ in 1:n_holdout
-        wid = rand(rng, 1:N_W)
-        j = rand(rng, 1:N_F)
-        w = state.workers[wid].type
-        x = state.firms[j].type
-        q_true = Q_OFFSET + match_output_noiseless!(Ax_buf, w, x, state.env)
-        push!(state.accum.firm_holdout_pred, predict_ridge!(models.firm_models[j], firm_buf, w))
-        push!(state.accum.firm_holdout_real, q_true)
-        push!(state.accum.broker_holdout_pred, predict_ridge!(models.broker_model, broker_buf, w, x))
-        push!(state.accum.broker_holdout_real, q_true)
-    end
 
     proposals = ProposedMatch[]
 
@@ -137,7 +174,7 @@ function step_period!(state::ModelState)
         end
     end
 
-    # ── Step 3: Match formation ──
+    # ── Step 4: Match formation ──
     accepted = resolve_conflicts(proposals, rng)
 
     filled_firms = Set{Int}()
@@ -190,12 +227,29 @@ function step_period!(state::ModelState)
         end
     end
 
-    # ── Step 3b: Staffing economics for active assignments ──
+    # ── Holdout evaluation (after matching, so we know if broker made matches) ──
+    # Firm holdout always computed; broker holdout only when broker placed or staffed
+    broker_matched = length(state.accum.q_placed) + state.accum.new_staffing > 0
+    for _ in 1:n_holdout
+        wid = rand(rng, 1:N_W)
+        j = rand(rng, 1:N_F)
+        w = state.workers[wid].type
+        x = state.firms[j].type
+        q_true = Q_OFFSET + match_output_noiseless!(Ax_buf, w, x, state.env)
+        push!(state.accum.firm_holdout_pred, predict_ridge!(models.firm_models[j], firm_buf, w))
+        push!(state.accum.firm_holdout_real, q_true)
+        if broker_matched
+            push!(state.accum.broker_holdout_pred, predict_ridge!(models.broker_model, broker_buf, w, x))
+            push!(state.accum.broker_holdout_real, q_true)
+        end
+    end
+
+    # ── Step 4b: Staffing economics for active assignments ──
     if params.enable_staffing
         process_staffing_economics!(state)
     end
 
-    # ── Step 4: Reputation update ──
+    # ── Step 5: Reputation update ──
     # Include firms with active staffing assignments as broker clients (§9g step 4.3)
     if params.enable_staffing
         for a in state.broker.active_assignments
@@ -204,7 +258,7 @@ function step_period!(state::ModelState)
     end
     update_broker_reputation!(state.broker, state.firms, current_broker_firms)
 
-    # ── Step 5: Entry/exit ──
+    # ── Step 6: Entry/exit ──
     # Rebuild avail (matching may have changed it)
     fill!(avail, false)
     for w in state.workers
@@ -212,52 +266,9 @@ function step_period!(state::ModelState)
     end
     process_entry_exit!(state, avail)
 
-    # ── Step 6: Broker pool maintenance ──
-    # Remove non-available workers, top up to target P.
-    # Replenishment is half referral (random-walk on G_S from current pool members)
-    # and half general (random available workers), mirroring firms' 50/50
-    # referral/general candidate sourcing (§5a).
-    # Runs after entry/exit so workers hired by entrant firms are also removed.
-    pool = state.broker.pool
-    for wid in collect(pool)
-        state.workers[wid].status == available || delete!(pool, wid)
-    end
-    P = ceil(Int, params.pool_target_frac * params.N_W)
-    n_gap = P - length(pool)
-    if n_gap > 0 && !isempty(pool)
-        pool_vec = collect(pool)
-        n_referral_target = n_gap ÷ 2
-        n_general_target = n_gap - n_referral_target
-        max_retries = 5 * n_gap  # cap total attempts to avoid infinite loops
-
-        # Referral half: random-walk recruitment from G_S neighbors of pool members
-        n_added_ref = 0
-        attempts = 0
-        while n_added_ref < n_referral_target && attempts < max_retries
-            attempts += 1
-            seed_wid = pool_vec[rand(rng, 1:length(pool_vec))]
-            nbrs = neighbors(state.G_S, seed_wid)
-            isempty(nbrs) && continue
-            candidate = nbrs[rand(rng, 1:length(nbrs))]
-            if state.workers[candidate].status == available && candidate ∉ pool
-                push!(pool, candidate)
-                n_added_ref += 1
-            end
-        end
-
-        # General half: random available workers (fall back here for unfilled referral slots too)
-        n_general_target += n_referral_target - n_added_ref
-        n_added_gen = 0
-        N_W = length(state.workers)
-        attempts = 0
-        while n_added_gen < n_general_target && attempts < max_retries
-            attempts += 1
-            wid = rand(rng, 1:N_W)
-            if state.workers[wid].status == available && wid ∉ pool
-                push!(pool, wid)
-                n_added_gen += 1
-            end
-        end
+    # Purge non-available workers from pool (hired during matching or entry/exit)
+    for wid in collect(state.broker.pool)
+        state.workers[wid].status == available || delete!(state.broker.pool, wid)
     end
 
     # ── Step 7: Network measures (every M periods) ──

@@ -167,11 +167,11 @@ end
 """
     penalize_no_proposal!(firm, omega)
 
-No-proposal penalty per §6a: broker satisfaction updates toward internal satisfaction.
+No-proposal penalty per §6a: broker satisfaction updates toward zero (firm
+outsourced and received nothing).
 """
 function penalize_no_proposal!(firm::Firm, omega::Float64)
-    firm.satisfaction_broker = (1.0 - omega) * firm.satisfaction_broker +
-                               omega * firm.satisfaction_internal
+    firm.satisfaction_broker = (1.0 - omega) * firm.satisfaction_broker
     return nothing
 end
 

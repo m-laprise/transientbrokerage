@@ -39,24 +39,44 @@ function run_ensemble(; base_params_kwargs, T::Int, n_seeds::Int)
     return mdfs
 end
 
-"""Compute rolling mean over a window. Uses a growing window for early periods so all periods have values."""
+"""Rolling mean with window. NaN if current value is NaN; otherwise average
+non-NaN values in [i-window+1, i]. Growing window for early periods."""
 function rolling_mean(v::AbstractVector, window::Int)
     n = length(v)
     out = fill(NaN, n)
     for i in 1:n
+        isnan(v[i]) && continue
         start = max(1, i - window + 1)
         vals = filter(!isnan, @view v[start:i])
-        if !isempty(vals)
-            out[i] = mean(vals)
-        end
+        !isempty(vals) && (out[i] = mean(vals))
     end
     return out
 end
 
-"""Access fraction = access / (access + assessment), or NaN if both zero."""
+"""Access fraction = access / (access + assessment), or NaN if no brokered matches."""
 function access_fraction(mdf::DataFrame)
     total = mdf.access_count .+ mdf.assessment_count
     return [t > 0 ? mdf.access_count[i] / t : NaN for (i, t) in enumerate(total)]
+end
+
+"""Shade contiguous regions where the majority of seeds have no brokered matches."""
+function shade_no_broker!(ax, mdfs::Vector{DataFrame})
+    n_seeds = length(mdfs)
+    periods = mdfs[1].period
+    # For each period, count seeds with zero brokered matches
+    inactive = [count(mdf -> mdf.n_placed[t] == 0, mdfs) > n_seeds / 2 for t in eachindex(periods)]
+    # Find contiguous runs and shade them as single spans
+    i = 1
+    while i <= length(periods)
+        if inactive[i]
+            j = i
+            while j < length(periods) && inactive[j + 1]; j += 1; end
+            vspan!(ax, [periods[i] - 0.5], [periods[j] + 0.5]; color=(:gray80, 0.4))
+            i = j + 1
+        else
+            i += 1
+        end
+    end
 end
 
 # ---------------------------------------------------------------------------
@@ -80,21 +100,26 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
     leg_kw = (; labelsize=9, patchsize=(10, 10), padding=(3, 3, 2, 2),
                 rowgap=0, patchlabelgap=3, framewidth=0.5)
 
-    # Helper: plot all seeds as thin lines, mean as thick
+    # Helper: thin lines per seed, thick ensemble mean (NaN when majority of seeds are NaN)
     function plot_metric!(ax, metric_fn; label="", color=COL_INTERNAL)
         seed_vals = [rolling_mean(metric_fn(mdf), window) for mdf in mdfs]
         for sv in seed_vals
             lines!(ax, periods, sv; color=(color, 0.45), linewidth=0.8)
         end
-        ensemble = [mean(filter(!isnan, [sv[t] for sv in seed_vals])) for t in eachindex(periods)]
+        ensemble = [let vs = [sv[t] for sv in seed_vals]
+            n_valid = count(!isnan, vs)
+            n_valid > n_seeds / 2 ? mean(v for v in vs if !isnan(v)) : NaN
+        end for t in eachindex(periods)]
         lines!(ax, periods, ensemble; color=color, linewidth=2.5, label=label)
     end
 
+    xlims = (first(periods), last(periods))
     ax_kw = (; titlesize=title_fs, ylabelsize=label_fs,
-               xticklabelsize=tick_fs, yticklabelsize=tick_fs)
+               xticklabelsize=tick_fs, yticklabelsize=tick_fs,
+               xticks=0:100:last(periods))
 
     # Build figure with explicit layout control
-    fig = Figure(; size=(1100, 1100), figure_padding=(5, 5, 5, 5))
+    fig = Figure(; size=(1150, 1100), figure_padding=(5, 15, 5, 5))
 
     # Suptitle row (row 0) — minimal height
     Label(fig[0, 1:3], suptitle; fontsize=16, font=:bold, halign=:center, tellwidth=false)
@@ -104,43 +129,39 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
           tellheight=false)
 
     ax1 = Axis(fig[1, 1]; title="Outsourcing rate", ylabel="Rate",
-               limits=(nothing, (0, 1)), ax_kw...)
-    plot_metric!(ax1, mdf -> mdf.outsourcing_rate)
+               limits=(xlims, (-0.02, 1.02)), ax_kw...)
+    plot_metric!(ax1, mdf -> mdf.outsourcing_rate; color=COL_BROKER)
 
     ax2 = Axis(fig[1, 2]; title="Matches per period", ylabel="Count",
-               limits=(nothing, (0, nothing)), ax_kw...)
+               limits=(xlims, (-0.02, nothing)), ax_kw...)
     plot_metric!(ax2, mdf -> Float64.(mdf.n_direct); label="Internal", color=COL_INTERNAL)
     plot_metric!(ax2, mdf -> Float64.(mdf.n_placed); label="Brokered", color=COL_BROKER)
     axislegend(ax2; position=:rt, leg_kw...)
 
-    ax3 = Axis(fig[1, 3]; title="Available, broker pool & firm size", ylabel="Count",
-               limits=(nothing, (0, nothing)), ax_kw...)
-    plot_metric!(ax3, mdf -> Float64.(mdf.n_available); label="Available", color=:teal)
-    plot_metric!(ax3, mdf -> Float64.(mdf.broker_pool_size); label="Broker pool", color=COL_BROKER)
-    plot_metric!(ax3, mdf -> mdf.avg_firm_size .* 10; label="Firm size (×10)", color=:darkorange)
-    axislegend(ax3; position=:rt, leg_kw...)
+    # Row 1 col 3: intentionally empty in base model
 
     # ── Row 2: Prediction Quality ──
     Label(fig[2, 0], "Prediction\nQuality"; fontsize=row_label_fs, font=:bold, rotation=π/2,
           tellheight=false)
 
     ax4 = Axis(fig[2, 1]; title="Model quality: holdout R²", ylabel="R²",
-               limits=(nothing, (0, 1)), ax_kw...)
+               limits=(xlims, (-0.02, 1.02)), ax_kw...)
     plot_metric!(ax4, mdf -> mdf.firm_r_squared_holdout; label="Firm", color=COL_INTERNAL)
     plot_metric!(ax4, mdf -> mdf.broker_r_squared_holdout; label="Broker", color=COL_BROKER)
     axislegend(ax4; position=:rb, leg_kw...)
 
     ax5 = Axis(fig[2, 2]; title="Rank correlation (selected)", ylabel="Spearman ρ",
-               limits=(nothing, (-0.5, 1)), ax_kw...)
+               limits=(xlims, (-0.52, 1.02)), ax_kw...)
     plot_metric!(ax5, mdf -> mdf.firm_rank_corr_selected; label="Firm", color=COL_INTERNAL)
     plot_metric!(ax5, mdf -> mdf.broker_rank_corr_selected; label="Broker", color=COL_BROKER)
     axislegend(ax5; position=:rb, leg_kw...)
 
-    ax6 = Axis(fig[2, 3]; title="Wage accuracy: R² (selected)", ylabel="R²",
-               limits=(nothing, (-1, 1)), ax_kw...)
-    plot_metric!(ax6, mdf -> mdf.firm_r_squared_selected; label="Firm", color=COL_INTERNAL)
-    plot_metric!(ax6, mdf -> mdf.broker_r_squared_selected; label="Broker", color=COL_BROKER)
-    axislegend(ax6; position=:rb, leg_kw...)
+    ax6 = Axis(fig[2, 3]; title="Prediction bias (selected)", ylabel="Bias",
+               limits=(xlims, (-0.32, 0.32)), ax_kw...)
+    plot_metric!(ax6, mdf -> mdf.firm_bias_selected; label="Firm", color=COL_INTERNAL)
+    plot_metric!(ax6, mdf -> mdf.broker_bias_selected; label="Broker", color=COL_BROKER)
+    hlines!(ax6, [0.0]; color=:gray50, linewidth=0.8)
+    axislegend(ax6; position=:rt, leg_kw...)
 
     # ── Row 3: Broker Advantage (gaps: broker minus firm) ──
     Label(fig[3, 0], "Broker\nAdvantage"; fontsize=row_label_fs, font=:bold, rotation=π/2,
@@ -148,17 +169,20 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
     COL_GAP = :purple
 
     ax7 = Axis(fig[3, 1]; title="Holdout R² gap", ylabel="Δ R²",
-               limits=(nothing, (-1, 1)), ax_kw...)
+               limits=(xlims, (-1.02, 1.02)), ax_kw...)
+    shade_no_broker!(ax7, mdfs)
     plot_metric!(ax7, mdf -> mdf.gap_r_squared_holdout; color=COL_GAP)
     hlines!(ax7, [0.0]; color=:gray50, linewidth=0.8)
 
     ax8 = Axis(fig[3, 2]; title="Rank corr. gap (selected)", ylabel="Δ ρ",
-               limits=(nothing, (-1, 1)), ax_kw...)
+               limits=(xlims, (-1.02, 1.02)), ax_kw...)
+    shade_no_broker!(ax8, mdfs)
     plot_metric!(ax8, mdf -> mdf.gap_rank_corr_selected; color=COL_GAP)
     hlines!(ax8, [0.0]; color=:gray50, linewidth=0.8)
 
     ax9 = Axis(fig[3, 3]; title="R² gap (selected)", ylabel="Δ R²",
-               limits=(nothing, (-1, 1)), ax_kw...)
+               limits=(xlims, (-1.02, 1.02)), ax_kw...)
+    shade_no_broker!(ax9, mdfs)
     plot_metric!(ax9, mdf -> mdf.gap_r_squared_selected; color=COL_GAP)
     hlines!(ax9, [0.0]; color=:gray50, linewidth=0.8)
 
@@ -167,18 +191,19 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
           tellheight=false)
 
     ax10 = Axis(fig[4, 1]; title="Mean match output", ylabel="Output",
-                limits=(nothing, (0, 2)), ax_kw...)
+                limits=(xlims, (-0.02, 2)), ax_kw...)
     plot_metric!(ax10, mdf -> mdf.q_direct_mean; label="Internal", color=COL_INTERNAL)
     plot_metric!(ax10, mdf -> mdf.q_placed_mean; label="Brokered", color=COL_BROKER)
     axislegend(ax10; position=:rb, leg_kw...)
 
     ax11 = Axis(fig[4, 2]; title="Cross-mode betweenness", ylabel="C_B(broker)",
-                limits=(nothing, (0, 1)), ax_kw...)
+                limits=(xlims, (-0.02, 1.02)), ax_kw...)
     plot_metric!(ax11, mdf -> mdf.betweenness; color=COL_BROKER)
 
     ax12 = Axis(fig[4, 3]; title="Access share (brokered)", ylabel="Fraction",
-                limits=(nothing, (0, 1)), ax_kw...)
-    plot_metric!(ax12, access_fraction; color=:darkorange)
+                limits=(xlims, (-0.02, 1.02)), ax_kw...)
+    shade_no_broker!(ax12, mdfs)
+    plot_metric!(ax12, access_fraction; color=:goldenrod)
 
     # ── Row 5: Diagnostics ──
     Label(fig[5, 0], "Diagnostics"; fontsize=row_label_fs, font=:bold, rotation=π/2,
@@ -186,29 +211,31 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
 
     ax13 = Axis(fig[5, 1]; title="Broker history & firm referral reach", xlabel="Period", ylabel="Count",
                 ax_kw..., xlabelsize=label_fs)
-    plot_metric!(ax13, mdf -> Float64.(mdf.broker_history_size); label="Broker history", color=:darkorange)
+    plot_metric!(ax13, mdf -> Float64.(mdf.broker_history_size); label="Broker history", color=:sienna)
     plot_metric!(ax13, mdf -> mdf.avg_referral_pool_size; label="Avg referral pool", color=COL_INTERNAL)
     axislegend(ax13; position=:rb, leg_kw...)
 
     ax14 = Axis(fig[5, 2]; title="Broker reputation", xlabel="Period", ylabel="Reputation",
-                limits=(nothing, (0, 2)), ax_kw..., xlabelsize=label_fs)
+                limits=(xlims, (-0.02, 2)), ax_kw..., xlabelsize=label_fs)
     plot_metric!(ax14, mdf -> mdf.broker_reputation; color=COL_BROKER)
 
-    ax15 = Axis(fig[5, 3]; title="Prediction bias (selected)", xlabel="Period", ylabel="Bias",
-                limits=(nothing, (-0.3, 0.3)), ax_kw..., xlabelsize=label_fs)
-    plot_metric!(ax15, mdf -> mdf.broker_bias_selected; label="Broker", color=COL_BROKER)
-    plot_metric!(ax15, mdf -> mdf.firm_bias_selected; label="Firm", color=COL_INTERNAL)
+    ax15 = Axis(fig[5, 3]; title="Available workers, broker pool & firm size",
+                xlabel="Period", ylabel="Count",
+                limits=(xlims, (-0.02, nothing)), ax_kw..., xlabelsize=label_fs)
+    plot_metric!(ax15, mdf -> Float64.(mdf.n_available); label="Available", color=:teal)
+    plot_metric!(ax15, mdf -> Float64.(mdf.broker_pool_size); label="Broker pool", color=COL_BROKER)
+    plot_metric!(ax15, mdf -> mdf.avg_firm_size .* 10; label="Firm size (x10)", color=:gray50)
     axislegend(ax15; position=:rt, leg_kw...)
 
     # Burn-in indicator on all panels
-    for ax in [ax1, ax2, ax3, ax4, ax5, ax6, ax7, ax8, ax9, ax10, ax11, ax12, ax13, ax14, ax15]
+    for ax in [ax1, ax2, ax4, ax5, ax6, ax7, ax8, ax9, ax10, ax11, ax12, ax13, ax14, ax15]
         vlines!(ax, [T_burn]; color=:gray30, linestyle=:dash, linewidth=1.5)
     end
 
     # Footer (row 6)
-    footer = "Thin lines: individual seeds ($n_seeds). Thick: ensemble mean. " *
-             "Dashed: burn-in (t=$T_burn). Smoothing: $window-period rolling mean."
-    Label(fig[6, 1:3], footer; fontsize=12, color=:black, halign=:center, tellwidth=false)
+    footer = "Thin lines: individual seeds ($n_seeds). Thick: ensemble mean (shown when majority of seeds have data).\n" *
+             "Gray shading: majority of seeds have no brokered matches. Dashed vertical: burn-in (t=$T_burn). Smoothing: $window-period rolling mean."
+    Label(fig[6, 1:3], footer; fontsize=10, color=:black, halign=:center, tellwidth=false)
 
     # Explicit layout sizing
     colsize!(fig.layout, 0, Fixed(30))         # row labels: narrow
@@ -216,7 +243,7 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
         rowsize!(fig.layout, r, Auto(1))       # all panel rows: equal weight
     end
     rowsize!(fig.layout, 0, Fixed(22))         # suptitle: minimal
-    rowsize!(fig.layout, 6, Fixed(18))         # footer: minimal
+    rowsize!(fig.layout, 6, Fixed(30))         # footer: two lines
     rowgap!(fig.layout, 5)
     colgap!(fig.layout, 10)
 
@@ -245,17 +272,21 @@ function plot_surplus_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filena
         lines!(ax, periods, ensemble; color=color, linewidth=2.5, label=label)
     end
 
+    xlims = (first(periods), last(periods))
     ax_kw = (; titlesize=title_fs, ylabelsize=label_fs,
-               xticklabelsize=tick_fs, yticklabelsize=tick_fs)
+               xticklabelsize=tick_fs, yticklabelsize=tick_fs,
+               xticks=0:100:last(periods))
 
-    fig = Figure(; size=(1100, 500), figure_padding=(5, 5, 5, 5))
+    fig = Figure(; size=(1150, 500), figure_padding=(5, 15, 5, 5))
     Label(fig[0, 1:3], suptitle * " — Surplus"; fontsize=16, font=:bold, halign=:center, tellwidth=false)
 
-    COL_WORKER = :forestgreen
-    COL_FIRM = COL_INTERNAL
-    COL_BROK = COL_BROKER
-    COL_DIRECT = COL_INTERNAL
-    COL_PLACED = COL_BROKER
+    # Party colors (row 1): consistent with main figure
+    COL_WORKER = :mediumseagreen
+    COL_FIRM = COL_INTERNAL     # steelblue
+    COL_BROK = COL_BROKER       # crimson
+    # Channel colors (row 2): distinct from party colors
+    COL_DIRECT = :royalblue
+    COL_PLACED = :darkorchid
     COL_STAFFED = :darkorange
 
     # ── Row 1: Three-way split ──
@@ -263,7 +294,7 @@ function plot_surplus_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filena
           tellheight=false)
 
     ax1 = Axis(fig[1, 1]; title="Surplus by party", ylabel="Surplus",
-               limits=(nothing, (nothing, nothing)), ax_kw...)
+               limits=(xlims, (nothing, nothing)), ax_kw...)
     plot_metric!(ax1, mdf -> mdf.total_realized_surplus; label="Total", color=:gray40)
     plot_metric!(ax1, mdf -> mdf.worker_surplus; label="Worker", color=COL_WORKER)
     plot_metric!(ax1, mdf -> mdf.firm_surplus_direct .+ mdf.firm_surplus_placed .+ mdf.firm_surplus_staffed;
@@ -272,34 +303,36 @@ function plot_surplus_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filena
                  label="Broker", color=COL_BROK)
     axislegend(ax1; position=:rt, leg_kw...)
 
-    ax2 = Axis(fig[1, 2]; title="Surplus shares", ylabel="Fraction",
-               limits=(nothing, (0, 1)), ax_kw...)
+    ax2 = Axis(fig[1, 2]; title="Cumulative surplus shares", ylabel="Fraction",
+               limits=(xlims, (-0.02, 1.02)), ax_kw...)
     plot_metric!(ax2, mdf -> begin
-        tot = mdf.total_realized_surplus
-        [t > 0 ? mdf.worker_surplus[i] / t : NaN for (i, t) in enumerate(tot)]
+        cum_w = cumsum(mdf.worker_surplus)
+        cum_t = cumsum(mdf.total_realized_surplus)
+        [cum_t[i] > 0 ? cum_w[i] / cum_t[i] : 0.0 for i in eachindex(cum_t)]
     end; label="Worker", color=COL_WORKER)
     plot_metric!(ax2, mdf -> begin
-        tot = mdf.total_realized_surplus
-        fs = mdf.firm_surplus_direct .+ mdf.firm_surplus_placed .+ mdf.firm_surplus_staffed
-        [t > 0 ? fs[i] / t : NaN for (i, t) in enumerate(tot)]
+        cum_f = cumsum(mdf.firm_surplus_direct .+ mdf.firm_surplus_placed .+ mdf.firm_surplus_staffed)
+        cum_t = cumsum(mdf.total_realized_surplus)
+        [cum_t[i] > 0 ? cum_f[i] / cum_t[i] : 0.0 for i in eachindex(cum_t)]
     end; label="Firm", color=COL_FIRM)
     plot_metric!(ax2, mdf -> begin
-        tot = mdf.total_realized_surplus
-        bs = mdf.broker_surplus_placement .+ mdf.broker_surplus_staffing
-        [t > 0 ? bs[i] / t : NaN for (i, t) in enumerate(tot)]
+        cum_b = cumsum(mdf.broker_surplus_placement .+ mdf.broker_surplus_staffing)
+        cum_t = cumsum(mdf.total_realized_surplus)
+        [cum_t[i] > 0 ? cum_b[i] / cum_t[i] : 0.0 for i in eachindex(cum_t)]
     end; label="Broker", color=COL_BROK)
     axislegend(ax2; position=:rt, leg_kw...)
 
     ax3 = Axis(fig[1, 3]; title="Outsourcing rate", ylabel="Rate",
-               limits=(nothing, (0, 1)), ax_kw...)
-    plot_metric!(ax3, mdf -> mdf.outsourcing_rate)
+               limits=(xlims, (-0.02, 1.02)), ax_kw...)
+    plot_metric!(ax3, mdf -> mdf.outsourcing_rate; color=COL_BROKER)
 
     # ── Row 2: Channel decomposition ──
     Label(fig[2, 0], "Channel\nDecomp."; fontsize=row_label_fs, font=:bold, rotation=π/2,
           tellheight=false)
 
     ax4 = Axis(fig[2, 1]; title="Firm surplus share by channel", xlabel="Period", ylabel="Fraction",
-               limits=(nothing, (0, 1)), ax_kw..., xlabelsize=label_fs)
+               limits=(xlims, (-0.02, 1.02)), ax_kw..., xlabelsize=label_fs)
+    shade_no_broker!(ax4, mdfs)
     plot_metric!(ax4, mdf -> begin
         tot = mdf.firm_surplus_direct .+ mdf.firm_surplus_placed .+ mdf.firm_surplus_staffed
         [t != 0 ? mdf.firm_surplus_direct[i] / t : NaN for (i, t) in enumerate(tot)]
@@ -315,7 +348,8 @@ function plot_surplus_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filena
     axislegend(ax4; position=:rt, leg_kw...)
 
     ax5 = Axis(fig[2, 2]; title="Broker revenue share by channel", xlabel="Period", ylabel="Fraction",
-               limits=(nothing, (0, 1)), ax_kw..., xlabelsize=label_fs)
+               limits=(xlims, (-0.02, 1.02)), ax_kw..., xlabelsize=label_fs)
+    shade_no_broker!(ax5, mdfs)
     plot_metric!(ax5, mdf -> begin
         tot = mdf.broker_surplus_placement .+ mdf.broker_surplus_staffing
         [t != 0 ? mdf.broker_surplus_placement[i] / t : NaN for (i, t) in enumerate(tot)]
@@ -337,14 +371,14 @@ function plot_surplus_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filena
         vlines!(ax, [T_burn]; color=:gray30, linestyle=:dash, linewidth=1.5)
     end
 
-    footer = "Thin lines: individual seeds ($n_seeds). Thick: ensemble mean. " *
-             "Dashed: burn-in (t=$T_burn). Smoothing: $window-period rolling mean."
-    Label(fig[3, 1:3], footer; fontsize=12, color=:black, halign=:center, tellwidth=false)
+    footer = "Thin lines: individual seeds ($n_seeds). Thick: ensemble mean (shown when majority of seeds have data).\n" *
+             "Gray shading: majority of seeds have no brokered matches. Dashed vertical: burn-in (t=$T_burn). Smoothing: $window-period rolling mean."
+    Label(fig[3, 1:3], footer; fontsize=10, color=:black, halign=:center, tellwidth=false)
 
     colsize!(fig.layout, 0, Fixed(30))
     for r in 1:2; rowsize!(fig.layout, r, Auto(1)); end
     rowsize!(fig.layout, 0, Fixed(22))
-    rowsize!(fig.layout, 3, Fixed(18))
+    rowsize!(fig.layout, 3, Fixed(30))
     rowgap!(fig.layout, 5)
     colgap!(fig.layout, 10)
 
@@ -357,7 +391,7 @@ end
 # Run configurations
 # ---------------------------------------------------------------------------
 
-T = 800
+T = 500
 N_SEEDS = 5
 RERUN = "--rerun" in ARGS
 

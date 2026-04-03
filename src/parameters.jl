@@ -81,7 +81,7 @@ function validate_params(p::ModelParams)
     @assert p.firm_geometry in (:unstructured, :simple, :complex) "firm_geometry must be :unstructured, :simple, or :complex"
     @assert p.N_W >= 1 "N_W must be ≥ 1, got $(p.N_W)"
     @assert p.N_F >= 1 "N_F must be ≥ 1, got $(p.N_F)"
-    @assert 0.0 < p.eta < 1.0 "eta must be in (0, 1), got $(p.eta)"
+    @assert 0.0 <= p.eta < 1.0 "eta must be in [0, 1), got $(p.eta)"
     @assert 0.0 < p.beta_W < 1.0 "beta_W must be in (0, 1), got $(p.beta_W)"
     @assert p.lambda > 0.0 "lambda must be > 0, got $(p.lambda)"
     @assert p.k_S >= 2 "k_S must be ≥ 2 (even degree for Watts-Strogatz), got $(p.k_S)"

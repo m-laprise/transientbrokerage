@@ -92,6 +92,7 @@ Each firm exits with probability eta and is immediately replaced by an entrant (
 function process_entry_exit!(state::ModelState, avail::BitVector)
     rng = state.rng
     eta = state.params.eta
+    eta == 0.0 && return nothing
     N_W = length(avail)
     candidates = Vector{Int}(undef, N_W)
     wts = Vector{Float64}(undef, N_W)
