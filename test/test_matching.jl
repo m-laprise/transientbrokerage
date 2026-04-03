@@ -93,6 +93,50 @@ using StableRNGs: StableRNG
         @test state.workers[pool_w.id].status == employed
     end
 
+    # Surplus three-way split: internal match
+    @testset "finalize_match! internal surplus accounting" begin
+        params = default_params(d=4, N_W=100, N_F=10, beta_W=0.4, alpha=0.20, L=4)
+        state = initialize_model(params)
+        reset_accumulators!(state.accum)
+
+        avail_w = findfirst(w -> w.status == available, state.workers)
+        worker = state.workers[avail_w]
+        r_i = worker.reservation_wage
+        q_hat_firm = 5.0
+        wage = compute_wage(q_hat_firm, r_i, params.beta_W)
+
+        match = ProposedMatch(1, avail_w, :internal, q_hat_firm, 0.0, wage)
+        q = finalize_match!(match, state)
+
+        @test state.accum.total_realized_surplus ≈ q - r_i
+        @test state.accum.worker_surplus ≈ wage - r_i
+        @test state.accum.firm_surplus_direct ≈ q - wage
+        @test state.accum.broker_surplus_placement == 0.0
+        @test state.accum.firm_surplus_placed == 0.0
+    end
+
+    # Surplus three-way split: placement match
+    @testset "finalize_match! placement surplus accounting" begin
+        params = default_params(d=4, N_W=100, N_F=10, beta_W=0.4, alpha=0.20, L=4)
+        state = initialize_model(params)
+        reset_accumulators!(state.accum)
+
+        pool_w = first(w for w in state.workers if w.status == available && w.id in state.broker.pool)
+        r_i = pool_w.reservation_wage
+        q_hat_firm = 5.0
+        wage = compute_wage(q_hat_firm, r_i, params.beta_W)
+        fee = params.alpha * wage
+
+        match = ProposedMatch(1, pool_w.id, :broker, q_hat_firm, 6.0, wage)
+        q = finalize_match!(match, state)
+
+        @test state.accum.total_realized_surplus ≈ q - r_i
+        @test state.accum.worker_surplus ≈ wage - r_i
+        @test state.accum.broker_surplus_placement ≈ fee
+        @test state.accum.firm_surplus_placed ≈ q - wage - fee
+        @test state.accum.firm_surplus_direct == 0.0
+    end
+
     # Circular buffer wraps correctly, effective_history_size stays capped
     @testset "record_history! circular buffer" begin
         rng = StableRNG(1)
@@ -167,13 +211,13 @@ using StableRNGs: StableRNG
         @test firm.tried_broker == true
     end
 
-    # No-proposal penalty moves broker satisfaction toward internal
+    # No-proposal penalty pulls broker satisfaction toward zero
     @testset "penalize_no_proposal!" begin
         firm = create_firm(1, 4, StableRNG(1))
         firm.satisfaction_internal = 8.0
         firm.satisfaction_broker = 4.0
         penalize_no_proposal!(firm, 0.3)
-        @test firm.satisfaction_broker ≈ 0.7 * 4.0 + 0.3 * 8.0
+        @test firm.satisfaction_broker ≈ 0.7 * 4.0
     end
 
     # Access vs assessment classification

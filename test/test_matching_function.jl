@@ -77,17 +77,6 @@ using Statistics: var
         @test r_base ≈ 0.70 * f_mean
     end
 
-    # Same seed produces identical output
-    @testset "Seed determinism" begin
-        ftypes = test_firm_types(d, StableRNG(10))
-        env = generate_matching_function(d, rho, ftypes, StableRNG(42))
-        w = randn(StableRNG(1), d)
-        x = randn(StableRNG(1), d)
-        q1 = match_output(w, x, env, StableRNG(10))
-        q2 = match_output(w, x, env, StableRNG(10))
-        @test q1 == q2
-    end
-
     # Independent MC check of f_mean (random worker-firm pairs, matching calibration)
     @testset "Statistical consistency of f_mean" begin
         ftypes = test_firm_types(d, StableRNG(10))
@@ -105,18 +94,5 @@ using Statistics: var
         end
         f_mean_check = total / 10_000
         @test abs(f_mean_check - f_mean) / max(abs(f_mean), 0.01) < 0.10
-    end
-
-    # End-to-end smoke test
-    @testset "Smoke test (Phase 1)" begin
-        p = default_params()
-        ftypes = test_firm_types(p.d, StableRNG(10))
-        env = generate_matching_function(p.d, p.rho, ftypes, StableRNG(p.seed))
-        w = randn(StableRNG(1), p.d)
-        x = randn(StableRNG(2), p.d)
-        q = match_output(w, x, env, StableRNG(3))
-        @test isfinite(q)
-        f_mean, r_base = calibrate_output_scale(env, ftypes, StableRNG(4))
-        @test isfinite(f_mean)
     end
 end

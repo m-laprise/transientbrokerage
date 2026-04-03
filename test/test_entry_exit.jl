@@ -94,6 +94,41 @@ using StableRNGs: StableRNG
         @test emp_id in state.broker.pool
     end
 
+    # enter_firm! resets all mutable Firm fields (guards against stale state after in-place reset)
+    @testset "enter_firm! resets all fields" begin
+        state = initialize_model(params)
+        firm = state.firms[1]
+
+        # Poison every mutable field with non-default values
+        firm.tried_internal = true
+        firm.tried_broker = true
+        push!(firm.referral_pool, 9999)
+        firm.hire_count = 42
+        firm.periods_alive = 100
+        firm.satisfaction_internal = -999.0
+        firm.satisfaction_broker = -999.0
+        firm.history_count = 9999
+
+        old_id = firm.id
+        avail = make_avail(state)
+        exit_firm!(state, 1, avail)
+        candidates = Vector{Int}(undef, N_W)
+        wts = Vector{Float64}(undef, N_W)
+        enter_firm!(state, 1, avail, candidates, wts)
+
+        new_firm = state.firms[1]
+        @test new_firm.id != old_id
+        @test new_firm.id == state.next_firm_id - 1
+        @test new_firm.tried_internal == false
+        @test new_firm.tried_broker == false
+        @test isempty(new_firm.referral_pool)
+        @test new_firm.hire_count == 0
+        @test new_firm.periods_alive == 0
+        @test new_firm.satisfaction_internal == state.cal.q_pub
+        @test new_firm.satisfaction_broker == state.cal.q_pub
+        @test new_firm.history_count == length(new_firm.employees)
+    end
+
     # process_entry_exit! runs without error and maintains invariants
     # (pool maintenance runs after entry/exit in step_period!, so clean pool here)
     @testset "process_entry_exit! maintains invariants" begin

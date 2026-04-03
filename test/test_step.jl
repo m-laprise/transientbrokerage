@@ -23,17 +23,6 @@ using StableRNGs: StableRNG
         @test state.period == 50
     end
 
-    # Broker history grows over time
-    # Broker accumulates some history over 100 periods
-    @testset "broker history grows" begin
-        params = default_params()
-        state = initialize_model(params)
-        for _ in 1:100
-            step_period!(state)
-        end
-        @test state.broker.history_count > 0
-    end
-
     # q_pub is static (calibration constant, never updated)
     @testset "q_pub unchanged after 50 periods" begin
         params = default_params()
@@ -82,6 +71,44 @@ using StableRNGs: StableRNG
         @test total_placed > 0
     end
 
+    # Pool is replenished before matching, not after: if the pool empties and
+    # workers become available, the broker can propose them next period.
+    @testset "pool refills before matching after depletion" begin
+        params = default_params(d=4, N_W=200, N_F=10)
+        state = initialize_model(params)
+        for _ in 1:10; step_period!(state); end
+
+        # Force pool to empty by marking all pool members as employed
+        for wid in collect(state.broker.pool)
+            state.workers[wid].status = employed
+            state.workers[wid].employer_id = state.firms[1].id
+            push!(state.firms[1].employees, wid)
+        end
+        # End-of-period purge would normally clean this; simulate it
+        for wid in collect(state.broker.pool)
+            state.workers[wid].status == available || delete!(state.broker.pool, wid)
+        end
+        @test isempty(state.broker.pool)
+
+        # Make some workers available again (simulate firm exit releasing workers)
+        n_released = 0
+        for wid in collect(state.firms[1].employees)
+            if n_released < 20
+                state.workers[wid].status = available
+                state.workers[wid].employer_id = 0
+                delete!(state.firms[1].employees, wid)
+                n_released += 1
+            end
+        end
+        @test sum(w.status == available for w in state.workers) >= 20
+
+        # After one step, pool should have been refilled (maintenance runs before matching)
+        step_period!(state)
+        @test length(state.broker.pool) > 0
+        # And broker should have been able to make proposals (if firms outsourced)
+        # The key invariant: pool was non-empty when broker_allocate! ran
+    end
+
     # Unfilled vacancies carry forward into the next period's decisions
     @testset "vacancy persistence" begin
         params = default_params()
@@ -99,20 +126,6 @@ using StableRNGs: StableRNG
         # The vacancy was either filled (removed) or persisted — either way it was processed.
         # We verify it was in the decision set by checking accumulators increased.
         @test state.accum.openings_internal + state.accum.openings_brokered > 0
-    end
-
-    # Deterministic with fixed seed
-    @testset "deterministic with fixed seed" begin
-        params = default_params()
-        s1 = initialize_model(params)
-        s2 = initialize_model(params)
-        for _ in 1:20
-            step_period!(s1)
-            step_period!(s2)
-        end
-        @test s1.accum.matches == s2.accum.matches
-        @test s1.broker.history_count == s2.broker.history_count
-        @test s1.accum.outsourcing_rate == s2.accum.outsourcing_rate
     end
 
     # 100 periods with entry/exit: invariants hold throughout

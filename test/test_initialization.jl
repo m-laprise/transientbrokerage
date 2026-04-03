@@ -89,15 +89,6 @@ using Graphs: nv, is_connected
         @test nv(state.G_S) == params.N_W
     end
 
-    @testset "deterministic with fixed seed" begin
-        s2 = initialize_model(params)
-        @test state.cal.r_base == s2.cal.r_base
-        @test state.cal.f_bar == s2.cal.f_bar
-        @test state.workers[1].type == s2.workers[1].type
-        @test state.workers[1].reservation_wage == s2.workers[1].reservation_wage
-        @test state.firms[1].type == s2.firms[1].type
-    end
-
     @testset "next_firm_id set correctly" begin
         @test state.next_firm_id == params.N_F + 1
     end

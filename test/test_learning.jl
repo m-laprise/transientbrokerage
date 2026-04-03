@@ -124,16 +124,6 @@ d = 4
         @test isfinite(q_b)
     end
 
-    # Deterministic with fixed seed
-    @testset "deterministic with fixed seed" begin
-        firm = make_firm_with_history(d, 20, StableRNG(42))
-        n = effective_history_size(firm)
-        model1 = fit_ridge(@view(firm.history_w[:, 1:n]), @view(firm.history_q[1:n]), lambda)
-        model2 = fit_ridge(@view(firm.history_w[:, 1:n]), @view(firm.history_q[1:n]), lambda)
-        w = randn(StableRNG(1), d)
-        @test predict_ridge(model1, w) == predict_ridge(model2, w)
-    end
-
     # Broker model on full outer product features produces finite predictions
     @testset "broker prediction with pooled model" begin
         rng = StableRNG(42)

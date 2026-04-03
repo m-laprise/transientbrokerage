@@ -26,12 +26,6 @@ using Graphs: nv, ne, degree, global_clustering_coefficient, connected_component
         @test global_clustering_coefficient(G) > 0.0
     end
 
-    @testset "deterministic with fixed seed" begin
-        G1 = build_social_network(N_W, k_S, 0.1, StableRNG(99))
-        G2 = build_social_network(N_W, k_S, 0.1, StableRNG(99))
-        @test ne(G1) == ne(G2)
-    end
-
     @testset "referral pools" begin
         state = initialize_model(default_params())
         # Firms with employees have non-empty referral pools

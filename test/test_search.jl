@@ -101,6 +101,67 @@ end
         @test isempty(result)
     end
 
+    # internal_search selects the higher-quality worker
+    @testset "internal_search picks best candidate" begin
+        state = make_search_state()
+        firm = state.firms[1]
+        # Make all workers unavailable except two
+        avail = falses(length(state.workers))
+        # Worker 1: type aligned with firm (high predicted quality)
+        state.workers[1].type .= firm.type
+        state.workers[1].reservation_wage = 0.0
+        avail[1] = true
+        # Worker 2: type orthogonal to firm (low predicted quality)
+        state.workers[2].type .= 0.0
+        state.workers[2].reservation_wage = 0.0
+        avail[2] = true
+        # Seed firm history with observations that reward alignment
+        firm.history_count = 0
+        rng = StableRNG(77)
+        for _ in 1:50
+            w = firm.type .+ 0.1 .* randn(rng, 4)
+            q = sum(w .* firm.type)  # high q for aligned types
+            record_history!(firm, w, q)
+        end
+        models = build_period_models(state, 1.0)
+        wid, _ = internal_search(firm, state.workers, avail,
+                                  state.params, StableRNG(1), models.firm_models[1])
+        @test wid == 1  # aligned worker chosen
+    end
+
+    # broker_allocate! selects the higher-quality worker
+    @testset "broker_allocate! picks best candidate" begin
+        state = make_search_state()
+        firm = state.firms[1]
+        # Set up broker pool with two workers: one good, one bad
+        empty!(state.broker.pool)
+        state.workers[1].type .= firm.type
+        state.workers[1].status = available
+        state.workers[1].reservation_wage = 0.0
+        push!(state.broker.pool, 1)
+        state.workers[2].type .= 0.0
+        state.workers[2].status = available
+        state.workers[2].reservation_wage = 0.0
+        push!(state.broker.pool, 2)
+        avail = falses(length(state.workers))
+        avail[1] = true; avail[2] = true
+        # Seed broker history to reward alignment with firm type
+        state.broker.history_count = 0
+        rng = StableRNG(88)
+        for _ in 1:50
+            w = firm.type .+ 0.1 .* randn(rng, 4)
+            q = sum(w .* firm.type)
+            record_broker_history!(state.broker, w, firm.type, 1, q)
+        end
+        models = build_period_models(state, 1.0)
+        clients = [(1, firm)]
+        result = broker_allocate!(state.broker, clients, state.workers, avail,
+                                   state.params, StableRNG(1), models)
+        @test length(result) == 1
+        _, wid, _ = result[1]
+        @test wid == 1  # aligned worker chosen
+    end
+
     # Buffer optimization in broker_allocate! produces correct predictions
     @testset "broker_allocate! buffer matches vcat prediction" begin
         state = make_search_state()
