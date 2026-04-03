@@ -63,6 +63,9 @@ const SIGMA_EPS = 0.25
 """Offset ensuring match output is positive for well-matched pairs."""
 const Q_OFFSET = 1.0
 
+"""Reservation wage as fraction of mean match output: r_base = R_BASE_FRAC × f̄."""
+const R_BASE_FRAC = 0.70
+
 """
     match_output(w, x, env, rng) -> Float64
 
@@ -116,5 +119,5 @@ function calibrate_output_scale(env::MatchingEnv,
         total += Q_OFFSET + match_output_noiseless(w, x, env)
     end
     f_mean = total / n_samples
-    return (f_mean, 0.70 * f_mean)
+    return (f_mean, R_BASE_FRAC * f_mean)
 end

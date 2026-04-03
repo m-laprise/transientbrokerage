@@ -30,20 +30,32 @@ end
 """
     enter_firm!(state, firm_idx, avail, candidates, wts)
 
-Replace the firm at `firm_idx` with a fresh entrant: new type, empty history,
+Reset the firm at `firm_idx` in-place as a fresh entrant: new type, cleared history,
 satisfaction at q_pub, and 6-10 employees drawn by type proximity from `avail`.
-`candidates` and `wts` are pre-allocated buffers.
+Reuses existing history buffers to avoid allocation. `candidates` and `wts` are
+pre-allocated buffers.
 """
 function enter_firm!(state::ModelState, firm_idx::Int, avail::Set{Int},
                      candidates::Vector{Int}, wts::Vector{Float64})
     rng = state.rng
     q_pub = state.cal.q_pub
 
+    firm = state.firms[firm_idx]
     new_type = sample_firm_type(state.firm_geo, rand(rng), state.params.d, rng)
-    new_firm = create_firm(state.next_firm_id, new_type, state.params.d)
+
+    # Reset firm in-place, reusing history buffers
+    firm.id = state.next_firm_id
     state.next_firm_id += 1
-    new_firm.satisfaction_internal = q_pub
-    new_firm.satisfaction_broker = q_pub
+    firm.type .= new_type
+    empty!(firm.employees)
+    firm.history_count = 0
+    firm.satisfaction_internal = q_pub
+    firm.satisfaction_broker = q_pub
+    firm.tried_internal = false
+    firm.tried_broker = false
+    empty!(firm.referral_pool)
+    firm.hire_count = 0
+    firm.periods_alive = 0
 
     n_initial = rand(rng, 6:10)
     nc = length(avail)
@@ -52,18 +64,17 @@ function enter_firm!(state::ModelState, firm_idx::Int, avail::Set{Int},
         resize!(candidates, nc)
         copyto!(candidates, avail)
         chosen = sample_by_proximity(rng, candidates, nc, state.workers,
-                                      new_firm.type, wts, n_hire)
+                                      firm.type, wts, n_hire)
         for wid in chosen
             state.workers[wid].status = employed
-            state.workers[wid].employer_id = new_firm.id
-            push!(new_firm.employees, wid)
+            state.workers[wid].employer_id = firm.id
+            push!(firm.employees, wid)
             delete!(avail, wid)
-            q = match_output(state.workers[wid].type, new_firm.type, state.env, rng)
-            record_history!(new_firm, state.workers[wid].type, q)
+            q = match_output(state.workers[wid].type, firm.type, state.env, rng)
+            record_history!(firm, state.workers[wid].type, q)
         end
     end
 
-    state.firms[firm_idx] = new_firm
     return nothing
 end
 

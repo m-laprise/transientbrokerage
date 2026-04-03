@@ -123,7 +123,7 @@ function record_history!(firm::Firm, worker_type::AbstractVector{Float64},
     cap = size(firm.history_w, 2)
     firm.history_count += 1
     idx = mod1(firm.history_count, cap)
-    firm.history_w[:, idx] = worker_type
+    @views firm.history_w[:, idx] .= worker_type
     firm.history_q[idx] = q_realized
     return nothing
 end
@@ -139,8 +139,8 @@ function record_broker_history!(broker::Broker, worker_type::AbstractVector{Floa
     cap = size(broker.history_w, 2)
     broker.history_count += 1
     idx = mod1(broker.history_count, cap)
-    broker.history_w[:, idx] = worker_type
-    broker.history_x[:, idx] = firm_type
+    @views broker.history_w[:, idx] .= worker_type
+    @views broker.history_x[:, idx] .= firm_type
     broker.history_q[idx] = q_realized
     broker.history_firm_idx[idx] = firm_idx
     return nothing

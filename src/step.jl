@@ -22,6 +22,11 @@ function step_period!(state::ModelState)
     params = state.params
     rng = state.rng
     reset_accumulators!(state.accum)
+    n_holdout = 100
+    sizehint!(state.accum.firm_holdout_pred, n_holdout)
+    sizehint!(state.accum.firm_holdout_real, n_holdout)
+    sizehint!(state.accum.broker_holdout_pred, n_holdout)
+    sizehint!(state.accum.broker_holdout_real, n_holdout)
 
     avail = Set(w.id for w in state.workers if w.status == available)
 
@@ -71,7 +76,7 @@ function step_period!(state::ModelState)
     Ax_buf = Vector{Float64}(undef, d)
     N_W = length(state.workers)
     N_F = length(state.firms)
-    for _ in 1:(3 * N_F)
+    for _ in 1:n_holdout
         wid = rand(rng, 1:N_W)
         j = rand(rng, 1:N_F)
         w = state.workers[wid].type
@@ -105,7 +110,7 @@ function step_period!(state::ModelState)
     served_firms = Set{Int}()
     for (j, wid, q_hat_broker) in assignments
         # Firm re-evaluates candidate for wage setting (§3.1.1)
-        q_hat_firm = predict_ridge(models.firm_models[j], firm_features(state.workers[wid].type))
+        q_hat_firm = predict_ridge!(models.firm_models[j], firm_buf, state.workers[wid].type)
         r_i = state.workers[wid].reservation_wage
 
         # Staffing decision (§9d, §9e): broker decides, then firm accepts/rejects
@@ -206,8 +211,9 @@ function step_period!(state::ModelState)
 
     # ── Step 6: Broker pool maintenance ──
     # Remove non-available workers, top up to target P.
-    # Replenishment is half referral (G_S neighbors of current pool) and half random,
-    # mirroring firms' 50/50 referral/general candidate sourcing (§5a).
+    # Replenishment is half referral (random-walk on G_S from current pool members)
+    # and half general (random available workers), mirroring firms' 50/50
+    # referral/general candidate sourcing (§5a).
     # Runs after entry/exit so workers hired by entrant firms are also removed.
     pool = state.broker.pool
     for wid in collect(pool)
@@ -215,45 +221,39 @@ function step_period!(state::ModelState)
     end
     P = ceil(Int, params.pool_target_frac * params.N_W)
     n_gap = P - length(pool)
-    if n_gap > 0
-        # Partition eligible workers into referral (G_S neighbors of pool) and general
-        referral_eligible = Int[]
-        general_eligible = Int[]
-        pool_neighbor_set = Set{Int}()
-        for wid in pool
-            for nbr in neighbors(state.G_S, wid)
-                push!(pool_neighbor_set, nbr)
+    if n_gap > 0 && !isempty(pool)
+        pool_vec = collect(pool)
+        n_referral_target = n_gap ÷ 2
+        n_general_target = n_gap - n_referral_target
+        max_retries = 5 * n_gap  # cap total attempts to avoid infinite loops
+
+        # Referral half: random-walk recruitment from G_S neighbors of pool members
+        n_added_ref = 0
+        attempts = 0
+        while n_added_ref < n_referral_target && attempts < max_retries
+            attempts += 1
+            seed_wid = pool_vec[rand(rng, 1:length(pool_vec))]
+            nbrs = neighbors(state.G_S, seed_wid)
+            isempty(nbrs) && continue
+            candidate = nbrs[rand(rng, 1:length(nbrs))]
+            if state.workers[candidate].status == available && candidate ∉ pool
+                push!(pool, candidate)
+                n_added_ref += 1
             end
         end
-        for w in state.workers
-            if w.status == available && w.id ∉ pool
-                if w.id in pool_neighbor_set
-                    push!(referral_eligible, w.id)
-                else
-                    push!(general_eligible, w.id)
-                end
+
+        # General half: random available workers (fall back here for unfilled referral slots too)
+        n_general_target += n_referral_target - n_added_ref
+        n_added_gen = 0
+        N_W = length(state.workers)
+        attempts = 0
+        while n_added_gen < n_general_target && attempts < max_retries
+            attempts += 1
+            wid = rand(rng, 1:N_W)
+            if state.workers[wid].status == available && wid ∉ pool
+                push!(pool, wid)
+                n_added_gen += 1
             end
-        end
-        # Draw half from referral, remainder from general
-        half_gap = n_gap ÷ 2
-        n_referral = min(half_gap, length(referral_eligible))
-        n_general = min(n_gap - n_referral, length(general_eligible))
-        # If one source is exhausted, draw remaining from the other
-        n_remaining = n_gap - n_referral - n_general
-        if n_remaining > 0
-            n_extra_ref = min(n_remaining, length(referral_eligible) - n_referral)
-            n_referral += n_extra_ref
-            n_remaining -= n_extra_ref
-            n_extra_gen = min(n_remaining, length(general_eligible) - n_general)
-            n_general += n_extra_gen
-        end
-        if n_referral > 0
-            recruited = sample(rng, referral_eligible, n_referral; replace=false)
-            for wid in recruited; push!(pool, wid); end
-        end
-        if n_general > 0
-            recruited = sample(rng, general_eligible, n_general; replace=false)
-            for wid in recruited; push!(pool, wid); end
         end
     end
 

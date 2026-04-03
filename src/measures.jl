@@ -134,13 +134,15 @@ end
 """
     compute_crossmode_betweenness(G, node, N_W, N_F) -> Float64
 
-Cross-mode betweenness centrality: fraction of worker→firm shortest paths
-passing through `node`. Only counts paths where the source is a worker
-(1:N_W) and the target is a firm (N_W+1:N_W+N_F), following Faust (1997).
+Cross-mode betweenness centrality: fraction of worker–firm shortest paths
+passing through `node` (Faust, 1997). Equivalent to summing over all
+(worker, firm) pairs, but implemented by running BFS from the N_F firm
+nodes (N_W+1:N_W+N_F) and counting only worker targets (1:N_W) in
+back-propagation. This exploits the symmetry σ_st = σ_ts in undirected
+graphs to use N_F sources instead of N_W, giving a ~N_W/N_F speed-up.
 
-Uses a parallel Brandes algorithm (thread-per-source-chunk) that runs
-BFS only from worker sources and restricts the back-propagation to only count
-firm targets. Normalized by N_W × N_F (the number of cross-mode pairs).
+Uses a parallel Brandes algorithm (thread-per-source-chunk).
+Normalized by N_W × N_F (the number of cross-mode pairs).
 """
 function compute_crossmode_betweenness(G::SimpleGraph, node::Int,
                                        N_W::Int, N_F::Int)::Float64
@@ -153,6 +155,10 @@ function compute_crossmode_betweenness(G::SimpleGraph, node::Int,
     nt = Threads.nthreads()
     partials = zeros(nt)
 
+    # BFS from firm nodes (N_W+1 : N_W+N_F), counting worker targets (1:N_W)
+    firm_start = N_W + 1
+    firm_end = N_W + N_F
+
     Threads.@threads for tid in 1:nt
         # Thread-local BFS buffers
         sigma = Vector{Float64}(undef, n)
@@ -163,9 +169,7 @@ function compute_crossmode_betweenness(G::SimpleGraph, node::Int,
         stack = Vector{Int}(undef, n)
 
         local_sum = 0.0
-        for s in tid:nt:n
-            # Only run BFS from worker nodes (skip firms and broker)
-            s <= N_W || continue
+        for s in (firm_start + tid - 1):nt:firm_end
 
             # Initialize
             fill!(sigma, 0.0)
@@ -200,12 +204,12 @@ function compute_crossmode_betweenness(G::SimpleGraph, node::Int,
                 end
             end
 
-            # Back-propagation with firm-target restriction:
-            # Only count w as a target if it is a firm node
+            # Back-propagation with worker-target restriction:
+            # Only count w as a target if it is a worker node
             while s_top > 0
                 w = stack[s_top]
                 s_top -= 1
-                target_indicator = (N_W < w <= N_W + N_F) ? 1.0 : 0.0
+                target_indicator = (w <= N_W) ? 1.0 : 0.0
                 for v in pred[w]
                     delta[v] += (sigma[v] / sigma[w]) * (target_indicator + delta[w])
                 end
