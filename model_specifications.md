@@ -200,22 +200,22 @@ Workers and firms are characterized by multi-dimensional types, respectively $w_
 
 Let $q_{ij}$ represent the **per-period productive output of match $(i, j)$**. It is a function of worker type and firm type, it is measured in monetary units, and it represents the economic value the firm derives from the worker:
 
-$$q_{ij} = f(w_i, x_j) + \varepsilon_{ij}, \qquad
+$$q_{ij} = Q + f(w_i, x_j) + \varepsilon_{ij}, \qquad
 \varepsilon_{ij} \sim N(0, \sigma_\varepsilon^2)$$
 
-where $\sigma_\varepsilon = 0.25$. The noise term $\varepsilon_{ij}$ represents idiosyncratic match-specific variation (interpersonal chemistry, unobserved characteristics, and other factors not captured by observable types) that is irreducible even with perfect knowledge of $f$.
+where $Q = 1.0$ is a constant offset that shifts $q$ positive for downstream economic computations (wages, surplus, satisfaction), and $\sigma_\varepsilon = 0.25$. The noise term $\varepsilon_{ij}$ represents idiosyncratic match-specific variation (interpersonal chemistry, unobserved characteristics, and other factors not captured by observable types) that is irreducible even with perfect knowledge of $f$.
 
-The matching function $f: \mathbb{R}^d \times \mathbb{R}^d \to \mathbb{R}$ is unknown to all agents and fixed for the duration of the simulation.
+The matching function $f: \mathbb{R}^d \times \mathbb{R}^d \to \mathbb{R}$ is unknown to all agents and fixed for the duration of the simulation. The offset $Q$ is deliberately excluded from $f$ so that $f$ represents the pure signal structure of the data-generating process.
 
-The deterministic portion of match quality has two components, the first relating to worker quality (portable across firms) and the second to worker-firm pairings:
+The deterministic matching function has two components, the first relating to worker quality (portable across firms) and the second to worker-firm pairings:
 
-$$f(\mathbf{w}, \mathbf{x}) = Q + \rho \cdot \text{sim}(\mathbf{w}, \mathbf{c}) + (1 - \rho) \cdot \text{sim}(\mathbf{w}, \mathbf{A}\mathbf{x})$$
+$$f(\mathbf{w}, \mathbf{x}) = \rho \cdot \text{sim}(\mathbf{w}, \mathbf{c}) + (1 - \rho) \cdot \text{sim}(\mathbf{w}, \mathbf{A}\mathbf{x})$$
 
-where $\text{sim}(\mathbf{a}, \mathbf{b}) = \mathbf{a}^\top \mathbf{b} / (\|\mathbf{a}\| \|\mathbf{b}\|)$ denotes cosine similarity between two vectors, $Q = 1.0$ is a constant offset, and $\mathbf{A}$ is a $d \times d$ random matrix with iid $N(0, 1)$ entries drawn once at initialization (see §1c).
+where $\text{sim}(\mathbf{a}, \mathbf{b}) = \mathbf{a}^\top \mathbf{b} / (\|\mathbf{a}\| \|\mathbf{b}\|)$ denotes cosine similarity between two vectors, and $\mathbf{A}$ is a $d \times d$ random matrix with iid $N(0, 1)$ entries drawn once at initialization (see §1c).
 
 Worker quality is defined by the cosine similarity between worker types and an ideal worker type vector $c$, while worker-firm pairing quality is defined by the cosine similarity between worker types and a linear transformation of firm types, $\mathbf{A}\mathbf{x}$.
 
-The offset $Q = 1.0$ shifts the output to be nonnegative (both signal components are bounded in $[-1, 1]$, so $f \in [-1, 3]$ in principle but concentrates near $[0, 2]$).
+Both signal components are bounded in $[-1, 1]$, so $f \in [-2, 2]$ in principle but concentrates near $[-1, 1]$. The offset $Q = 1.0$ in the output formula shifts $q$ into the range $[-1, 3]$, concentrating near $[0, 2]$.
 
 Both components are bounded and $\rho$ is a mixing weight that controls how much of match quality depends on each component.
 
@@ -372,9 +372,9 @@ The worker population $N_W$ is fixed for the duration of the simulation: workers
 
 ### 5. Search
 
-Each firm without an open vacancy generates one with probability $p_{\text{vac}}$ per period. A vacancy that goes unfilled persists to the next period; the firm does not draw a new vacancy while one is already open. This keeps firm history growth tractable and ensures the outsourcing decision is made at most once per firm per period. The default $p_{\text{vac}} = 0.50$ produces approximately 25 vacancies per period across 50 firms, ensuring sufficient hiring activity for regression learning.
+Each firm without open vacancies generates one with probability $p_{\text{vac}}$ per period. Conditional on drawing a vacancy, the firm has an equal probability of receiving one or two vacancies (maximum two per firm). A vacancy that goes unfilled persists to the next period; the firm does not draw new vacancies while any are already open. The outsourcing decision is made once per firm per period and applies to all its vacancies. The default $p_{\text{vac}} = 0.50$ produces approximately 37 vacancies per period across 50 firms, ensuring sufficient hiring activity for regression learning.
 
-A firm with a vacancy fills it either through internal search (§5a) or by outsourcing to the broker (§5b); the choice between the two channels is governed by a satisfaction-based decision rule described in §6. 
+A firm with vacancies fills them either through internal search (§5a) or by outsourcing to the broker (§5b); the choice between the two channels is governed by a satisfaction-based decision rule described in §6. Each vacancy is filled independently: a firm with two vacancies may hire two different workers in the same period.
 
 #### 5a. Internal search
 
@@ -497,7 +497,7 @@ Each period proceeds through six steps. The pseudocode below specifies the exact
 >
 > **1. VACANCY MANAGEMENT AND OUTSOURCING DECISION**
 > 1.1. &emsp;Carry forward unfilled vacancies from $t{-}1$.
-> 1.2. &emsp;Each firm without an open vacancy draws one with probability $p_{\text{vac}}$.
+> 1.2. &emsp;Each firm without open vacancies draws one with probability $p_{\text{vac}}$. Conditional on drawing, the firm receives one or two vacancies with equal probability (max 2).
 > 1.3. &emsp;Identify firms with vacancies: $V^t \subset \{1, \ldots, N_F\}$
 > 1.4. &emsp;for each firm $j \in V^t$:
 > &emsp;&emsp;$\text{score}\_\text{int} \leftarrow s_{j,\text{int}}^t$
@@ -946,7 +946,7 @@ Parameters are organized into five categories reflecting their role in the analy
 | $k_S$ | Social network mean degree | 6 | Fixed network topology parameter (§4) | Base |
 | $p_{\text{rewire}}$ | Social network rewiring | 0.1 | Fixed network topology parameter (§4) | Base |
 | $\omega$ | Satisfaction recency weight (§6a) | 0.3 | Fixed; standard EWMA weight | Base |
-| $p_{\text{vac}}$ | Per-period vacancy probability (§5) | 0.50 | ~25 vacancies/period across 50 firms | Base |
+| $p_{\text{vac}}$ | Per-period vacancy probability (§5) | 0.50 | ~37 vacancies/period across 50 firms (50/50 chance of 1 or 2 per draw) | Base |
 | $\sigma_w$ | Worker type dispersion | 0.5 | Expected distance from worker to reference firm, dimension-invariant (§0, §12c) | Base |
 | $L$ | Fee amortization period | 4 | Expected useful duration of a hire for per-period cost comparisons (§6a). M1 reuses as staffing assignment length (§9). | Base |
 | Firm geometry | Firm type distribution | Complex | Complex (sinusoidal curve, all $d$ dims), simple (great circle, 2D), or unstructured (anisotropic on sphere). See §0. | Base |

@@ -34,7 +34,7 @@ export PeriodAccumulators, reset_accumulators!
 export CachedNetworkMeasures, ModelState
 export default_params, validate_params
 export generate_matching_function, cosine_sim, eval_mu, eval_interaction, eval_interaction!, R_BASE_FRAC
-export match_output, match_output_noiseless, match_output_noiseless!, calibrate_output_scale
+export match_output, match_signal, match_signal!, calibrate_output_scale
 export build_social_network, compute_referral_pool!, compute_all_referral_pools!
 export FirmGeometry, generate_firm_geometry, sample_firm_type, generate_firm_types
 export compute_reservation_wage, create_firm, create_broker

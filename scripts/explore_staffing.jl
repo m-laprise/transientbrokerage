@@ -80,7 +80,7 @@ end
 # ---------------------------------------------------------------------------
 
 function plot_staffing_ensemble(mdfs::Vector{DataFrame}, mdfs_base::Vector{DataFrame},
-                                suptitle::String, filename::String; window::Int=20)
+                                suptitle::String, filename::String; N_W::Int, window::Int=20)
     n_seeds = length(mdfs)
     periods = mdfs[1].period
     T_burn = 30
@@ -210,7 +210,7 @@ function plot_staffing_ensemble(mdfs::Vector{DataFrame}, mdfs_base::Vector{DataF
     axislegend(ax10; position=:rb, leg_kw...)
 
     ax11 = Axis(fig[4, 2]; title="Cross-mode betweenness", ylabel="C_B(broker)",
-                limits=(xlims, (-0.02, 1.02)), ax_kw...)
+                limits=(xlims, (-0.02, 0.62)), ax_kw...)
     plot_metric!(ax11, mdf -> mdf.betweenness; label="M1", color=COL_BROKER)
     plot_base!(ax11, mdf -> mdf.betweenness)
     axislegend(ax11; position=:rt, leg_kw...)
@@ -242,12 +242,12 @@ function plot_staffing_ensemble(mdfs::Vector{DataFrame}, mdfs_base::Vector{DataF
                 limits=(xlims, (-0.02, 2)), ax_kw..., xlabelsize=label_fs)
     plot_metric!(ax14, mdf -> mdf.broker_reputation; color=COL_BROKER)
 
-    ax15 = Axis(fig[5, 3]; title="Available workers, broker pool & firm size",
-                xlabel="Period", ylabel="Count",
+    ax15 = Axis(fig[5, 3]; title="Unemployment rate, broker pool & firm size",
+                xlabel="Period", ylabel="Count / %",
                 limits=(xlims, (-0.02, nothing)), ax_kw..., xlabelsize=label_fs)
-    plot_metric!(ax15, mdf -> Float64.(mdf.n_available); label="Available", color=:teal)
+    plot_metric!(ax15, mdf -> Float64.(mdf.n_available) ./ N_W .* 100; label="Unemp. rate (%)", color=:teal)
     plot_metric!(ax15, mdf -> Float64.(mdf.broker_pool_size); label="Broker pool", color=COL_BROKER)
-    plot_metric!(ax15, mdf -> mdf.avg_firm_size .* 10; label="Firm size (x10)", color=:gray50)
+    plot_metric!(ax15, mdf -> mdf.avg_firm_size; label="Firm size", color=:gray50)
     axislegend(ax15; position=:rt, leg_kw...)
 
     for ax in [ax1, ax2, ax3, ax4, ax5, ax6, ax7, ax8, ax9, ax10, ax11, ax12, ax13, ax14, ax15]
@@ -407,7 +407,7 @@ end
 # Run configurations (same grid as base model)
 # ---------------------------------------------------------------------------
 
-T = 500
+T = 300
 N_SEEDS = 5
 RERUN = "--rerun" in ARGS
 
@@ -473,21 +473,25 @@ for geom in GEOMETRIES
             println("    Run explore_base_model.jl first")
             continue
         end
-        mdfs_base = JLD2.load(base_datafile, "mdfs")
+        base_saved = JLD2.load(base_datafile)
+        mdfs_base = base_saved["mdfs"]
+        cfg_N_W = base_saved["N_W"]::Int
 
         datafile = joinpath(staffing_datadir, "$(c.tag).jld2")
         if !RERUN && isfile(datafile)
             println("  Loading cached staffing data: $datafile")
             mdfs = JLD2.load(datafile, "mdfs")
         else
+            cfg_params = default_params(; c.kwargs..., enable_staffing=true)
             mdfs = run_ensemble(; base_params_kwargs=c.kwargs, T=T, n_seeds=N_SEEDS)
             JLD2.save(datafile, "mdfs", mdfs, "label", c.label,
-                      "kwargs", Dict(pairs(c.kwargs)), "T", T, "n_seeds", N_SEEDS)
+                      "kwargs", Dict(pairs(c.kwargs)), "T", T, "n_seeds", N_SEEDS,
+                      "N_W", cfg_params.N_W)
             println("  Saved staffing data: $datafile")
         end
 
         plot_staffing_ensemble(mdfs, mdfs_base, c.label,
-                               joinpath(geo_dir, "$(c.tag)_staffing.png"))
+                               joinpath(geo_dir, "$(c.tag)_staffing.png"); N_W=cfg_N_W)
         plot_staffing_surplus(mdfs, c.label,
                               joinpath(geo_dir, "$(c.tag)_staffing_surplus.png"))
     end

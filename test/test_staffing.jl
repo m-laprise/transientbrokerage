@@ -195,7 +195,7 @@ end
         process_staffing_economics!(state)  # period 3→0, expires
         @test state.workers[wid].status == available
         @test state.workers[wid].broker_id == 0
-        @test firm_idx ∈ state.open_vacancies
+        @test state.open_vacancies[firm_idx] > 0
         @test isempty(state.broker.active_assignments)
     end
 
@@ -206,14 +206,14 @@ end
 
         wid = get_avail_pool_worker(state)
         firm_idx = 1
-        push!(state.open_vacancies, firm_idx)
+        state.open_vacancies[firm_idx] = 1
         empty!(state.broker.active_assignments)
         pm = ProposedMatch(firm_idx, wid, :staffing, 1.5, 1.5, state.workers[wid].reservation_wage)
         create_staffing_assignment!(state, pm, 1.5)
 
         process_staffing_economics!(state)
         process_staffing_economics!(state)  # expires
-        @test firm_idx ∈ state.open_vacancies
+        @test state.open_vacancies[firm_idx] > 0
         @test state.workers[wid].status == available
     end
 

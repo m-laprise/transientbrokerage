@@ -19,7 +19,7 @@ function exit_firm!(state::ModelState, firm_idx::Int, avail::BitVector)
         avail[wid] = true
     end
     empty!(firm.employees)
-    delete!(state.open_vacancies, firm_idx)
+    state.open_vacancies[firm_idx] = 0
     # Terminate active staffing assignments at this firm (§9g step 5.1)
     if state.params.enable_staffing
         terminate_firm_assignments!(state, firm_idx, avail)

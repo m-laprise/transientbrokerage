@@ -1,10 +1,15 @@
 """
     matching_function.jl
 
-Matching function f(w, x) = Q + ρ·tanh(sim(w,c)) + (1-ρ)·sim(w, Ax) + ε.
+Matching function f(w, x) = ρ·sim(w,c) + (1-ρ)·sim(w, Ax).
 Quality is cosine similarity with an ideal worker c.
 Interaction is cosine similarity between w and the transformed firm type Ax,
 where A is a random d×d matrix drawn at initialization.
+
+Observable match output is q = Q + f(w,x) + ε, where Q is a constant offset
+that shifts q positive for downstream economic computations (wages, surplus).
+Q is deliberately excluded from f so that f represents the pure signal structure
+of the DGP (important for SVD analysis and examining structural complexity).
 """
 
 """
@@ -60,7 +65,9 @@ end
 """Noise standard deviation for match output."""
 const SIGMA_EPS = 0.25
 
-"""Offset ensuring match output is positive for well-matched pairs."""
+"""Offset added to f(w,x) in the observable output q = Q + f(w,x) + ε.
+Shifts q positive for downstream economic computations; not part of the
+matching function f itself (excluded from match_signal)."""
 const Q_OFFSET = 1.0
 
 """Reservation wage as fraction of mean match output: r_base = R_BASE_FRAC × f̄."""
@@ -69,9 +76,10 @@ const R_BASE_FRAC = 0.70
 """
     match_output(w, x, env, rng) -> Float64
 
-Stochastic match output q = Q_OFFSET + ρ·sim(w,c) + (1-ρ)·sim(w, Ax) + ε.
-The offset Q_OFFSET shifts the signal positive for downstream economic computations
-(wages, surplus, satisfaction). Noise ε ~ N(0, σ_ε²).
+Stochastic observable match output q = Q + f(w,x) + ε, where
+f(w,x) = ρ·sim(w,c) + (1-ρ)·sim(w, Ax) is the deterministic signal
+(see `match_signal`), Q = Q_OFFSET shifts q positive for downstream
+economic computations, and ε ~ N(0, σ_ε²) is match noise.
 """
 function match_output(w::AbstractVector, x::AbstractVector,
                       env::MatchingEnv, rng::AbstractRNG)::Float64
@@ -79,26 +87,28 @@ function match_output(w::AbstractVector, x::AbstractVector,
 end
 
 """
-    match_output_noiseless(w, x, env) -> Float64
+    match_signal(w, x, env) -> Float64
 
-Raw deterministic signal ρ·sim(w,c) + (1-ρ)·sim(w, Ax), without offset or noise.
-Used for diagnostics, holdout evaluation, and SVD analysis.
+Deterministic matching function f(w,x) = ρ·sim(w,c) + (1-ρ)·sim(w, Ax).
+Does not include the offset Q or noise ε. Used for diagnostics, holdout
+evaluation, and SVD analysis where the pure signal structure matters.
 """
-function match_output_noiseless(w::AbstractVector, x::AbstractVector,
-                                 env::MatchingEnv)::Float64
+function match_signal(w::AbstractVector, x::AbstractVector,
+                      env::MatchingEnv)::Float64
     return env.rho * eval_mu(w, env) + (1.0 - env.rho) * eval_interaction(w, x, env)
 end
 
-"""In-place version using pre-allocated Ax buffer."""
-function match_output_noiseless!(Ax_buf::Vector{Float64}, w::AbstractVector,
-                                  x::AbstractVector, env::MatchingEnv)::Float64
+"""In-place version of `match_signal` using pre-allocated Ax buffer."""
+function match_signal!(Ax_buf::Vector{Float64}, w::AbstractVector,
+                       x::AbstractVector, env::MatchingEnv)::Float64
     return env.rho * eval_mu(w, env) + (1.0 - env.rho) * eval_interaction!(Ax_buf, w, x, env)
 end
 
 """
     calibrate_output_scale(env, firm_types, rng; sigma_w=0.5, n_samples=10_000) -> (f_mean, r_base)
 
-Monte Carlo calibration using random worker-firm pairs.
+Monte Carlo calibration of E[q] = E[Q + f(w,x)] using random worker-firm pairs.
+Returns (mean_q, r_base) where r_base = R_BASE_FRAC × mean_q.
 """
 function calibrate_output_scale(env::MatchingEnv,
                           firm_types::Vector{Vector{Float64}},
@@ -116,7 +126,7 @@ function calibrate_output_scale(env::MatchingEnv,
             w[k] = ref[k] + σ_per_dim * randn(rng)
         end
         x = firm_types[rand(rng, 1:n_firms)]
-        total += Q_OFFSET + match_output_noiseless(w, x, env)
+        total += Q_OFFSET + match_signal(w, x, env)
     end
     f_mean = total / n_samples
     return (f_mean, R_BASE_FRAC * f_mean)

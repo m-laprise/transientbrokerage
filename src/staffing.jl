@@ -115,8 +115,8 @@ function process_staffing_economics!(state::ModelState)
         sa.periods_remaining -= 1
         if sa.periods_remaining <= 0
             release_staffed_worker!(state.workers, sa.worker_id)
-            if sa.firm_idx ∉ state.open_vacancies
-                push!(state.open_vacancies, sa.firm_idx)
+            if state.open_vacancies[sa.firm_idx] < 2
+                state.open_vacancies[sa.firm_idx] += 1
             end
             # Swap-delete for O(1) removal
             assignments[i] = assignments[end]

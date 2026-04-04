@@ -100,7 +100,7 @@ struct ModelParams
     seed::Int
 end
 
-"""Matching environment: ideal worker c and mixing weight ρ for f(w,x) = ρ·tanh(cos(w,c)) + (1-ρ)·cos(w,x) + ε."""
+"""Matching environment: ideal worker c and mixing weight ρ for f(w,x) = ρ·sim(w,c) + (1-ρ)·sim(w,Ax)."""
 struct MatchingEnv
     d::Int                                   # type dimensionality
     rho::Float64                             # mixing weight: ρ · quality + (1-ρ) · interaction
@@ -247,7 +247,7 @@ Base.@kwdef mutable struct ModelState
     firms::Vector{Firm}
     broker::Broker                # single broker (v9 simplification)
     G_S::SimpleGraph{Int}         # social network
-    open_vacancies::Set{Int} = Set{Int}()
+    open_vacancies::Vector{Int}           # length N_F; entry j is vacancy count (0, 1, or 2)
     broker_clients::Set{Int} = Set{Int}()  # firms outsourcing to broker this period (for network measures)
     next_firm_id::Int
     accum::PeriodAccumulators = PeriodAccumulators()

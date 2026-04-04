@@ -302,6 +302,6 @@ function initialize_model(params::ModelParams)::ModelState
     return ModelState(params=params, rng=rng, period=0, env=env, cal=cal,
                       firm_geo=firm_geo,
                       workers=workers, firms=firms, broker=broker, G_S=G_S,
-                      open_vacancies=Set{Int}(), next_firm_id=params.N_F + 1,
+                      open_vacancies=zeros(Int, params.N_F), next_firm_id=params.N_F + 1,
                       accum=accum, cached_network=cached_network)
 end

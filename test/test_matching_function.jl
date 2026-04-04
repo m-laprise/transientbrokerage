@@ -41,8 +41,8 @@ using Statistics: var
         env1 = generate_matching_function(d, 1.0, ftypes, StableRNG(42))
         w = randn(StableRNG(1), d)
         x = randn(StableRNG(2), d)
-        @test match_output_noiseless(w, x, env0) ≈ eval_interaction(w, x, env0)
-        @test match_output_noiseless(w, x, env1) ≈ eval_mu(w, env1)
+        @test match_signal(w, x, env0) ≈ eval_interaction(w, x, env0)
+        @test match_signal(w, x, env1) ≈ eval_mu(w, env1)
     end
 
     # Noiseless output equals rho*mu + (1-rho)*interaction exactly
@@ -54,7 +54,7 @@ using Statistics: var
             w = randn(test_rng, d)
             x = randn(test_rng, d)
             expected = rho * eval_mu(w, env) + (1.0 - rho) * eval_interaction(w, x, env)
-            match_output_noiseless(w, x, env) ≈ expected
+            match_signal(w, x, env) ≈ expected
         end
     end
 
@@ -90,7 +90,7 @@ using Statistics: var
             ref = ftypes[rand(check_rng, 1:n_f)]
             w = ref .+ σ_per_dim .* randn(check_rng, d)
             x = ftypes[rand(check_rng, 1:n_f)]  # independent firm
-            TransientBrokerage.Q_OFFSET + match_output_noiseless(w, x, env)
+            TransientBrokerage.Q_OFFSET + match_signal(w, x, env)
         end
         f_mean_check = total / 10_000
         @test abs(f_mean_check - f_mean) / max(abs(f_mean), 0.01) < 0.10

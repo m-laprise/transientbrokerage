@@ -16,14 +16,14 @@ using StableRNGs: StableRNG
         emp_ids = collect(state.firms[firm_idx].employees)
         @test !isempty(emp_ids)
 
-        push!(state.open_vacancies, firm_idx)
+        state.open_vacancies[firm_idx] = 1
         avail = make_avail(state)
         exit_firm!(state, firm_idx, avail)
 
         @test isempty(state.firms[firm_idx].employees)
         @test all(state.workers[wid].status == available for wid in emp_ids)
         @test all(state.workers[wid].employer_id == 0 for wid in emp_ids)
-        @test firm_idx ∉ state.open_vacancies
+        @test state.open_vacancies[firm_idx] == 0
         # Released employees added to available set
         @test all(avail[wid] for wid in emp_ids)
     end

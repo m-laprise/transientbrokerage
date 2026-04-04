@@ -88,7 +88,7 @@ const COL_BROKER = :crimson
 const COL_INTERNAL = :steelblue
 
 function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::String;
-                       window::Int=20)
+                       N_W::Int, window::Int=20)
     n_seeds = length(mdfs)
     periods = mdfs[1].period
     T_burn = 30
@@ -197,7 +197,7 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
     axislegend(ax10; position=:rb, leg_kw...)
 
     ax11 = Axis(fig[4, 2]; title="Cross-mode betweenness", ylabel="C_B(broker)",
-                limits=(xlims, (-0.02, 1.02)), ax_kw...)
+                limits=(xlims, (-0.02, 0.62)), ax_kw...)
     plot_metric!(ax11, mdf -> mdf.betweenness; color=COL_BROKER)
 
     ax12 = Axis(fig[4, 3]; title="Access share (brokered)", ylabel="Fraction",
@@ -219,12 +219,12 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
                 limits=(xlims, (-0.02, 2)), ax_kw..., xlabelsize=label_fs)
     plot_metric!(ax14, mdf -> mdf.broker_reputation; color=COL_BROKER)
 
-    ax15 = Axis(fig[5, 3]; title="Available workers, broker pool & firm size",
-                xlabel="Period", ylabel="Count",
+    ax15 = Axis(fig[5, 3]; title="Unemployment rate, broker pool & firm size",
+                xlabel="Period", ylabel="Count / %",
                 limits=(xlims, (-0.02, nothing)), ax_kw..., xlabelsize=label_fs)
-    plot_metric!(ax15, mdf -> Float64.(mdf.n_available); label="Available", color=:teal)
+    plot_metric!(ax15, mdf -> Float64.(mdf.n_available) ./ N_W .* 100; label="Unemp. rate (%)", color=:teal)
     plot_metric!(ax15, mdf -> Float64.(mdf.broker_pool_size); label="Broker pool", color=COL_BROKER)
-    plot_metric!(ax15, mdf -> mdf.avg_firm_size .* 10; label="Firm size (x10)", color=:gray50)
+    plot_metric!(ax15, mdf -> mdf.avg_firm_size; label="Firm size", color=:gray50)
     axislegend(ax15; position=:rt, leg_kw...)
 
     # Burn-in indicator on all panels
@@ -391,7 +391,7 @@ end
 # Run configurations
 # ---------------------------------------------------------------------------
 
-T = 500
+T = 300
 N_SEEDS = 5
 RERUN = "--rerun" in ARGS
 
@@ -453,14 +453,19 @@ for geom in GEOMETRIES
         datafile = joinpath(datadir, "$(c.tag).jld2")
         if !RERUN && isfile(datafile)
             println("  Loading cached data: $datafile")
-            mdfs = JLD2.load(datafile, "mdfs")
+            saved = JLD2.load(datafile)
+            mdfs = saved["mdfs"]
+            cfg_N_W = saved["N_W"]::Int
         else
+            cfg_params = default_params(; c.kwargs...)
             mdfs = run_ensemble(; base_params_kwargs=c.kwargs, T=T, n_seeds=N_SEEDS)
+            cfg_N_W = cfg_params.N_W
             JLD2.save(datafile, "mdfs", mdfs, "label", c.label,
-                      "kwargs", Dict(pairs(c.kwargs)), "T", T, "n_seeds", N_SEEDS)
+                      "kwargs", Dict(pairs(c.kwargs)), "T", T, "n_seeds", N_SEEDS,
+                      "N_W", cfg_N_W)
             println("  Saved data: $datafile")
         end
-        plot_ensemble(mdfs, c.label, joinpath(geo_dir, "$(c.tag).png"))
+        plot_ensemble(mdfs, c.label, joinpath(geo_dir, "$(c.tag).png"); N_W=cfg_N_W)
         plot_surplus_ensemble(mdfs, c.label, joinpath(geo_dir, "$(c.tag)_surplus.png"))
     end
 
@@ -524,7 +529,7 @@ function build_ordered_matching_matrix(state)
     for (jj, j) in enumerate(firm_order)
         x = firm_types[j]
         for (ii, i) in enumerate(worker_order)
-            F[ii, jj] = match_output_noiseless(state.workers[i].type, x, state.env)
+            F[ii, jj] = match_signal(state.workers[i].type, x, state.env)
         end
     end
 

@@ -118,9 +118,9 @@ using StableRNGs: StableRNG
         end
         # Inject a vacancy for a firm that can't possibly fill it (no available workers match)
         # by picking a firm index not currently in open_vacancies
-        test_j = findfirst(j -> j ∉ state.open_vacancies, 1:length(state.firms))
+        test_j = findfirst(j -> state.open_vacancies[j] == 0, 1:length(state.firms))
         test_j === nothing && error("All firms have vacancies — unlikely, skip test")
-        push!(state.open_vacancies, test_j)
+        state.open_vacancies[test_j] = 1
         # Run one more period — if vacancy persists unfilled, it stays in open_vacancies
         step_period!(state)
         # The vacancy was either filled (removed) or persisted — either way it was processed.

@@ -89,35 +89,39 @@ function step_period!(state::ModelState)
 
     # ── Step 2: Vacancy management and outsourcing decisions ──
     # 1.1 Carry forward unfilled vacancies (already in state.open_vacancies)
-    # 1.2 New vacancies for firms without one
+    # 1.2 New vacancies: firms without open vacancies draw with prob p_vac;
+    #     conditional on drawing, 50/50 chance of 1 or 2 vacancies (max 2).
     for j in eachindex(state.firms)
-        if j ∉ state.open_vacancies && rand(rng) < params.p_vac
-            push!(state.open_vacancies, j)
+        state.open_vacancies[j] > 0 && continue
+        if rand(rng) < params.p_vac
+            state.open_vacancies[j] = rand(rng) < 0.5 ? 2 : 1
         end
     end
 
-    # 1.3-1.4 Outsourcing decisions
+    # 1.3-1.4 Outsourcing decisions (one per firm, applied to all its vacancies)
     # Reputation uses previous period's cached value (broker.last_reputation),
     # so all firms see the same reputation regardless of iteration order.
     empty!(state.broker_clients)
     current_broker_firms = state.broker_clients
     decisions = Dict{Int, Symbol}()
-    for j in state.open_vacancies
+    for j in eachindex(state.open_vacancies)
+        n_vac = state.open_vacancies[j]
+        n_vac == 0 && continue
         dec = outsourcing_decision(state.firms[j], state.broker,
                                     state.cal.q_pub, rng)
         decisions[j] = dec
         if dec == :internal
-            state.accum.openings_internal += 1
+            state.accum.openings_internal += n_vac
         else
-            state.accum.openings_brokered += 1
+            state.accum.openings_brokered += n_vac
             push!(current_broker_firms, j)
         end
     end
 
-    # Outsourcing rate = |J^t| / |V^t|
-    n_vacancies = length(state.open_vacancies)
-    state.accum.outsourcing_rate = n_vacancies > 0 ?
-        length(current_broker_firms) / n_vacancies : 0.0
+    # Outsourcing rate = fraction of firms with vacancies choosing broker
+    n_firms_with_vac = length(decisions)
+    state.accum.outsourcing_rate = n_firms_with_vac > 0 ?
+        length(current_broker_firms) / n_firms_with_vac : 0.0
 
     # ── Step 3: Candidate generation and evaluation ──
     models = build_period_models(state, params.lambda)
@@ -130,19 +134,29 @@ function step_period!(state::ModelState)
 
     proposals = ProposedMatch[]
 
-    # 2.1 Internal searches
+    # 2.1 Internal searches (one search per vacancy; guard against duplicate worker)
     for (j, dec) in decisions
         dec == :internal || continue
         firm = state.firms[j]
-        wid, q_hat_firm = internal_search(firm, state.workers, avail,
-                                           params, rng, models.firm_models[j])
-        wid == 0 && continue
-        wage = compute_wage(q_hat_firm, state.workers[wid].reservation_wage, params.beta_W)
-        push!(proposals, ProposedMatch(j, wid, :internal, q_hat_firm, 0.0, wage))
+        n_vac = state.open_vacancies[j]
+        first_wid = 0
+        for v in 1:n_vac
+            wid, q_hat_firm = internal_search(firm, state.workers, avail,
+                                               params, rng, models.firm_models[j])
+            (wid == 0 || wid == first_wid) && continue
+            wage = compute_wage(q_hat_firm, state.workers[wid].reservation_wage, params.beta_W)
+            push!(proposals, ProposedMatch(j, wid, :internal, q_hat_firm, 0.0, wage))
+            v == 1 && (first_wid = wid)
+        end
     end
 
-    # 2.2 Broker proposals (greedy best-pair)
-    client_firm_indices = collect(current_broker_firms)
+    # 2.2 Broker proposals (greedy best-pair; firms with 2 vacancies appear twice)
+    client_firm_indices = Int[]
+    for j in current_broker_firms
+        for _ in 1:state.open_vacancies[j]
+            push!(client_firm_indices, j)
+        end
+    end
     clients = [(j, state.firms[j]) for j in client_firm_indices]
     assignments = broker_allocate!(state.broker, clients, state.workers, avail,
                                     params, rng, models)
@@ -177,7 +191,7 @@ function step_period!(state::ModelState)
     # ── Step 4: Match formation ──
     accepted = resolve_conflicts(proposals, rng)
 
-    filled_firms = Set{Int}()
+    filled_count = Dict{Int, Int}()
     for match in accepted
         if match.source == :staffing
             q = create_staffing_assignment!(state, match, match.q_hat_broker)
@@ -211,18 +225,20 @@ function step_period!(state::ModelState)
                      match.worker_id in state.firms[match.firm_idx].referral_pool
             record_match!(state.accum, match.source, in_ref)
         end
-        push!(filled_firms, match.firm_idx)
+        filled_count[match.firm_idx] = get(filled_count, match.firm_idx, 0) + 1
     end
 
     # Close filled vacancies, count unfilled
     for (j, dec) in decisions
-        if j in filled_firms
-            delete!(state.open_vacancies, j)
-        else
+        n_vac = state.open_vacancies[j]
+        n_filled = get(filled_count, j, 0)
+        n_unfilled = n_vac - n_filled
+        state.open_vacancies[j] = max(n_unfilled, 0)
+        if n_unfilled > 0
             if dec == :internal
-                state.accum.vacancies_internal += 1
+                state.accum.vacancies_internal += n_unfilled
             else
-                state.accum.vacancies_brokered += 1
+                state.accum.vacancies_brokered += n_unfilled
             end
         end
     end
@@ -235,7 +251,7 @@ function step_period!(state::ModelState)
         j = rand(rng, 1:N_F)
         w = state.workers[wid].type
         x = state.firms[j].type
-        q_true = Q_OFFSET + match_output_noiseless!(Ax_buf, w, x, state.env)
+        q_true = Q_OFFSET + match_signal!(Ax_buf, w, x, state.env)
         push!(state.accum.firm_holdout_pred, predict_ridge!(models.firm_models[j], firm_buf, w))
         push!(state.accum.firm_holdout_real, q_true)
         if broker_matched

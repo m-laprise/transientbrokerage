@@ -23,7 +23,7 @@ function diagnostic_summary(state::ModelState)::Dict{String, Any}
         "n_available" => n_available,
         "n_employed" => n_employed,
         "n_staffed" => n_staffed,
-        "open_vacancies" => length(state.open_vacancies),
+        "open_vacancies" => sum(state.open_vacancies),
         "broker_pool_size" => length(state.broker.pool),
         "broker_history_size" => effective_history_size(state.broker),
         "broker_reputation" => state.broker.last_reputation,

@@ -48,9 +48,10 @@ function verify_invariants(state::ModelState)
         end
     end
 
-    # Open vacancies in bounds
-    for j in state.open_vacancies
-        @assert 1 <= j <= length(state.firms) "Open vacancy index $j out of bounds"
+    # Open vacancies: vector length matches firms, counts in [0, 2]
+    @assert length(state.open_vacancies) == length(state.firms) "open_vacancies length mismatch"
+    for j in eachindex(state.open_vacancies)
+        @assert 0 <= state.open_vacancies[j] <= 2 "Vacancy count $(state.open_vacancies[j]) out of range for firm $j"
     end
 
     # Broker pool: all members available, size <= target P
