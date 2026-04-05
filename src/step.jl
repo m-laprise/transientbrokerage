@@ -34,7 +34,8 @@ function step_period!(state::ModelState)
     # Purge non-available workers, top up to target P before candidate generation.
     # Runs before matching so newly available workers (from previous period's
     # entry/exit) can be recruited into the pool and proposed by the broker.
-    # Replenishment is half referral (G_S neighbors of pool) and half random.
+    # Replenishment is half referral (G_S neighbors of pool) and half random,
+    # sampling directly from eligible workers (no rejection sampling).
     pool = state.broker.pool
     for wid in collect(pool)
         state.workers[wid].status == available || delete!(pool, wid)
@@ -42,38 +43,50 @@ function step_period!(state::ModelState)
     P = ceil(Int, params.pool_target_frac * params.N_W)
     n_gap = P - length(pool)
     if n_gap > 0
-        max_retries = 5 * n_gap
-
-        # Referral half: G_S neighbors of current pool members (skip if pool empty)
-        n_referral_target = isempty(pool) ? 0 : n_gap ÷ 2
-        n_general_target = n_gap - n_referral_target
-        n_added_ref = 0
-        if n_referral_target > 0
-            pool_vec = collect(pool)
-            attempts = 0
-            while n_added_ref < n_referral_target && attempts < max_retries
-                attempts += 1
-                seed_wid = pool_vec[rand(rng, 1:length(pool_vec))]
-                nbrs = neighbors(state.G_S, seed_wid)
-                isempty(nbrs) && continue
-                candidate = nbrs[rand(rng, 1:length(nbrs))]
-                if state.workers[candidate].status == available && candidate ∉ pool
-                    push!(pool, candidate)
-                    n_added_ref += 1
-                end
-            end
+        # Build eligible set: available workers not already in pool
+        eligible = Int[]
+        for w in state.workers
+            w.status == available && w.id ∉ pool && push!(eligible, w.id)
         end
 
-        # General half (+ unfilled referral slots): random available workers
-        n_general_target += n_referral_target - n_added_ref
-        n_added_gen = 0
-        attempts = 0
-        while n_added_gen < n_general_target && attempts < max_retries
-            attempts += 1
-            wid = rand(rng, 1:N_W)
-            if state.workers[wid].status == available && wid ∉ pool
-                push!(pool, wid)
-                n_added_gen += 1
+        if !isempty(eligible)
+            n_to_add = min(n_gap, length(eligible))
+
+            # Referral half: G_S neighbors of current pool members
+            n_referral_target = isempty(pool) ? 0 : n_to_add ÷ 2
+            n_added_ref = 0
+            if n_referral_target > 0
+                referral_eligible = Int[]
+                pool_set = pool  # Set lookup for neighbor filtering
+                for wid in eligible
+                    for nbr in neighbors(state.G_S, wid)
+                        if nbr in pool_set
+                            push!(referral_eligible, wid)
+                            break
+                        end
+                    end
+                end
+                if !isempty(referral_eligible)
+                    n_ref = min(n_referral_target, length(referral_eligible))
+                    ref_sample = sample(rng, referral_eligible, n_ref; replace=false)
+                    for wid in ref_sample
+                        push!(pool, wid)
+                        n_added_ref += 1
+                    end
+                end
+            end
+
+            # General half (+ unfilled referral slots): random from remaining eligible
+            n_general = n_to_add - n_added_ref
+            if n_general > 0
+                general_eligible = filter(wid -> wid ∉ pool, eligible)
+                n_gen = min(n_general, length(general_eligible))
+                if n_gen > 0
+                    gen_sample = sample(rng, general_eligible, n_gen; replace=false)
+                    for wid in gen_sample
+                        push!(pool, wid)
+                    end
+                end
             end
         end
     end
@@ -110,6 +123,7 @@ function step_period!(state::ModelState)
         dec = outsourcing_decision(state.firms[j], state.broker,
                                     state.cal.q_pub, rng)
         decisions[j] = dec
+        state.firms[j].last_channel = dec
         if dec == :internal
             state.accum.openings_internal += n_vac
         else

@@ -18,17 +18,18 @@ using TransientBrokerage
     # n_candidates_frac=0.03, pool maintenance at start, no-proposal penalty toward zero
     # Features: firm=[w; w.^2], broker=[w; x; w⊗x; w.^2]
     # Vacancy: 50/50 chance of 1 or 2 vacancies per draw
+    # Pool: direct sampling from eligible workers (no rejection sampling)
     expected = [
         (37, 36, 79, 54),  # period 1
-        (30, 60, 76, 54),  # period 2
-        (31, 84, 74, 56),  # period 3
-        (43, 118, 60, 57),  # period 4
-        (33, 139, 74, 61),  # period 5
-        (37, 166, 72, 65),  # period 6
-        (33, 182, 76, 69),  # period 7
-        (35, 200, 80, 71),  # period 8
-        (37, 224, 75, 76),  # period 9
-        (32, 242, 75, 80),  # period 10
+        (34, 61, 71, 58),  # period 2
+        (36, 86, 73, 61),  # period 3
+        (25, 98, 79, 65),  # period 4
+        (33, 120, 78, 67),  # period 5
+        (40, 149, 70, 69),  # period 6
+        (31, 166, 78, 71),  # period 7
+        (39, 187, 75, 71),  # period 8
+        (36, 200, 71, 75),  # period 9
+        (34, 217, 80, 77),  # period 10
     ]
 
     for (t, (exp_matches, exp_hist, exp_pool, exp_next_id)) in enumerate(expected)

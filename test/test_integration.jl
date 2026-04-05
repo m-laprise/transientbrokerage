@@ -83,11 +83,12 @@ using DataFrames: DataFrame, nrow, names, eltype
         @test all(diff(mdf.cumulative_placement_revenue) .>= -1e-10)
     end
 
-    # Surplus apportionment: non-negative total, staffing fields zero in base model
+    # Surplus apportionment: positive on average (individual periods can go negative
+    # when noise pushes q below r_i), staffing fields zero in base model
     @testset "surplus apportionment" begin
         _, mdf = run_simulation(params)
-        @test all(mdf.total_realized_surplus .>= 0.0)
-        @test all(mdf.worker_surplus .>= 0.0)
+        @test mean(mdf.total_realized_surplus) > 0.0
+        @test mean(mdf.worker_surplus) > 0.0
         # Staffing fields are zero in base model
         @test all(mdf.firm_surplus_staffed .== 0.0)
         @test all(mdf.broker_surplus_staffing .== 0.0)

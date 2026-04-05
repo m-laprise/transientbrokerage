@@ -7,11 +7,20 @@ Burt's constraint, effective size) on the combined graph.
 
 # ── Prediction quality ──
 
+"""Minimum Var(realized) for R² to be meaningful: σ_ε²/6 ≈ 0.01.
+Below this, the sample contains too little signal variation relative to the
+noise floor for R² to be informative (even a perfect predictor of f would
+produce extremely negative R²). Corresponds roughly to the 5th percentile
+of the sample-variance distribution under zero signal."""
+const MIN_VAR_FOR_R2 = SIGMA_EPS^2 / 6
+
 """
     compute_prediction_quality(predicted, realized) -> PredictionQuality
 
 R-squared, bias, and Spearman rank correlation over paired prediction/outcome vectors.
 Returns NaN for all fields when fewer than 5 observations.
+R² returns NaN when Var(realized) < MIN_VAR_FOR_R2 (σ_ε²/6): below this threshold
+the sample has too little signal variation for R² to be meaningful.
 """
 function compute_prediction_quality(predicted::Vector{Float64},
                                     realized::Vector{Float64})::PredictionQuality
@@ -27,7 +36,7 @@ function compute_prediction_quality(predicted::Vector{Float64},
     mse /= n
     bias /= n
     var_q = var(realized)
-    r2 = var_q > 0 ? 1.0 - mse / var_q : NaN
+    r2 = var_q >= MIN_VAR_FOR_R2 ? 1.0 - mse / var_q : NaN
     rank_corr = corspearman(predicted, realized)
     return PredictionQuality(r2, bias, rank_corr)
 end
@@ -39,8 +48,12 @@ end
 
 Assemble the combined graph for network measures (§4, §8 step 6.1).
 Nodes: workers 1:N_W, firms N_W+1:N_W+N_F, broker N_W+N_F+1.
-Edges: G_S (worker-worker), G_E (worker-firm employment),
-       broker-pool (worker-broker), broker-client (broker-firm).
+Edges:
+  - G_S (worker–worker): fixed social network
+  - G_E (worker–firm): direct employment ties (excludes staffed workers)
+  - Broker–worker: pool members (available candidates) + staffed workers
+  - Broker–firm: firms whose most recent outsourcing choice was :broker,
+    plus firms with active staffing assignments
 Returns the graph and the broker node index.
 """
 function build_combined_graph(state::ModelState)::Tuple{SimpleGraph{Int}, Int}
@@ -56,7 +69,7 @@ function build_combined_graph(state::ModelState)::Tuple{SimpleGraph{Int}, Int}
         add_edge!(G, src(e), dst(e))
     end
 
-    # G_E edges (worker-firm employment)
+    # G_E edges (worker-firm employment, direct hires only; staffed workers excluded)
     for (j, firm) in enumerate(state.firms)
         firm_node = N_W + j
         for wid in firm.employees
@@ -64,14 +77,27 @@ function build_combined_graph(state::ModelState)::Tuple{SimpleGraph{Int}, Int}
         end
     end
 
-    # Broker pool edges (worker-broker)
+    # Broker-worker edges: pool members (available candidates)
     for wid in state.broker.pool
         add_edge!(G, wid, broker_node)
     end
 
-    # Broker client edges (broker-firm for current outsourcing firms)
-    for j in state.broker_clients
-        add_edge!(G, broker_node, N_W + j)
+    # Broker-worker edges: staffed workers (active assignments, no firm edge — lock-in)
+    for sa in state.broker.active_assignments
+        add_edge!(G, sa.worker_id, broker_node)
+    end
+
+    # Broker-firm edges: firms whose most recent outsourcing choice was :broker
+    for (j, firm) in enumerate(state.firms)
+        if firm.last_channel == :broker
+            add_edge!(G, broker_node, N_W + j)
+        end
+    end
+
+    # Broker-firm edges: firms with active staffing assignments
+    # (add_edge! is idempotent on SimpleGraph — no duplicate edges)
+    for sa in state.broker.active_assignments
+        add_edge!(G, broker_node, N_W + sa.firm_idx)
     end
 
     return (G, broker_node)

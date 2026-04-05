@@ -31,6 +31,7 @@ Base.@kwdef mutable struct Firm
     satisfaction_broker::Float64 = 0.0
     tried_internal::Bool = false
     tried_broker::Bool = false
+    last_channel::Symbol = :none             # most recent outsourcing choice (:internal, :broker, or :none)
     referral_pool::Set{Int} = Set{Int}()     # R_j^t, recomputed each period
     hire_count::Int = 0                      # total direct hires made
     periods_alive::Int = 0

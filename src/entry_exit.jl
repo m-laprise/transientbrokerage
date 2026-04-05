@@ -53,6 +53,7 @@ function enter_firm!(state::ModelState, firm_idx::Int, avail::BitVector,
     firm.satisfaction_broker = q_pub
     firm.tried_internal = false
     firm.tried_broker = false
+    firm.last_channel = :none
     empty!(firm.referral_pool)
     firm.hire_count = 0
     firm.periods_alive = 0
