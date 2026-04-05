@@ -169,6 +169,7 @@ Base.@kwdef mutable struct PeriodAccumulators
     broker_surplus_placement::Float64 = 0.0
     broker_surplus_staffing::Float64 = 0.0
     n_active_staffing::Int = 0
+    broker_pool_size_post_maintenance::Int = 0  # recorded after refill, before matching
 end
 
 """Zero all per-period fields in `a`, preserving cumulative revenue totals."""
@@ -206,6 +207,7 @@ function reset_accumulators!(a::PeriodAccumulators)
     a.broker_surplus_placement = 0.0
     a.broker_surplus_staffing = 0.0
     a.n_active_staffing = 0
+    a.broker_pool_size_post_maintenance = 0
     return nothing
 end
 

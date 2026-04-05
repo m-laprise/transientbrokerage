@@ -41,7 +41,7 @@ function collect_period_metrics(state::ModelState)
         n_direct = length(a.q_direct),
         n_placed = length(a.q_placed),
         broker_history_size = effective_history_size(b),
-        broker_pool_size = length(b.pool),
+        broker_pool_size = a.broker_pool_size_post_maintenance,
         broker_reputation = b.last_reputation,
         betweenness = cn.betweenness,
         constraint = cn.constraint,

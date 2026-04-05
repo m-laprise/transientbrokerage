@@ -91,6 +91,8 @@ function step_period!(state::ModelState)
         end
     end
 
+    state.accum.broker_pool_size_post_maintenance = length(pool)
+
     # Build available BitVector (after pool maintenance, for candidate generation)
     avail = falses(N_W)
     for w in state.workers

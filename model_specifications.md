@@ -360,7 +360,7 @@ From these, each firm $j$'s **referral reach** is the set of workers reachable t
 
 $$R_j^t = \bigcup_{i \in E_j^t} N_S(i) \setminus E_j^t$$
 
-The broker maintains a **pool** $\text{Pool}^t$ of workers it can propose for matching. The pool has a fixed target size $P$ (default $\lceil 0.20 \cdot N_W \rceil = 200$ at $N_W = 1000$), representing the broker's operational capacity for sourcing, vetting, and maintaining candidate relationships. Each period, workers who were placed or staffed in the previous period leave the pool (they are no longer available candidates), and the broker recruits replacement workers drawn uniformly at random from available workers not already in the pool, topping the pool back up to $\min(P, |\text{available} \setminus \text{Pool}^t|)$. The pool thus remains at or near its target size throughout the simulation, turning over as candidates are placed and replaced. Each period, the broker evaluates available pool members against its current clients and proposes matches using a greedy best-pair heuristic (§5b).
+The broker maintains a **pool** $\text{Pool}^t$ of workers it can propose for matching. The pool has a fixed target size $P$ (default $\lceil 0.20 \cdot N_W \rceil = 200$ at $N_W = 1000$), representing the broker's operational capacity for sourcing, vetting, and maintaining candidate relationships. Each period, workers who were placed or staffed in the previous period leave the pool (they are no longer available candidates), and the broker recruits replacement workers by sampling directly from the eligible set $\{\text{available workers}\} \setminus \text{Pool}^t$, half from social-network neighbors of current pool members (referral recruitment) and half uniformly at random, topping the pool back up to $\min(P, |\text{available} \setminus \text{Pool}^t|)$. The pool thus remains at or near its target size throughout the simulation, turning over as candidates are placed and replaced. Each period, the broker evaluates available pool members against its current clients and proposes matches using a greedy best-pair heuristic (§5b).
 
 **Combined graph for network measures**. Each measurement period, a combined graph is assembled with $N_W + N_F + 1$ nodes (workers, firms, and the broker) and five edge types: (1) $G_S$ edges among workers, (2) employment edges from $G_E^t$ (direct hires only; staffed workers excluded), (3) broker–worker edges for pool members (available candidates) and staffed workers (active assignments), (4) broker–firm edges for firms whose most recent outsourcing choice was the broker (persisting across periods without vacancies), and (5) broker–firm edges for firms with active staffing assignments. Staffed workers are connected to the broker but not to the client firm, reflecting the lock-in mechanism (§9f). Network measures computed on this graph (§8; cross-mode betweenness centrality, Burt's constraint, effective size) draw on the structural holes literature (Burt, 1992, 2005) and the two-mode network analysis literature (Faust, 1997).
 
@@ -632,6 +632,8 @@ where $p_{bj}$ is the proportion of the broker's ties invested in node $j$. Low 
 - *Bias* $= \frac{1}{n}\sum(\hat{q} - q)$. Tracks systematic over- or underprediction. Positive bias is expected in the selected sample due to the winner's curse: the agent selects candidates whose predictions benefited from positive noise. This bias inflates wages (through the surplus-sharing formula, §3a) and drives the recognition gap (§7a). $R^2$ can be high while bias is large if predictions track the shape of $f$ but are shifted.
 
 - *Selected rank correlation* (Spearman's $\rho_S$). Measures whether the agent ranks hired candidates correctly by realized output, independent of level or scale. This is the measure most relevant to **hiring decision quality**: did the agent pick the right candidates from the pool? The rank correlation is less affected by the winner's curse than $R^2$ because it is invariant to monotone transformations of the prediction scale. High rank correlation with low $R^2$ indicates good candidate selection but miscalibrated pricing.
+
+**Minimum variance threshold for $R^2$.** When $\text{Var}(q) < \sigma_\varepsilon^2 / 6 \approx 0.01$, the realized output variance in the sample is too small relative to the noise floor for $R^2$ to be informative: even a perfect predictor of $f$ would produce extremely negative $R^2$ in such samples. Below this threshold, $R^2$ returns NaN. The threshold corresponds approximately to the 5th percentile of the sample-variance distribution under zero signal variance. This applies to both selected and holdout $R^2$.
 
 **Summary of the three prediction quality metrics:**
 
@@ -967,7 +969,7 @@ In the table, $\bar{f}$ denotes the mean absolute match output $E[|f(w,x)|]$, co
 | Symbol | Meaning | Default | Sweep | Model |
 |--------|---------|---------|-------|-------|
 | $d$ | Type dimensionality | 8 | {4, 8, 12} | Base |
-| $\rho$ | Quality-interaction mixing weight (§1d) | 0.50 | {0, 0.10, 0.50, 0.90, 1.0} | Base |
+| $\rho$ | Quality-interaction mixing weight (§1d) | 0.50 | {0, 0.10, 0.30, 0.50, 0.70, 0.90, 1.0} | Base |
 
 **OAT sensitivity parameters.** Varied one at a time while holding all others at defaults. Confirms that qualitative dynamics are robust (Fig. S3).
 
