@@ -48,3 +48,41 @@ function compute_all_referral_pools!(firms::Vector{Firm}, workers::Vector{Worker
     end
     return nothing
 end
+
+"""
+    add_coworker_ties!(G_S, worker_id, firm_employees, rng)
+
+Add G_S ties between a newly hired worker and a random half of their coworkers
+(up to 5 new ties). Called on direct hires and placements, not staffing.
+Uses partial Fisher-Yates shuffle — one allocation for the coworker list.
+"""
+function add_coworker_ties!(G_S::SimpleGraph, worker_id::Int,
+                            firm_employees::Set{Int}, rng::AbstractRNG)
+    coworkers = Int[]
+    for wid in firm_employees
+        wid != worker_id && push!(coworkers, wid)
+    end
+    nc = length(coworkers)
+    nc == 0 && return nothing
+    n_ties = min(cld(nc, 2), 5)
+    for i in 1:n_ties
+        j = rand(rng, i:nc)
+        coworkers[i], coworkers[j] = coworkers[j], coworkers[i]
+        add_edge!(G_S, worker_id, coworkers[i])
+    end
+    return nothing
+end
+
+"""
+    add_all_coworker_ties!(G_S, employee_ids)
+
+Connect all members of a group pairwise in G_S. Used for initial employees
+at firm creation (initialization and entry). Deterministic — no RNG consumed.
+"""
+function add_all_coworker_ties!(G_S::SimpleGraph, employee_ids)
+    ids = collect(employee_ids)
+    for i in 1:length(ids), j in (i+1):length(ids)
+        add_edge!(G_S, ids[i], ids[j])
+    end
+    return nothing
+end

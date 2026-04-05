@@ -292,7 +292,12 @@ function initialize_model(params::ModelParams)::ModelState
     # 12. Broker reputation at q_pub
     broker.last_reputation = q_pub
 
-    # 13. Referral pools (after employment assigned)
+    # 13. Coworker ties: pairwise connections among initial employees
+    for firm in firms
+        add_all_coworker_ties!(G_S, firm.employees)
+    end
+
+    # 14. Referral pools (after employment and coworker ties)
     compute_all_referral_pools!(firms, workers, G_S)
 
     # 14. Accumulators and cached network measures

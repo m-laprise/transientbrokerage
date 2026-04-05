@@ -75,6 +75,7 @@ function finalize_match!(match::ProposedMatch, state::ModelState)::Float64
     worker.status = employed
     worker.employer_id = firm.id
     push!(firm.employees, match.worker_id)
+    add_coworker_ties!(state.G_S, match.worker_id, firm.employees, state.rng)
 
     # Record to firm history
     record_history!(firm, worker.type, q_realized)

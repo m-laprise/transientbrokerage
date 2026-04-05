@@ -79,6 +79,7 @@ function enter_firm!(state::ModelState, firm_idx::Int, avail::BitVector,
             q = match_output(state.workers[wid].type, firm.type, state.env, rng)
             record_history!(firm, state.workers[wid].type, q)
         end
+        add_all_coworker_ties!(state.G_S, firm.employees)
     end
 
     return nothing

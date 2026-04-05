@@ -36,6 +36,7 @@ export default_params, validate_params
 export generate_matching_function, cosine_sim, eval_mu, eval_interaction, eval_interaction!, R_BASE_FRAC
 export match_output, match_signal, match_signal!, calibrate_output_scale
 export build_social_network, compute_referral_pool!, compute_all_referral_pools!
+export add_coworker_ties!, add_all_coworker_ties!
 export FirmGeometry, generate_firm_geometry, sample_firm_type, generate_firm_types
 export compute_reservation_wage, create_firm, create_broker
 export assign_initial_employment!, initialize_model

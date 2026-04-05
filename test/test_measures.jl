@@ -19,21 +19,20 @@ using Graphs: SimpleGraph, add_edge!, star_graph, nv, ne
         n_pool_edges = length(state.broker.pool)
         @test ne(G) == n_gs_edges + n_emp_edges + n_pool_edges
 
-        # After a step, broker-firm edges appear for firms that chose :broker
+        # After a step, G_S has grown (coworker ties) and broker-firm edges appear
         step_period!(state)
         G2, _ = build_combined_graph(state)
+        n_gs_edges2 = ne(state.G_S)  # G_S grows from coworker ties during matching
         n_emp_edges2 = sum(length(f.employees) for f in state.firms)
         n_pool_edges2 = length(state.broker.pool)
         n_staffed_edges = length(state.broker.active_assignments)
-        n_broker_firm = count(f -> f.last_channel == :broker, state.firms)
-        # Staffing assignments may add broker-firm edges for firms already counted
-        # by last_channel; add_edge! is idempotent so count unique firm indices
         staffing_firm_idxs = Set(sa.firm_idx for sa in state.broker.active_assignments)
         n_broker_firm_total = length(union(
             Set(j for (j, f) in enumerate(state.firms) if f.last_channel == :broker),
             staffing_firm_idxs))
-        @test ne(G2) == n_gs_edges + n_emp_edges2 + n_pool_edges2 + n_staffed_edges + n_broker_firm_total
-        @test n_broker_firm_total > 0  # at least some firms use the broker
+        @test ne(G2) == n_gs_edges2 + n_emp_edges2 + n_pool_edges2 + n_staffed_edges + n_broker_firm_total
+        @test n_gs_edges2 >= n_gs_edges  # G_S only grows (coworker ties are permanent)
+        @test n_broker_firm_total > 0
     end
 
     # Star graph: center has low constraint (contacts are disconnected)

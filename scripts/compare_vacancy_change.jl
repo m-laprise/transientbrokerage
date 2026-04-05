@@ -3,7 +3,7 @@
 
 using JLD2, DataFrames, Statistics, Printf
 
-const OLD_DIR = joinpath(@__DIR__, "..", "data", "sims", "exploration_pre_dual_vacancy")
+const OLD_DIR = joinpath(@__DIR__, "..", "data", "sims", "exploration_pre_coworker_ties")
 const NEW_DIR = joinpath(@__DIR__, "..", "data", "sims", "exploration")
 
 const GEOMETRIES = ["complex", "simple", "unstructured"]
