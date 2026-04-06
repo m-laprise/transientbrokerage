@@ -1,9 +1,12 @@
 """
     explore_staffing.jl
 
-Run Model 1 (staffing) for T periods across parameter configurations and seeds.
-Produces 5x3 dynamics figures and 2x3 surplus figures comparing staffing dynamics
-against the base model. Base model data loaded from explore_base_model.jl cache.
+Run Model 1 (staffing) for T=300 periods across parameter configurations
+(d, rho, eta sweeps) and 5 seeds per config, for each firm geometry.
+Produces per config: a 5×3 dynamics figure and a 2×3 surplus figure,
+overlaying staffing dynamics against base model reference (dashed grey).
+Requires base model data from explore_base_model.jl (loaded from cache).
+Data cached as JLD2; figures saved as PNG.
 
 Usage: julia --project --threads=auto scripts/explore_staffing.jl
        julia --project --threads=auto scripts/explore_staffing.jl --rerun --geometry=all

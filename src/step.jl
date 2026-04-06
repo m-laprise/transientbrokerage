@@ -8,13 +8,15 @@ Main simulation loop: one period of the model (§8 steps 0-7).
     step_period!(state)
 
 Execute one period of the simulation. Steps:
-0. Referral pools
-1. Vacancy management and outsourcing decisions
-2. Candidate generation and evaluation (internal search + broker allocation)
-3. Match formation (wage setting, conflict resolution, finalization)
-4. Reputation update
-5. Entry/exit
-6. Broker pool maintenance (remove non-available, top up to target P)
+0. Broker pool maintenance (purge non-available, refill to target P)
+1. Referral pool computation
+2. Vacancy management (dual-vacancy draw) and outsourcing decisions
+3. Candidate generation and evaluation (internal search + broker allocation)
+4. Match formation (wage setting, conflict resolution, finalization with coworker ties)
+   4b. Staffing economics for active assignments (Model 1)
+   Holdout prediction evaluation
+5. Broker reputation update, pool purge
+6. Entry/exit (firm turnover with replacement)
 7. Network measures (every M periods)
 """
 function step_period!(state::ModelState)

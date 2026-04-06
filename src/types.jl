@@ -90,10 +90,10 @@ struct ModelParams
     L::Int                       # fee amortization period (§6a); reused as staffing assignment length in M1 (§9)
     mu_b::Float64                # staffing value-capture rate
     c_emp_frac::Float64          # employment cost as fraction of r_base
-    p_vac::Float64               # per-period vacancy probability (default 0.30)
-    pool_target_frac::Float64    # broker pool target as fraction of N_W (default 0.20; P = ⌈frac · N_W⌉)
+    p_vac::Float64               # per-period vacancy probability (default 0.50)
+    pool_target_frac::Float64    # broker pool target as fraction of N_W (default 0.10; P = ⌈frac · N_W⌉)
     sigma_w::Float64             # worker type dispersion around firm curve (default 0.5)
-    n_candidates_frac::Float64   # candidates as fraction of N_W (default 0.015)
+    n_candidates_frac::Float64   # candidates as fraction of N_W (default 0.03)
     network_measure_interval::Int # M
     enable_staffing::Bool        # Model 1 toggle: when false, all matches are direct hire or placement
     T::Int                       # total periods

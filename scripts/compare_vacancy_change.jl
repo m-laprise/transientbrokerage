@@ -1,5 +1,8 @@
 #!/usr/bin/env julia
-# Compare simulation dynamics before and after dual-vacancy change.
+# Compare simulation dynamics between two exploration data sets.
+# Loads JLD2 data from OLD_DIR and NEW_DIR, prints a summary table of key
+# metrics (matches, outsourcing, prediction quality, surplus, betweenness)
+# across all geometries, configs, and both models (base and staffing).
 
 using JLD2, DataFrames, Statistics, Printf
 

@@ -60,8 +60,9 @@ end
 """
     finalize_match!(match, state) -> Float64
 
-Realize match output, update worker status, firm employees, histories, satisfaction,
-and surplus. For direct hires and placements only; staffing uses `create_staffing_assignment!`.
+Realize match output, update worker status, firm employees, coworker ties in G_S,
+histories, satisfaction, and surplus. For direct hires and placements only;
+staffing uses `create_staffing_assignment!`.
 """
 function finalize_match!(match::ProposedMatch, state::ModelState)::Float64
     @assert match.source in (:internal, :broker) "finalize_match! called with source=$(match.source); staffing should use create_staffing_assignment!"
@@ -168,8 +169,9 @@ end
 """
     penalize_no_proposal!(firm, omega)
 
-No-proposal penalty per §6a: broker satisfaction updates toward zero (firm
-outsourced and received nothing).
+No-proposal penalty (§6a): broker satisfaction decays toward zero via
+`s_broker = (1-ω) * s_broker`. Called when a firm outsourced but the broker
+made no proposal (pool exhausted or no surplus-positive candidate).
 """
 function penalize_no_proposal!(firm::Firm, omega::Float64)
     firm.satisfaction_broker = (1.0 - omega) * firm.satisfaction_broker

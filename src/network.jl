@@ -1,7 +1,7 @@
 """
     network.jl
 
-Social network construction and referral pool computation.
+Social network construction, referral pool computation, and coworker tie formation.
 """
 
 """

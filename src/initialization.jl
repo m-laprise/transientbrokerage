@@ -300,7 +300,7 @@ function initialize_model(params::ModelParams)::ModelState
     # 14. Referral pools (after employment and coworker ties)
     compute_all_referral_pools!(firms, workers, G_S)
 
-    # 14. Accumulators and cached network measures
+    # 15. Accumulators and cached network measures
     accum = PeriodAccumulators()
     cached_network = CachedNetworkMeasures(NaN, NaN, NaN)
 

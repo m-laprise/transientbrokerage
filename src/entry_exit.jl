@@ -31,9 +31,9 @@ end
     enter_firm!(state, firm_idx, avail, candidates, wts)
 
 Reset the firm at `firm_idx` in-place as a fresh entrant: new type, cleared history,
-satisfaction at q_pub, and 6-10 employees drawn by type proximity from `avail`.
-Reuses existing history buffers to avoid allocation. `candidates` and `wts` are
-pre-allocated buffers.
+satisfaction at q_pub, last_channel reset, and 6-10 employees drawn by type proximity
+from `avail` with pairwise coworker ties in G_S. Reuses existing history buffers to
+avoid allocation. `candidates` and `wts` are pre-allocated buffers.
 """
 function enter_firm!(state::ModelState, firm_idx::Int, avail::BitVector,
                      candidates::Vector{Int}, wts::Vector{Float64})

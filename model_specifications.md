@@ -390,7 +390,7 @@ When firm $j$ outsources to the broker, the broker includes firm $j$ in its allo
 
 The firm does not apply a separate surplus threshold to the broker's proposal; the outsourcing decision reflects cumulative experience with the broker, not a per-match evaluation. Poor realized output reduces the firm's satisfaction, making future outsourcing less likely (§6a).
 
-Firms whose vacancy is not filled (because the pool was exhausted or no candidate cleared the surplus threshold) receive no proposal. The firm's broker satisfaction updates toward its internal satisfaction: $s_{j,b}^{t+1} = (1 - \omega)\, s_{j,b}^t + \omega \cdot s_{j,\text{int}}^t$ (§6a). The broker's proposals may conflict with internal search (the same worker could be selected by both channels). These conflicts are resolved in Step 3.2.
+Firms whose vacancy is not filled (because the pool was exhausted or no candidate cleared the surplus threshold) receive no proposal. The firm's broker satisfaction decays toward zero: $s_{j,b}^{t+1} = (1 - \omega)\, s_{j,b}^t$ (§6a). The broker's proposals may conflict with internal search (the same worker could be selected by both channels). These conflicts are resolved in Step 3.2.
 
 After any match forms (whether via internal search or brokered placement), the realized match output $q_{ij}$ is observed by all parties. The broker adds the observation to its experience history for future predictions (§2).
 
@@ -416,11 +416,11 @@ where $\text{cost}_{c}$ is the firm's per-period expenditure above the baseline 
 
 Since every channel pays $r_i$ as baseline labor cost, it cancels in cross-channel comparisons. The placement fee is amortized over $L$ periods (the expected useful duration of a hire) so that per-period costs are comparable across channels. M1 reuses $L$ as the staffing assignment length (§9). For subscribers under data capture (§10b), the prediction $\hat{q}_b$ replaces $\hat{q}_j$ in the wage formula, so the deduction uses $\hat{q}_b$ as well.
 
-**No-proposal penalty.** When the broker makes no proposal for firm $j$ (either because the pool is exhausted or no candidate clears the surplus threshold; §5b), the firm's broker satisfaction updates toward its internal satisfaction:
+**No-proposal penalty.** When the broker makes no proposal for firm $j$ (either because the pool is exhausted or no candidate clears the surplus threshold; §5b), the firm's broker satisfaction decays toward zero:
 
-$$s_{j,b}^{t+1} = (1 - \omega)\, s_{j,b}^t + \omega \cdot s_{j,\text{int}}^t$$
+$$s_{j,b}^{t+1} = (1 - \omega)\, s_{j,b}^t$$
 
-The penalty is the opportunity cost of outsourcing: the firm delegated its search to the broker and received nothing, forgoing the outcome it would have gotten from internal search. Repeated non-delivery pulls $s_{j,b}$ toward $s_{j,\text{int}}$, at which point the firm stops outsourcing. A single bad match (which can produce negative satisfaction input when costs exceed output) is strictly worse than non-delivery, so the broker is never incentivized to propose low-quality matches to avoid the penalty.
+The firm delegated its search to the broker and received nothing. Repeated non-delivery drives $s_{j,b}$ toward zero, causing the firm to revert to internal search. A single bad match (which can produce negative satisfaction input when costs exceed output) is strictly worse than non-delivery, so the broker is never incentivized to propose low-quality matches to avoid the penalty.
 
 Satisfaction indices are not floored: they can go negative when costs persistently exceed output, which is informative for the outsourcing decision. The EWMA's recency weighting ensures recovery from negative values within a few good observations.
 
@@ -563,7 +563,7 @@ Each period proceeds through six steps. The pseudocode below specifies the exact
 > &emsp;&emsp;&emsp;If brokered placement: $\tilde{q} = q_{i^*j} - \beta_W \cdot \max(\hat{q}_j(w_{i^*}) - r_{i^*},\; 0) - \alpha \cdot \text{wage}_{i^*j} / L$
 > &emsp;&emsp;&emsp;$s_{j,c}^{t+1} = (1 - \omega)\, s_{j,c}^t + \omega \cdot \tilde{q}$
 > &emsp;&emsp;for each firm $j$ that outsourced but received no proposal:
-> &emsp;&emsp;&emsp;$s_{j,\text{broker}}^{t+1} = (1 - \omega) \cdot s_{j,\text{broker}}^t + \omega \cdot s_{j,\text{int}}^t$ &ensp;(opportunity-cost penalty, §6a)
+> &emsp;&emsp;&emsp;$s_{j,\text{broker}}^{t+1} = (1 - \omega) \cdot s_{j,\text{broker}}^t$ &ensp;(no-proposal penalty, §6a)
 >
 > 4.3. &emsp;Update broker reputation:
 > &emsp;&emsp;if $|J^t| > 0$: $\text{rep}^t \leftarrow \text{mean of } s_{j,\text{broker}}^t \text{ over } j \in J^t$; store as last\_reputation
@@ -835,7 +835,7 @@ Steps not listed are identical to the base pseudocode (§8).
 | **Firm's per-period cost** | $r_i + \beta_W \hat{S}_j$ | $r_i + \beta_W \hat{S}_j + \alpha \cdot \text{wage}/L$ | $r_i + \mu_b \hat{q}_b$ |
 | **Cost above $r_i$** | $\beta_W \max(\hat{q}_j - r_i, 0)$ | $\beta_W \max(\hat{q}_j - r_i, 0) + \alpha \cdot \text{wage}/L$ | $\mu_b \hat{q}_b$ |
 | **Satisfaction input** (§6a) | $q_{ij} - \beta_W \max(\hat{q}_j - r_i, 0)$ | $q_{ij} - \beta_W \max(\hat{q}_j - r_i, 0) - \alpha \cdot \text{wage}/L$ | $q_{ij} - \mu_b \hat{q}_b$ |
-| **No-proposal penalty** (§6a) | None (vacancy persists, no update) | $s_{j,b} \leftarrow (1-\omega) s_{j,b} + \omega \cdot s_{j,\text{int}}$ | Same |
+| **No-proposal penalty** (§6a) | None (vacancy persists, no update) | $s_{j,b} \leftarrow (1-\omega) s_{j,b}$ | Same |
 | **Worker joins $E_j$?** | Yes | Yes | No (lock-in, §9f) |
 | **Firm learns from match?** | Yes (adds to $\mathcal{H}_j$) | Yes | No (lock-in, §9f) |
 | **Referral network grows?** | Yes | Yes | No (lock-in, §9f) |

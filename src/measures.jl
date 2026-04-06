@@ -49,7 +49,7 @@ end
 Assemble the combined graph for network measures (§4, §8 step 6.1).
 Nodes: workers 1:N_W, firms N_W+1:N_W+N_F, broker N_W+N_F+1.
 Edges:
-  - G_S (worker–worker): fixed social network
+  - G_S (worker–worker): social network (evolves via coworker ties)
   - G_E (worker–firm): direct employment ties (excludes staffed workers)
   - Broker–worker: pool members (available candidates) + staffed workers
   - Broker–firm: firms whose most recent outsourcing choice was :broker,

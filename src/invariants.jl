@@ -8,8 +8,9 @@ Debug-time state consistency checks. Disable in production runs for performance.
     verify_invariants(state)
 
 Assert that the simulation state is internally consistent. Checks worker
-conservation, no double-employment, status consistency, broker pool (all members
-available, size <= target P), finite satisfaction, and reservation wage floor.
+conservation, no double-employment, status consistency, vacancy counts in [0,2],
+broker pool (all members available, size <= target P), staffing assignment
+consistency, finite satisfaction, and reservation wage floor.
 Intended for use in test runs; disable in production.
 """
 function verify_invariants(state::ModelState)

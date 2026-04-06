@@ -87,7 +87,7 @@ end
 """Broker feature dimension: 2d + d² + d = d² + 3d."""
 broker_feature_dim(d::Int) = d * d + 3 * d
 
-"""Write firm features [w; w.^2] into `buf` and predict. Zero-allocation hot path."""
+"""Firm prediction: write features [w; w²] into `buf` (length 2d) and return ŷ. Zero-allocation."""
 function predict_ridge!(model::RidgeModel, buf::Vector{Float64}, w::AbstractVector)
     d = length(w)
     @views buf[1:d] .= w
@@ -95,7 +95,7 @@ function predict_ridge!(model::RidgeModel, buf::Vector{Float64}, w::AbstractVect
     return dot(model.beta, buf) + model.intercept
 end
 
-"""Write broker features [w; x; vec(w*x'); w.^2] into `buf` and predict. Zero-allocation hot path."""
+"""Broker prediction: write features [w; x; vec(w⊗x); w²] into `buf` (length d²+3d) and return ŷ. Zero-allocation."""
 function predict_ridge!(model::RidgeModel, buf::Vector{Float64},
                         w::AbstractVector, x::AbstractVector)
     d = length(w)

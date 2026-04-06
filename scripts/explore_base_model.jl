@@ -1,11 +1,15 @@
 """
     explore_base_model.jl
 
-Run the base model (no staffing) for T=1000 periods across multiple parameter
-configurations and seeds. Produce time-series figures to characterize the dynamics
-and identify time scales before writing behavioral tests.
+Run the base model (no staffing) for T=300 periods across multiple parameter
+configurations (d, rho, eta sweeps) and 5 seeds per config, for each firm
+geometry (complex, simple, unstructured). Produces per config: a 5×3 dynamics
+figure, a 2×3 surplus figure, and SVD/matching-matrix figures for configs
+varying d or rho. Data cached as JLD2; figures saved as PNG.
 
 Usage: julia --project --threads=auto scripts/explore_base_model.jl
+       julia --project --threads=auto scripts/explore_base_model.jl --geometry=all
+       julia --project --threads=auto scripts/explore_base_model.jl --rerun --geometry=complex
 """
 
 Threads.nthreads() == 1 && @warn "Running single-threaded; start Julia with --threads=auto for faster betweenness computation"

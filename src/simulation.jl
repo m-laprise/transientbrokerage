@@ -12,8 +12,10 @@ safe_mean(v::Vector{Float64}) = isempty(v) ? NaN : mean(v)
 
 Extract one row of metrics from the current state after `step_period!`.
 Prediction quality computed directly from this period's pairs (no rolling window).
+R² returns NaN when n < 5 or Var(realized) < σ_ε²/6 (insufficient signal variation).
 Selected-sample metrics reflect prediction quality on actual matches (subject to winner's curse).
 Holdout metrics reflect model quality on random workers with noiseless truth (no selection bias).
+Broker pool size recorded post-maintenance (before matching depletes the pool).
 """
 function collect_period_metrics(state::ModelState)
     a = state.accum
