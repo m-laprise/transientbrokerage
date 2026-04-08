@@ -7,23 +7,23 @@ Burt's constraint, effective size) on the combined graph.
 
 # ── Prediction quality ──
 
-"""Minimum Var(realized) for R² to be meaningful: σ_ε²/6 ≈ 0.01.
+"""Minimum Var(realized) for R² to be meaningful: σ_ε²/6.
 Below this, the sample contains too little signal variation relative to the
-noise floor for R² to be informative (even a perfect predictor of f would
-produce extremely negative R²). Corresponds roughly to the 5th percentile
+noise floor for R² to be informative. Corresponds roughly to the 5th percentile
 of the sample-variance distribution under zero signal."""
-const MIN_VAR_FOR_R2 = SIGMA_EPS^2 / 6
+min_var_for_r2(sigma_eps::Float64) = sigma_eps^2 / 6
 
 """
-    compute_prediction_quality(predicted, realized) -> PredictionQuality
+    compute_prediction_quality(predicted, realized; sigma_eps=0.25) -> PredictionQuality
 
 R-squared, bias, and Spearman rank correlation over paired prediction/outcome vectors.
 Returns NaN for all fields when fewer than 5 observations.
-R² returns NaN when Var(realized) < MIN_VAR_FOR_R2 (σ_ε²/6): below this threshold
+R² returns NaN when Var(realized) < σ_ε²/6: below this threshold
 the sample has too little signal variation for R² to be meaningful.
 """
 function compute_prediction_quality(predicted::Vector{Float64},
-                                    realized::Vector{Float64})::PredictionQuality
+                                    realized::Vector{Float64};
+                                    sigma_eps::Float64=SIGMA_EPS)::PredictionQuality
     n = length(predicted)
     n < 5 && return PredictionQuality(NaN, NaN, NaN)
     mse = 0.0
@@ -36,7 +36,7 @@ function compute_prediction_quality(predicted::Vector{Float64},
     mse /= n
     bias /= n
     var_q = var(realized)
-    r2 = var_q >= MIN_VAR_FOR_R2 ? 1.0 - mse / var_q : NaN
+    r2 = var_q >= min_var_for_r2(sigma_eps) ? 1.0 - mse / var_q : NaN
     rank_corr = corspearman(predicted, realized)
     return PredictionQuality(r2, bias, rank_corr)
 end

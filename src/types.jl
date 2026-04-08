@@ -93,6 +93,7 @@ struct ModelParams
     p_vac::Float64               # per-period vacancy probability (default 0.50)
     pool_target_frac::Float64    # broker pool target as fraction of N_W (default 0.10; P = ⌈frac · N_W⌉)
     sigma_w::Float64             # worker type dispersion around firm curve (default 0.5)
+    sigma_eps::Float64           # match output noise SD (default 0.25; §1a)
     n_candidates_frac::Float64   # candidates as fraction of N_W (default 0.03)
     network_measure_interval::Int # M
     enable_staffing::Bool        # Model 1 toggle: when false, all matches are direct hire or placement
@@ -101,13 +102,14 @@ struct ModelParams
     seed::Int
 end
 
-"""Matching environment: ideal worker c and mixing weight ρ for f(w,x) = ρ·sim(w,c) + (1-ρ)·sim(w,Ax)."""
+"""Matching environment: ideal worker c, mixing weight ρ, noise σ_ε, for f(w,x) = ρ·sim(w,c) + (1-ρ)·sim(w,Ax)."""
 struct MatchingEnv
     d::Int                                   # type dimensionality
     rho::Float64                             # mixing weight: ρ · quality + (1-ρ) · interaction
     c::Vector{Float64}                       # ideal worker type vector (drawn like an extra worker)
     c_norm::Float64                          # precomputed ‖c‖
     A::Matrix{Float64}                       # d×d interaction matrix (iid N(0,1) entries)
+    sigma_eps::Float64                       # match output noise SD (§1a)
 end
 
 """Output-scale constants derived from Monte Carlo calibration."""

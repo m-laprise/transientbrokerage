@@ -22,13 +22,14 @@ to learn from local data alone.
 """
 function generate_matching_function(d::Int, rho::Float64,
                                      firm_types::Vector{Vector{Float64}},
-                                     rng::AbstractRNG; sigma_w::Float64=0.5)
+                                     rng::AbstractRNG;
+                                     sigma_w::Float64=0.5, sigma_eps::Float64=0.25)
     σ_per_dim = sigma_w / sqrt(d)
     ref = firm_types[rand(rng, 1:length(firm_types))]
     c = ref .+ σ_per_dim .* randn(rng, d)
     c_norm = norm(c)
     A = randn(rng, d, d)
-    return MatchingEnv(d, rho, c, c_norm, A)
+    return MatchingEnv(d, rho, c, c_norm, A, sigma_eps)
 end
 
 """Cosine similarity a'b / (‖a‖‖b‖), or 0 if either vector is near-zero."""
@@ -83,7 +84,7 @@ economic computations, and ε ~ N(0, σ_ε²) is match noise.
 """
 function match_output(w::AbstractVector, x::AbstractVector,
                       env::MatchingEnv, rng::AbstractRNG)::Float64
-    return Q_OFFSET + env.rho * eval_mu(w, env) + (1.0 - env.rho) * eval_interaction(w, x, env) + SIGMA_EPS * randn(rng)
+    return Q_OFFSET + env.rho * eval_mu(w, env) + (1.0 - env.rho) * eval_interaction(w, x, env) + env.sigma_eps * randn(rng)
 end
 
 """

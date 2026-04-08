@@ -29,6 +29,7 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
         :p_vac => 0.50,
         :pool_target_frac => 0.10,
         :sigma_w => 0.5,
+        :sigma_eps => 0.25,
         :n_candidates_frac => 0.03,
         :network_measure_interval => 10,
         :enable_staffing => false,
@@ -59,6 +60,7 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
         defaults[:p_vac],
         defaults[:pool_target_frac],
         defaults[:sigma_w],
+        defaults[:sigma_eps],
         defaults[:n_candidates_frac],
         defaults[:network_measure_interval],
         defaults[:enable_staffing],
@@ -95,6 +97,7 @@ function validate_params(p::ModelParams)
     @assert 0.0 < p.p_vac <= 1.0 "p_vac must be in (0, 1], got $(p.p_vac)"
     @assert 0.0 < p.pool_target_frac <= 1.0 "pool_target_frac must be in (0, 1], got $(p.pool_target_frac)"
     @assert p.sigma_w > 0.0 "sigma_w must be > 0, got $(p.sigma_w)"
+    @assert p.sigma_eps >= 0.0 "sigma_eps must be ≥ 0, got $(p.sigma_eps)"
     @assert 0.0 < p.n_candidates_frac <= 1.0 "n_candidates_frac must be in (0, 1], got $(p.n_candidates_frac)"
     @assert p.network_measure_interval >= 1 "network_measure_interval must be ≥ 1, got $(p.network_measure_interval)"
     @assert p.T >= 1 "T must be ≥ 1, got $(p.T)"

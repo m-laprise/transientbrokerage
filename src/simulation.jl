@@ -23,12 +23,13 @@ function collect_period_metrics(state::ModelState)
     cn = state.cached_network
 
     # Per-period prediction quality (selected sample — actual hires)
-    firm_rpq = compute_prediction_quality(a.firm_predicted, a.firm_realized)
-    broker_rpq = compute_prediction_quality(a.broker_predicted, a.broker_realized)
+    σ_ε = state.env.sigma_eps
+    firm_rpq = compute_prediction_quality(a.firm_predicted, a.firm_realized; sigma_eps=σ_ε)
+    broker_rpq = compute_prediction_quality(a.broker_predicted, a.broker_realized; sigma_eps=σ_ε)
 
     # Per-period holdout quality (random workers at random firms, noiseless truth)
-    firm_hpq = compute_prediction_quality(a.firm_holdout_pred, a.firm_holdout_real)
-    broker_hpq = compute_prediction_quality(a.broker_holdout_pred, a.broker_holdout_real)
+    firm_hpq = compute_prediction_quality(a.firm_holdout_pred, a.firm_holdout_real; sigma_eps=σ_ε)
+    broker_hpq = compute_prediction_quality(a.broker_holdout_pred, a.broker_holdout_real; sigma_eps=σ_ε)
 
     return (
         period = state.period,
@@ -44,7 +45,6 @@ function collect_period_metrics(state::ModelState)
         n_placed = length(a.q_placed),
         broker_history_size = effective_history_size(b),
         broker_pool_size = a.broker_pool_size_post_maintenance,
-        broker_reputation = b.last_reputation,
         betweenness = cn.betweenness,
         constraint = cn.constraint,
         effective_size = cn.effective_size,
@@ -75,6 +75,10 @@ function collect_period_metrics(state::ModelState)
         avg_firm_size = mean(length(f.employees) for f in state.firms),
         avg_referral_pool_size = mean(length(f.referral_pool) for f in state.firms),
         n_broker_clients = length(state.broker_clients),
+        # Satisfaction (§6a)
+        mean_satisfaction_internal = mean(f.satisfaction_internal for f in state.firms),
+        mean_satisfaction_broker = mean(f.satisfaction_broker for f in state.firms),
+        broker_reputation = b.last_reputation,
         # Surplus apportionment (§8 step 7.3)
         total_realized_surplus = a.total_realized_surplus,
         worker_surplus = a.worker_surplus,

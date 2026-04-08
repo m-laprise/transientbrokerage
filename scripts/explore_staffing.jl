@@ -241,9 +241,12 @@ function plot_staffing_ensemble(mdfs::Vector{DataFrame}, mdfs_base::Vector{DataF
     plot_metric!(ax13, mdf -> mdf.avg_referral_pool_size; label="Avg referral pool", color=COL_INTERNAL)
     axislegend(ax13; position=:rb, leg_kw...)
 
-    ax14 = Axis(fig[5, 2]; title="Broker reputation", xlabel="Period", ylabel="Reputation",
-                limits=(xlims, (-0.02, 2)), ax_kw..., xlabelsize=label_fs)
-    plot_metric!(ax14, mdf -> mdf.broker_reputation; color=COL_BROKER)
+    ax14 = Axis(fig[5, 2]; title="Mean satisfaction by channel", xlabel="Period", ylabel="Satisfaction",
+                limits=(xlims, nothing), ax_kw..., xlabelsize=label_fs)
+    plot_metric!(ax14, mdf -> mdf.mean_satisfaction_internal; label="Internal", color=COL_INTERNAL)
+    plot_metric!(ax14, mdf -> mdf.mean_satisfaction_broker; label="Broker", color=COL_BROKER)
+    plot_metric!(ax14, mdf -> mdf.broker_reputation; label="Reputation", color=:gray50)
+    axislegend(ax14; position=:rb, leg_kw...)
 
     ax15 = Axis(fig[5, 3]; title="Unemployment rate, broker pool & firm size",
                 xlabel="Period", ylabel="Count / %",

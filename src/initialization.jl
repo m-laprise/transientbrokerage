@@ -230,7 +230,8 @@ function initialize_model(params::ModelParams)::ModelState
 
     # 2. Matching function (ideal worker c drawn from firm types)
     env = generate_matching_function(d, params.rho,
-                                     firm_type_vecs, rng; sigma_w=params.sigma_w)
+                                     firm_type_vecs, rng;
+                                     sigma_w=params.sigma_w, sigma_eps=params.sigma_eps)
 
     # 3. Calibration constants using actual firm types
     f_mean, r_base = calibrate_output_scale(env, firm_type_vecs, rng; sigma_w=params.sigma_w)
