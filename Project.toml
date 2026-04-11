@@ -1,6 +1,6 @@
 name = "TransientBrokerage"
 uuid = "dd3a1956-5811-4648-b94e-a9aed0613a84"
-version = "0.1.0"
+version = "0.2.0-dev"
 
 [deps]
 Agents = "46ada45e-f475-11e8-01d0-f70cc89e6671"
