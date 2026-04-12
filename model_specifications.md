@@ -181,47 +181,69 @@ The matching function $f: \mathbb{R}^d \times \mathbb{R}^d \to \mathbb{R}$ is un
 
 The deterministic matching function has two components, the first relating to each party's general quality and the second to their pairing complementarity:
 
-$$f(\mathbf{x}_i, \mathbf{x}_j) = \rho \cdot \frac{1}{2}\!\left[\text{sim}(\mathbf{x}_i, \mathbf{c}) + \text{sim}(\mathbf{x}_j, \mathbf{c})\right] + (1 - \rho) \cdot \frac{1}{2}\!\left[\text{sim}(\mathbf{x}_i, \mathbf{A}\mathbf{x}_j) + \text{sim}(\mathbf{x}_j, \mathbf{A}\mathbf{x}_i)\right]$$
+$$f(\mathbf{x}_i, \mathbf{x}_j) = \rho \cdot \frac{1}{2}\!\left[\mathbf{x}_i^\top \mathbf{c} + \mathbf{x}_j^\top \mathbf{c}\right] + (1 - \rho) \cdot g(\mathbf{x}_i, \mathbf{x}_j) \cdot \mathbf{x}_i^\top \mathbf{A} \mathbf{x}_j$$
 
-where $\text{sim}(\mathbf{a}, \mathbf{b}) = \mathbf{a}^\top \mathbf{b} / (\|\mathbf{a}\| \|\mathbf{b}\|)$ denotes cosine similarity between two vectors, and $\mathbf{A}$ is a $d \times d$ random matrix with iid $N(0, 1)$ entries drawn once at initialization (see §1c). Both components are symmetric under exchange of $i$ and $j$, so $f(\mathbf{x}_i, \mathbf{x}_j) = f(\mathbf{x}_j, \mathbf{x}_i)$.
+where $\mathbf{c} \in \mathbb{R}^d$ is an ideal type vector (§1b), $\mathbf{A} \in \mathbb{R}^{d \times d}$ is a symmetric random interaction matrix (§1c), and $g(\mathbf{x}_i, \mathbf{x}_j)$ is a **regime-dependent gain** that modulates the interaction strength (§1c). The gain $g$ depends on a second symmetric random matrix $\mathbf{B}$ that determines whether a pairing is in a high-gain or low-gain regime. Because $\mathbf{A}$ and $\mathbf{B}$ are symmetric, $\mathbf{x}_i^\top \mathbf{A} \mathbf{x}_j = \mathbf{x}_j^\top \mathbf{A} \mathbf{x}_i$ and $g(\mathbf{x}_i, \mathbf{x}_j) = g(\mathbf{x}_j, \mathbf{x}_i)$, so $f(\mathbf{x}_i, \mathbf{x}_j) = f(\mathbf{x}_j, \mathbf{x}_i)$.
+
+The mixing weight $\rho$ (§1d) controls how much the general quality component contributes to total match output compared to the interaction component.
 
 #### 1b. General quality
 
-General quality captures the portable value each party brings to any match, independent of who the counterparty is. Both parties contribute quality along the same dimension: alignment with an **ideal type vector** $\mathbf{c} \in \mathbb{R}^d$, which represents a quality archetype. Agents whose types are aligned with $\mathbf{c}$ (high cosine similarity) are high-quality counterparties in any match.
+General quality captures the portable value each party brings to any match, independent of who the counterparty is. Both parties contribute quality through their dot product with an **ideal type vector** $\mathbf{c} \in \mathbb{R}^d$. Agents whose types are aligned with $\mathbf{c}$ are high-quality counterparties in any match.
 
 The vector $\mathbf{c}$ is drawn at initialization as a perturbation of a random point on the agent type curve with the same $\sigma_x / \sqrt{d}$ per-dimension noise used for regular agents.
 
-The quality component is:
-
-$$\frac{1}{2}\!\left[\text{sim}(\mathbf{x}_i, \mathbf{c}) + \text{sim}(\mathbf{x}_j, \mathbf{c})\right]$$
-
-Each term is a cosine similarity in $[-1, 1]$, so the average is also in $[-1, 1]$. A match between two high-quality agents produces a high quality component; a match involving a low-quality agent is penalized regardless of the other party's quality.
-
-Because agent types are projected to the unit sphere ($\|\mathbf{x}\| = 1$), cosine similarity reduces to the dot product $\mathbf{x}^\top \mathbf{c} / \|\mathbf{c}\|$, which is linear in $\mathbf{x}$ and learnable by ridge regression. The parameter $\rho$ (§1d) controls how much the general quality component contributes to total match output.
+A match between two high-quality agents produces a high quality component; a match involving a low-quality agent is penalized regardless of the other party's quality. 
 
 #### 1c. Match-specific interaction
 
-The match-specific interaction is the symmetrized cosine similarity between each agent's type and the $\mathbf{A}$-transformed type of the other:
+The match-specific interaction combines a base interaction with a regime-dependent gain: $g(\mathbf{x}_i, \mathbf{x}_j) \cdot \mathbf{x}_i^\top \mathbf{A} \mathbf{x}_j$.
 
-$$\frac{1}{2}\!\left[\text{sim}(\mathbf{x}_i, \mathbf{A}\mathbf{x}_j) + \text{sim}(\mathbf{x}_j, \mathbf{A}\mathbf{x}_i)\right]$$
+**Base interaction.** The bilinear form $\mathbf{x}_i^\top \mathbf{A} \mathbf{x}_j$ measures the complementarity of the pairing. The interaction matrix $\mathbf{A} \in \mathbb{R}^{d \times d}$ is symmetric positive definite (SPD), constructed as $\mathbf{A} = \mathbf{M}_A^\top \mathbf{M}_A$ where $\mathbf{M}_A$ has iid $N(0,1)$ entries, and is fixed for the duration of the simulation. 
 
-The matrix $\mathbf{A} \in \mathbb{R}^{d \times d}$ has iid $N(0, 1)$ entries and is drawn once at initialization. Because $\mathbf{A}$ mixes all $d$ dimensions, the interaction introduces cross-dimensional terms: the match-specific quality of the pairing depends on all $d^2$ products $x_{i,k} \cdot x_{j,l}$ (for $k, l = 1, \ldots, d$), not just the $d$ diagonal products $x_{i,k} \cdot x_{j,k}$.
+Because $\mathbf{A}$ is symmetric, $\mathbf{x}_i^\top \mathbf{A} \mathbf{x}_j = \mathbf{x}_j^\top \mathbf{A} \mathbf{x}_i$, so the base interaction is symmetric without explicit symmetrization. Positive definiteness ensures $\mathbf{A}$ has full rank and well-conditioned eigenvalues, so the interaction structure spans all $d$ dimensions without degenerate directions. The interaction depends on all $d(d+1)/2$ distinct cross-dimensional products $x_{i,k} \cdot x_{j,l}$ (for $k \leq l$).
 
-The symmetrization averages both orderings of the $\mathbf{A}$-transformed interaction, ensuring $f(\mathbf{x}_i, \mathbf{x}_j) = f(\mathbf{x}_j, \mathbf{x}_i)$ even though $\mathbf{A}$ itself is not symmetric.
+**Regime-dependent gain.** A second SPD matrix $\mathbf{B} \in \mathbb{R}^{d \times d}$ (independent of $\mathbf{A}$, same construction) determines a gain that amplifies or attenuates the base interaction:
 
-Each cosine similarity term is bounded in $[-1, 1]$, so the symmetrized interaction is also bounded. For a fixed agent $i$, the interaction varies smoothly with $\mathbf{x}_j$ and is approximately linear (learnable by ridge regression). The diagonal products $\mathbf{x}_i \odot \mathbf{x}_j$ capture only $d$ of the $d^2$ interaction terms induced by $\mathbf{A}$, while the full outer product $\mathbf{x}_i \otimes \mathbf{x}_j$ — the vectorization $\text{vec}()$ of the $d \times d$ matrix $\mathbf{x}_i \mathbf{x}_j^\top$, yielding $d^2$ features — captures all of them.
+$$g(\mathbf{x}_i, \mathbf{x}_j) = 1 + \delta \cdot \text{sign}(\mathbf{x}_i^\top \mathbf{B} \mathbf{x}_j)$$
+
+where $\delta \in (0, 1)$ (default 0.5) controls the gain strength. Because $\mathbf{B}$ is symmetric, $g(\mathbf{x}_i, \mathbf{x}_j) = g(\mathbf{x}_j, \mathbf{x}_i)$. Pairings divide into two regimes: when $\mathbf{x}_i^\top \mathbf{B} \mathbf{x}_j > 0$, the gain is $(1 + \delta)$ (high-gain regime); when $\mathbf{x}_i^\top \mathbf{B} \mathbf{x}_j < 0$, the gain is $(1 - \delta)$ (low-gain regime). At $\delta = 0.5$, the high-gain interaction is three times the low-gain interaction.
+
+The gain modulates the *strength* of the base interaction without changing its sign. Among pairings with similar base interactions $\mathbf{x}_i^\top \mathbf{A} \mathbf{x}_j$, those in the high-gain regime are worth substantially more than those in the low-gain regime. This difference is the source of the broker's informational advantage (§1e).
 
 #### 1d. What controls the difficulty of the matching problem
 
-- **$s$ (active dimensions).** When $s = d$, the type curve spans all $d$ dimensions, creating maximum diversity in interaction effects across agents. When $s < d$, the curve is confined to a lower-dimensional subspace, making the interaction structure lower-dimensional and easier for individual agents to learn from their own history. The broker's advantage is largest when $s$ is high.
+- **$s$ (active dimensions).** When $s = d$, the type curve spans all $d$ dimensions, creating maximum diversity in the type space and the interaction effects that depend on it. When $s < d$, the curve is confined to a lower-dimensional subspace, reducing the effective complexity of the matching problem.
 
-- **Agent geometry.** Two aspects interact: (1) how agents are distributed around the curve ($\sigma_x$ relative to inter-agent spacing), and (2) how much of type space the curve spans (controlled by $s$). At the default $\sigma_x$, agents overlap with multiple neighbors' type regions, creating meaningful variation in match quality that requires data to learn.
+- **$\rho$ (mixing weight).** At high $\rho$, general quality dominates. The quality component $\mathbf{x}_j^\top \mathbf{c}$ is linear in $\mathbf{x}_j$, so each agent can learn it from its own matches alone and cross-agent data adds little. At low $\rho$, the gain-modulated interaction dominates, and the broker's informational advantage is largest (§1e).
 
-- **$\rho$ (mixing weight).** At low $\rho$, the interaction dominates and cross-agent data is essential; the broker's advantage is large. At high $\rho$, general quality dominates and agents can learn from their own matches; the broker's advantage shrinks.
+- **$\delta$ (gain strength).** Controls the magnitude of the regime effect. At $\delta = 0$, the gain is 1 for all pairings and the DGP reduces to a simple interaction without regimes — the broker's advantage is purely statistical. At $\delta > 0$, the gain creates a genuine informational gap: agents cannot identify which regime their matches fall into, while the broker can (§1e). Larger $\delta$ produces a larger gap between high-gain and low-gain pairings, making the regime more consequential for match selection.
 
-- **$\mathbf{A}$ (interaction matrix).** The random matrix $\mathbf{A}$ creates $d^2$ cross-dimensional interaction terms $x_{i,k} \cdot x_{j,l}$ that contribute to match quality. An agent observing only its own matches sees a fixed self-type and varying partner types, and can learn the interaction from the $d$ features in $\mathbf{x}_{\text{partner}}$ alone. The broker, observing matches across many pairs with varying types on both sides, benefits from representing all $d^2$ cross-terms via the outer product $\mathbf{x}_i \otimes \mathbf{x}_j$. This is the primary source of the broker's feature advantage.
+- **$\mathbf{A}$ and $\mathbf{B}$ (interaction and regime matrices).** $\mathbf{A}$ determines the base interaction structure; $\mathbf{B}$ determines the regime boundary. Both are symmetric positive definite $d \times d$ matrices drawn independently at initialization. For a fixed agent $i$, the base interaction $\mathbf{x}_i^\top \mathbf{A} \mathbf{x}_j = \mathbf{a}_i^\top \mathbf{x}_j$ (where $\mathbf{a}_i = \mathbf{A} \mathbf{x}_i$) is linear in $\mathbf{x}_j$ and learnable from the agent's own data. But the regime boundary ($\mathbf{b}_i^\top \mathbf{x}_j = 0$, where $\mathbf{b}_i = \mathbf{B} \mathbf{x}_i$) is along a *different direction* than the interaction, and the agent cannot separate the regime effect from the base interaction using its own data alone (§1e).
 
-- **$\sigma_\varepsilon$ (noise scale).** With $\sigma_\varepsilon = 0.25$ and signal in $[-1, 1]$, the signal-to-noise ratio is approximately 4:1.
+- **$\sigma_\varepsilon$ (noise scale).** The match-level noise $\sigma_\varepsilon = 0.25$ should be interpreted relative to the actual variance of $f$, which depends on the parameter configuration. The typical magnitude of dot products on the unit sphere in $\mathbb{R}^d$ is $O(1/\sqrt{d})$. The effective signal-to-noise ratio should be measured empirically at initialization.
+
+#### 1e. The broker's informational advantage
+
+The regime-dependent gain (§1c) is the mechanism that creates a genuine informational gap between the broker and individual agents. This section explains why this gap exists, why it cannot be closed by individual agents regardless of data volume, and why it affects the decisions agents actually make.
+
+**Design requirements.** The broker's informational advantage must satisfy three conditions to support the theoretical propositions:
+
+1. **The gap must be informational, not model-related.** The advantage must arise from the *data* available to the broker — specifically, its ability to observe how outcomes vary across different pairings — not from the broker happening to use a better regression specification. If an agent had access to the same cross-agent data, it could close the gap using the same model class.
+
+2. **The gap must be fundamental, not merely statistical.** A purely statistical advantage (the broker has more data for the same estimation problem) erodes as agents accumulate matches. For the advantage to be self-reinforcing (Proposition 1.1b), the gap must involve an identification problem that single-agent data cannot solve regardless of sample size.
+
+3. **The gap must affect match selection.** Agents use predictions to select the best counterparty from their candidate pool ($\arg\max$). The broker's advantage must produce *different rankings* among the agent's top candidates — not just more accurate point estimates or better predictions for candidates the agent would never select.
+
+**Why the regime creates a fundamental information gap.** For a fixed agent $i$, the gain-modulated interaction produces outcomes from a *mixture* of two linear functions of $\mathbf{x}_j$. Some partners are in the high-gain regime ($g = 1 + \delta$) and others in the low-gain regime ($g = 1 - \delta$), but agent $i$ cannot determine which regime each match fell into. The regime boundary — where $\mathbf{b}_i^\top \mathbf{x}_j = 0$, with $\mathbf{b}_i = \mathbf{B}^\top \mathbf{x}_i$ — is along a direction in $\mathbf{x}_j$ space that the agent does not know. Its data is generated by the mixture:
+
+$$q_{ij} \approx \begin{cases} (1 + \delta) \cdot \mathbf{a}_i^\top \mathbf{x}_j & \text{if } \mathbf{b}_i^\top \mathbf{x}_j > 0 \\ (1 - \delta) \cdot \mathbf{a}_i^\top \mathbf{x}_j & \text{if } \mathbf{b}_i^\top \mathbf{x}_j < 0 \end{cases}$$
+
+(omitting the quality component and noise for clarity). A linear model $\boldsymbol{\beta}^\top \mathbf{x}_j$ fitted on this mixture learns an *average slope* that is systematically wrong for both regimes. To separate the two regimes, the agent would need to detect that the slope of the relationship between $\mathbf{x}_j$ and outcomes changes along the direction $\mathbf{b}_i$ — an unsupervised change-point detection problem in $d$ dimensions that requires qualitatively more sophisticated analysis than linear regression, regardless of sample size.
+
+**Why the broker can resolve the regime.** The broker observes $(\mathbf{x}_i, \mathbf{x}_j, q_{ij})$ triples across many different pairings. The regime depends on $\mathbf{x}_i^\top \mathbf{B} \mathbf{x}_j$, which is a *bilinear* function of both types — a linear function of the outer product $\mathbf{x}_i \otimes \mathbf{x}_j$. The broker's regression on outer-product features can learn that certain combinations of $(\mathbf{x}_i, \mathbf{x}_j)$ systematically produce higher or lower match quality, capturing the regime effect as an interaction term. The regime boundary that is hidden from the individual agent (because it requires conditioning on $\mathbf{x}_i$, which is fixed) is *visible* in the broker's feature space (because $\mathbf{x}_i$ varies across observations).
+
+**Why the gap affects match selection.** The gain operates multiplicatively on the base interaction. Among an agent's top candidates — those with high base interaction $\mathbf{a}_i^\top \mathbf{x}_j$ — some are in the high-gain regime and others in the low-gain regime. The agent's linear model, fitting the average slope, ranks these candidates similarly. But their true match qualities differ by a factor of $(1 + \delta) / (1 - \delta)$ (3:1 at $\delta = 0.5$). The broker, knowing the regime, can identify which top candidates are high-gain and rank them above the low-gain candidates. This produces *different selections* from the same candidate pool, leading to systematically higher match quality for broker-mediated matches.
 
 ### 2. Learning
 
@@ -237,7 +259,7 @@ Agent $i$ knows its own type $\mathbf{x}_i$, so $f(\mathbf{x}_i, \mathbf{x}_j)$ 
 
 $$\hat{q}_{i}(\mathbf{x}_j) = \hat{\boldsymbol{\beta}}_{i}^\top \mathbf{x}_j + \hat{\alpha}_{i}$$
 
-where $\hat{\boldsymbol{\beta}}_{i}, \hat{\alpha}_{i}$ are fitted on $\{(\mathbf{x}_j, q_{ij})\}$ with regularization $\lambda$ (default 1.0). Because types are on the unit sphere, cosine similarity reduces to the dot product, and a linear model suffices without quadratic features. The same model serves both roles (evaluating potential counterparties and evaluating incoming proposals). Refitted each period.
+where $\hat{\boldsymbol{\beta}}_{i}, \hat{\alpha}_{i}$ are fitted on $\{(\mathbf{x}_j, q_{ij})\}$ with regularization $\lambda$ (default 1.0). The linear model captures the quality component $\mathbf{x}_j^\top \mathbf{c}$ exactly and the base interaction $\mathbf{a}_i^\top \mathbf{x}_j$ exactly (both are linear in $\mathbf{x}_j$). However, it cannot capture the regime-dependent gain: the agent's data is a mixture of high-gain and low-gain observations (§1e), and the linear model fits an average across both regimes. This misspecification is fundamental — it cannot be resolved by accumulating more data within the same model class, because the regime boundary is not identifiable from single-agent data (§1e). The same model serves both roles (evaluating potential counterparties and evaluating incoming proposals). Refitted each period.
 
 #### 2b. Broker's prediction
 
@@ -247,25 +269,17 @@ Unlike an individual agent, the broker observes the same agent types producing d
 
 $$\hat{q}_b(\mathbf{x}_i, \mathbf{x}_j) = \hat{\boldsymbol{\beta}}_1^\top \mathbf{x}_i + \hat{\boldsymbol{\beta}}_2^\top \mathbf{x}_j + \hat{\boldsymbol{\beta}}_{\times}^\top \text{vec}(\mathbf{x}_i \otimes \mathbf{x}_j) + \hat{\alpha}_b$$
 
-where the coefficients are fitted on $\{([\mathbf{x}_i; \mathbf{x}_j; \text{vec}(\mathbf{x}_i \otimes \mathbf{x}_j)], q_{ij})\}$ with regularization $\lambda$. The feature vector is $[\mathbf{x}_i; \mathbf{x}_j; \text{vec}(\mathbf{x}_i \otimes \mathbf{x}_j)]$, giving $d^2 + 2d$ features total. The outer-product features $\mathbf{x}_i \otimes \mathbf{x}_j$ capture all $d^2$ cross-dimensional interactions induced by the matrix $\mathbf{A}$ in the matching function (§1c), while the separate $\mathbf{x}_i$ and $\mathbf{x}_j$ blocks capture linear main effects. Because agent types are on the unit sphere, cosine similarity reduces to the dot product and quadratic features are unnecessary. To exploit the symmetry of $f$, the broker augments its training data by including both orderings of each observation: for each $(\mathbf{x}_i, \mathbf{x}_j, q_{ij})$ in $\mathcal{H}_b$, the broker trains on both $[\mathbf{x}_i; \mathbf{x}_j; \text{vec}(\mathbf{x}_i \otimes \mathbf{x}_j)]$ and $[\mathbf{x}_j; \mathbf{x}_i; \text{vec}(\mathbf{x}_j \otimes \mathbf{x}_i)]$ with the same target $q_{ij}$. This doubles the effective training set and ensures the regression learns that the two input slots are interchangeable. Refitted each period.
+where $\mathbf{x}_i \otimes \mathbf{x}_j$ denotes the outer product $\text{vec}(\mathbf{x}_i \mathbf{x}_j^\top)$ — the $d \times d$ matrix $\mathbf{x}_i \mathbf{x}_j^\top$ vectorized into $d^2$ features. The full feature vector is $[\mathbf{x}_i; \mathbf{x}_j; \text{vec}(\mathbf{x}_i \otimes \mathbf{x}_j)]$, giving $d^2 + 2d$ features total. The outer-product features capture both the base interaction ($\mathbf{A}$) and the regime boundary ($\mathbf{B}$) as linear functions of $\mathbf{x}_i \otimes \mathbf{x}_j$ (§1c), while the separate $\mathbf{x}_i$ and $\mathbf{x}_j$ blocks capture quality main effects. To exploit the symmetry of $f$, the broker augments its training data by including both orderings of each observation: for each $(\mathbf{x}_i, \mathbf{x}_j, q_{ij})$ in $\mathcal{H}_b$, the broker trains on both $[\mathbf{x}_i; \mathbf{x}_j; \text{vec}(\mathbf{x}_i \otimes \mathbf{x}_j)]$ and $[\mathbf{x}_j; \mathbf{x}_i; \text{vec}(\mathbf{x}_j \otimes \mathbf{x}_i)]$ with the same target $q_{ij}$. This doubles the effective training set and ensures the regression learns that the two input slots are interchangeable. Refitted each period.
 
 The broker's pooled model has three advantages over any individual agent's model:
 
 1. **More data.** The broker accumulates observations across all client agents, giving it far more data points than any individual agent. With $n_b \gg n_i$, the broker's coefficient estimates have lower variance.
 
-2. **Richer features.** By including both $\mathbf{x}_i$ and $\mathbf{x}_j$ as features, the broker's model captures how match quality varies across different pairings. Individual agents, with their own type fixed, cannot learn how the interaction structure varies with both parties' types.
+2. **Regime identification.** The regime-dependent gain (§1c) creates a mixture in each agent's data that the agent cannot disentangle (§1e). The broker, by observing $(\mathbf{x}_i, \mathbf{x}_j)$ pairs with varying $\mathbf{x}_i$, can identify the regime structure: the regime depends on $\mathbf{x}_i^\top \mathbf{B} \mathbf{x}_j$, which is a linear function of the outer product $\mathbf{x}_i \otimes \mathbf{x}_j$. This is an informational advantage that does not erode as agents accumulate data — it is a consequence of the broker's observation structure, not its sample size.
 
-3. **Outer-product interaction features.** The full outer product $\mathbf{x}_i \otimes \mathbf{x}_j$ gives the broker's linear model $d^2$ features that capture all cross-dimensional interactions $x_{i,k} \cdot x_{j,l}$ for every pair $(k, l)$. The matrix $\mathbf{A}$ in the matching function creates these cross-dimensional terms. An individual agent does not need these features (its own type is fixed, so the interaction is already a function of the other party's type alone), but the broker, fitting across agents with varying types on both sides, benefits from explicitly representing the full interaction structure.
+3. **Outer-product interaction features.** The full outer product $\mathbf{x}_i \otimes \mathbf{x}_j$ provides $d^2$ features that represent both the base interaction ($\mathbf{A}$) and the regime boundary ($\mathbf{B}$) as linear functions. The matrices $\mathbf{A}$ and $\mathbf{B}$ create cross-dimensional terms $x_{i,k} \cdot x_{j,l}$ that the broker's linear model can capture. An individual agent does not benefit from these features (its own type is fixed, so $\mathbf{x}_i \otimes \mathbf{x}_j$ collapses to a rescaling of $\mathbf{x}_j$), but the broker, fitting across agents with varying types on both sides, can learn the full bilinear structure.
 
-#### 2c. The asymmetry between agents and the broker
-
-An agent learns "what kind of partner works well for me" from a small, agent-specific sample ($d$ features). The broker learns "what kind of pairings work well" from a large, cross-market sample ($d^2 + 2d$ features). The broker's richer features and larger data volume produce better predictions, especially when $s$ is high. As agents accumulate matches, their estimates improve and the broker's advantage narrows; the advantage is largest when agents have few observations.
-
-#### 2d. Public information
-
-A constant, scalar **public benchmark** $\bar{q}_{\text{pub}} = E[q]$ is computed once at initialization from a Monte Carlo sample of random agent pairs (§11c). This is the unconditional mean match output.
-
-The benchmark initializes satisfaction indices (§6a) and broker reputation (§6c).
+An agent learns "what kind of partner works well for me" from a small, agent-specific sample ($d$ features), but its linear model averages across regimes (§1e). The broker learns "what kind of pairings work well, and in which regime" from a large, cross-market sample ($d^2 + 2d$ features). The broker's advantage is both informational (it can identify regimes that agents cannot) and statistical (it has more data).
 
 ### 3. Match Economics
 
@@ -348,6 +362,8 @@ After a brokered match forms, the realized match output $q_{ij}$ is observed by 
 
 ### 6. The Outsourcing Decision
 
+A constant, scalar **public benchmark** $\bar{q}_{\text{pub}} = E[q]$ is computed once at initialization from a Monte Carlo sample of random agent pairs (§11c). This is the unconditional mean match output. The benchmark corresponds to a neutral outcome and initializes satisfaction indices (§6a) and broker reputation (§6c).
+
 #### 6a. Satisfaction tracking
 
 Each agent $i$ maintains a satisfaction index $s_{i,c}^t$ for each search channel $c \in \{\text{self}, \text{broker}\}$. These scores summarize past matching outcomes and drive the outsourcing decision.
@@ -385,7 +401,7 @@ where $D_b^t$ is the set of agents who outsourced to the broker this period. Whe
 
 The broker maintains a **roster** of agents it knows and can propose as counterparties when mediating matches.
 
-**Initialization.** The roster is seeded with $\lceil 0.20 \cdot N \rceil$ agents (default 100 at $N = 500$) chosen uniformly at random from the population. This ensures the broker can serve early outsourcers without frequent no-match failures that would drive broker satisfaction down before the broker has a chance to demonstrate value. The broker's history is seeded with observations from random pairings among these initial roster members (§11c).
+**Initialization.** The roster is seeded with $\lceil 0.20 \cdot N \rceil$ agents (default 100 at $N = 500$) chosen uniformly at random from the population. This ensures the broker can serve early outsourcers without frequent no-match failures that would drive broker satisfaction down before the broker has a chance to demonstrate value. The broker's history is seeded with observations from existing edges among roster members in $G$ (§11c).
 
 **Growth.** Any agent who outsources to the broker in a given period is added to the roster permanently (if not already a member). The roster thus grows organically with broker usage.
 
@@ -419,7 +435,7 @@ At the start of the simulation, the state of the world must be initialized.
 > I.1. &emsp;Generate random frequencies $f_k$ and phases $\theta_k$ for the sinusoidal curve (§0).
 > I.2. &emsp;Draw $N$ agent types: each at a random position $t_i \sim U[0,1]$ on the curve, perturbed by noise, and projected to the unit sphere.
 > I.3. &emsp;Draw ideal type $\mathbf{c}$ (perturbation of a random curve position).
-> I.4. &emsp;Draw interaction matrix $\mathbf{A} \in \mathbb{R}^{d \times d}$ with iid $N(0,1)$ entries.
+> I.4. &emsp;Draw SPD interaction matrix $\mathbf{A} = \mathbf{M}_A^\top \mathbf{M}_A$ and SPD regime matrix $\mathbf{B} = \mathbf{M}_B^\top \mathbf{M}_B$, where $\mathbf{M}_A, \mathbf{M}_B \in \mathbb{R}^{d \times d}$ have iid $N(0,1)$ entries. Drawn independently.
 >
 > *Calibration.*
 > I.5. &emsp;Compute $\bar{q}_{\text{pub}} = E[q]$ from 10,000 random agent pairs. Set $r \leftarrow 0.60 \cdot \bar{q}_{\text{pub}}$.
@@ -430,7 +446,7 @@ At the start of the simulation, the state of the world must be initialized.
 >
 > *Broker.*
 > I.8. &emsp;Seed broker roster with $\lceil 0.20 \cdot N \rceil$ randomly chosen agents. Add broker-agent edges to $G$ for each roster member.
-> I.9. &emsp;Seed broker history $\mathcal{H}_b$ with 20 observations from random pairings among roster members (realize match outputs and record).
+> I.9. &emsp;Seed broker history $\mathcal{H}_b$ with 20 observations sampled from existing edges among roster members in $G$ (realize match outputs and record).
 >
 > *State variables.*
 > I.10. &emsp;For each agent $i$: seed $\mathcal{H}_{i}$ with 5 pairings sampled from $i$'s neighbors in $G$ (realize match outputs, record); $s_{i,\text{self}}^0 \leftarrow \bar{q}_{\text{pub}}$; $s_{i,\text{broker}}^0 \leftarrow \bar{q}_{\text{pub}}$; $M_i^0 \leftarrow \emptyset$.
@@ -613,7 +629,8 @@ Parameters are organized into four categories reflecting their role in the analy
 |--------|---------|---------|-------|
 | $r$ | Outside option | $0.60 \cdot \bar{q}_{\text{pub}}$ | Constant for all agents; calibrated at initialization |
 | $\lambda$ | Ridge regularization | 1.0 | For all ridge regression models |
-| $\sigma_\varepsilon$ | Match output noise SD | 0.25 | SNR ≈ 4:1 |
+| $\sigma_\varepsilon$ | Match output noise SD | 0.25 | |
+| $\delta$ | Regime gain strength (§1c) | 0.5 | $\delta = 0$: no regime effect; $\delta = 1$: maximum gain contrast |
 | $\phi$ | Broker fee | See §11b | Fixed per match |
 
 **Phase diagram axes.** Primary parameters of interest.
@@ -636,6 +653,7 @@ Parameters are organized into four categories reflecting their role in the analy
 | $\tau$ | Match duration (periods) | 1 | {1, 2, 4, 8} | Transactional at $\tau = 1$; relational at $\tau > 1$ |
 | $K$ | Match capacity | 5 | {1, 2, 5, 10, 20, 50} | Exclusive at $K = 1$; concurrent at $K > 1$ |
 | $\eta$ | Agent entry/exit rate | 0.02 | {0.01, 0.02, 0.05, 0.10} | |
+| $\delta$ | Regime gain strength | 0.5 | {0, 0.25, 0.50, 0.75} | $\delta = 0$: no regime effect (pure statistical advantage) |
 | $\psi$ | Principal-mode fee | See §13e | Sweep around default | |
 
 The match lifecycle parameters $\tau$ and $K$ jointly determine the market regime. Different combinations map to the illustrative domains:
@@ -665,16 +683,16 @@ The broker fee $\phi$ is set to a fraction of the average match surplus: $\phi =
 The initialization procedure generates the matching environment, agents, and network in the following order.
 
 1. **Agent types** (§0). Generate random frequencies and phases for the sinusoidal curve. Draw $N$ agent types at random curve positions with noise. Project to unit sphere.
-2. **Matching function** (§1). Draw ideal type $\mathbf{c}$ (perturbation of a random curve position). Draw interaction matrix $\mathbf{A}$.
+2. **Matching function** (§1). Draw ideal type $\mathbf{c}$ (perturbation of a random curve position). Draw SPD interaction matrix $\mathbf{A} = \mathbf{M}_A^\top \mathbf{M}_A$ and SPD regime matrix $\mathbf{B} = \mathbf{M}_B^\top \mathbf{M}_B$ (both $d \times d$, independent).
 3. **Calibration.** Compute $\bar{q}_{\text{pub}}$ from 10,000 random agent pairs. Set $r = 0.60 \cdot \bar{q}_{\text{pub}}$. Set $\phi$ per §11b.
 4. **Network** (§4a). Build Watts-Strogatz graph with agents ordered by first principal component.
 5. **Agent histories.** For each agent $i$: seed $\mathcal{H}_i$ with 5 pairings sampled from $i$'s neighbors in $G$ (realize match outputs, record). This ensures initial predictions reflect the agent's local network, matching the self-search mechanism.
-6. **Broker** (§7). Seed roster with $\lceil 0.20 \cdot N \rceil$ random agents; add broker-agent edges to $G$. Seed $\mathcal{H}_b$ with 20 random pairings among roster members (realize outputs, record).
+6. **Broker** (§7). Seed roster with $\lceil 0.20 \cdot N \rceil$ random agents; add broker-agent edges to $G$. Seed $\mathcal{H}_b$ with 20 observations sampled from existing edges among roster members in $G$ (realize outputs, record).
 7. **State variables.** For each agent: satisfaction at $\bar{q}_{\text{pub}}$, empty active match sets. Broker reputation at $\bar{q}_{\text{pub}}$.
 
 #### 11d. Reproducibility
 
-All randomness flows from a single integer seed. The seed determines: type draws, the realization of $G$, matching function parameters ($\mathbf{c}$, $\mathbf{A}$), broker seed roster, and all subsequent random events. Simulations are fully reproducible given (parameter dictionary, seed).
+All randomness flows from a single integer seed. The seed determines: type draws, the realization of $G$, matching function parameters ($\mathbf{c}$, $\mathbf{A}$, $\mathbf{B}$), broker seed roster, and all subsequent random events. Simulations are fully reproducible given (parameter dictionary, seed).
 
 ### 12. Verification and Robustness
 
@@ -686,17 +704,11 @@ The key verification concern is that the positive feedback loop (more outsourcin
 
 #### 12b. Analytic benchmark for the broker's advantage
 
-All agents use ridge regression. For a linear target with Gaussian noise, ridge regression MSE scales as $\text{MSE} \sim p / n + \lambda \|\beta^*\|^2$, where $p$ is the number of features and the first term is estimation error (decreasing in $n$).
+The broker's advantage has two components: a statistical advantage (more data) and an informational advantage (regime identification).
 
-**Agent.** Agent $i$ fits $q \approx \beta^\top \mathbf{x}_j + c$ from $n_i$ observations ($d + 1$ parameters).
+**Statistical advantage.** Both agents and the broker use ridge regression. The agent fits $d + 1$ parameters from $n_i$ observations; the broker fits $d^2 + 2d + 1$ parameters from $n_b$ observations. For estimation error alone, the broker outperforms when $n_b > (d + 2) \cdot n_i$. At $d = 8$, this requires $n_b > 10 \cdot n_i$, easily satisfied after a few periods of pooling across clients.
 
-**Broker.** The broker fits $q \approx \beta^\top [\mathbf{x}_i; \mathbf{x}_j; \text{vec}(\mathbf{x}_i \otimes \mathbf{x}_j)] + c$ from $n_b$ observations ($d^2 + 2d + 1$ parameters).
-
-**Advantage condition.** The broker outperforms the agent when:
-
-$$\frac{d^2 + 2d}{n_b} < \frac{d}{n_i} \quad \Longrightarrow \quad n_b > (d + 2) \cdot n_i$$
-
-At $d = 8$, the broker needs $n_b > 10 \cdot n_i$. Since the broker pools observations across all clients, this is easily satisfied after a few periods.
+**Informational advantage.** The statistical comparison understates the broker's advantage because the agent's linear model is *misspecified* when $\delta > 0$. The agent's data is a mixture of two linear relationships (high-gain and low-gain regimes) that its model cannot disentangle (§1e). The agent's MSE has an irreducible misspecification component that does not decrease with sample size: it converges to the MSE of the best linear approximation to the mixture, not to zero. The broker's model, which can represent the regime boundary through its outer-product features, has a lower misspecification floor. The gap between the agent's floor and the broker's floor is the informational advantage — it persists regardless of data volume and grows with $\delta$.
 
 ## Part III. Model Variant: Resource Capture
 
