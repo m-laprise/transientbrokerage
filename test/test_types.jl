@@ -1,54 +1,179 @@
 using Test
 using TransientBrokerage
-using Graphs: SimpleGraph
 using StableRNGs: StableRNG
+using LinearAlgebra: norm
 
-@testset "Phase 0: Types and Parameters" begin
-    # Keyword overrides replace defaults without affecting other fields
+@testset "Types and Parameters" begin
+
+    @testset "default_params construction" begin
+        p = default_params()
+        @test p.N == 1000
+        @test p.d == 8
+        @test p.K == 5
+        @test p.tau == 1
+        @test p.p_demand == 0.50
+        @test p.enable_principal == false
+    end
+
     @testset "default_params with overrides" begin
-        p = default_params(; seed = 99, d = 10)
+        p = default_params(; seed=99, N=200, K=10, delta=0.75)
         @test p.seed == 99
-        @test p.d == 10
+        @test p.N == 200
+        @test p.K == 10
+        @test p.delta == 0.75
     end
 
-    # Typos or invalid parameter names raise immediately
     @testset "default_params rejects unknown kwargs" begin
-        @test_throws ErrorException default_params(; bogus_param = 42)
+        @test_throws ErrorException default_params(; bogus_param=42)
     end
 
-    # Per-period fields zero out; cumulative revenue survives the reset
+    @testset "validate_params catches invalid values" begin
+        @test_throws AssertionError default_params(d=1)
+        @test_throws AssertionError default_params(N=5)
+        @test_throws AssertionError default_params(rho=-0.1)
+        @test_throws AssertionError default_params(rho=1.5)
+        @test_throws AssertionError default_params(K=0)
+        @test_throws AssertionError default_params(tau=0)
+        @test_throws AssertionError default_params(eta=-0.1)
+        @test_throws AssertionError default_params(T=10, T_burn=15)
+    end
+
+    @testset "NeuralNet and NNGradBuffers" begin
+        rng = StableRNG(42)
+        nn = init_neural_net(8, 16, rng)
+        @test size(nn.W1) == (16, 8)
+        @test length(nn.b1) == 16
+        @test length(nn.w2) == 16
+        @test nn.b2 == Q_OFFSET  # b2 initialized to population-mean prior
+
+        grad = NNGradBuffers(nn)
+        @test size(grad.dW1) == (16, 8)
+        @test length(grad.db1) == 16
+        @test length(grad.dw2) == 16
+    end
+
+    @testset "NeuralNet parameter counts" begin
+        rng = StableRNG(42)
+        p = default_params()
+        nn_a = init_neural_net(p.d, p.h_a, rng)
+        n_params_a = length(nn_a.W1) + length(nn_a.b1) + length(nn_a.w2) + 1
+        @test n_params_a == 161  # 16*8 + 16 + 16 + 1
+
+        nn_b = init_neural_net(2*p.d, p.h_b, rng)
+        n_params_b = length(nn_b.W1) + length(nn_b.b1) + length(nn_b.w2) + 1
+        @test n_params_b == 577  # 32*16 + 32 + 32 + 1
+    end
+
+    @testset "ActiveMatch construction" begin
+        am = ActiveMatch(5, 3, false, :self)
+        @test am.partner_id == 5
+        @test am.formation_period == 3
+        @test am.is_principal == false
+        @test am.channel == :self
+    end
+
     @testset "reset_accumulators!" begin
         accum = PeriodAccumulators()
-        # Set some per-period fields
-        accum.matches = 10
-        accum.new_staffing = 5
-        accum.new_placements = 3
-        push!(accum.q_direct, 1.0, 2.0)
-        push!(accum.q_placed, 3.0)
-        push!(accum.q_staffed, 4.0)
-        accum.openings_internal = 7
-        accum.openings_brokered = 8
-        accum.placement_revenue = 100.0
-        accum.staffing_revenue = 200.0
-        # Set cumulative fields
-        accum.cumulative_placement_revenue = 500.0
-        accum.cumulative_staffing_revenue = 1000.0
+        accum.n_self_matches = 10
+        accum.n_broker_standard = 5
+        accum.n_broker_principal = 3
+        push!(accum.q_self, 1.0, 2.0)
+        accum.broker_standard_revenue = 100.0
+        accum.cumulative_standard_revenue = 500.0
+        accum.cumulative_principal_revenue = 200.0
 
         reset_accumulators!(accum)
 
-        # Per-period fields are zeroed/emptied
-        @test accum.matches == 0
-        @test accum.new_staffing == 0
-        @test accum.new_placements == 0
-        @test isempty(accum.q_direct)
-        @test isempty(accum.q_placed)
-        @test isempty(accum.q_staffed)
-        @test accum.openings_internal == 0
-        @test accum.openings_brokered == 0
-        @test accum.placement_revenue == 0.0
-        @test accum.staffing_revenue == 0.0
-        # Cumulative fields are preserved
-        @test accum.cumulative_placement_revenue == 500.0
-        @test accum.cumulative_staffing_revenue == 1000.0
+        @test accum.n_self_matches == 0
+        @test accum.n_broker_standard == 0
+        @test accum.n_broker_principal == 0
+        @test isempty(accum.q_self)
+        @test accum.broker_standard_revenue == 0.0
+        # Cumulative fields preserved
+        @test accum.cumulative_standard_revenue == 500.0
+        @test accum.cumulative_principal_revenue == 200.0
+    end
+
+    @testset "Agent history recording and growth" begin
+        rng = StableRNG(42)
+        p = default_params(N=20)
+        nn = init_neural_net(p.d, p.h_a, rng)
+        agent = Agent(
+            id=1, type=randn(rng, p.d),
+            history_X=Matrix{Float64}(undef, p.d, 4),  # small initial capacity
+            history_q=Vector{Float64}(undef, 4),
+            nn=nn, nn_grad=NNGradBuffers(nn), predict_buf=zeros(p.h_a),
+            partner_sum=zeros(20), partner_count=zeros(Int, 20),
+        )
+
+        # Record 4 observations (fills initial capacity)
+        for i in 1:4
+            record_agent_history!(agent, randn(rng, p.d), Float64(i))
+        end
+        @test agent.history_count == 4
+        @test agent.n_new_obs == 4
+
+        # Record 5th observation (triggers doubling growth)
+        record_agent_history!(agent, randn(rng, p.d), 5.0)
+        @test agent.history_count == 5
+        @test size(agent.history_X, 2) >= 8  # doubled from 4
+        @test agent.history_q[5] == 5.0
+    end
+
+    @testset "Partner mean tracking" begin
+        rng = StableRNG(42)
+        p = default_params(N=10)
+        nn = init_neural_net(p.d, p.h_a, rng)
+        agent = Agent(
+            id=1, type=randn(rng, p.d),
+            history_X=Matrix{Float64}(undef, p.d, 16),
+            history_q=Vector{Float64}(undef, 16),
+            nn=nn, nn_grad=NNGradBuffers(nn), predict_buf=zeros(p.h_a),
+            partner_sum=zeros(10), partner_count=zeros(Int, 10),
+        )
+
+        # No history with partner 3
+        @test isnan(partner_mean(agent, 3))
+
+        # Add two observations with partner 3
+        update_partner_mean!(agent, 3, 2.0)
+        update_partner_mean!(agent, 3, 4.0)
+        @test partner_mean(agent, 3) ≈ 3.0
+        @test agent.partner_count[3] == 2
+    end
+
+    @testset "Available capacity" begin
+        rng = StableRNG(42)
+        p = default_params(N=10, K=3)
+        nn = init_neural_net(p.d, p.h_a, rng)
+        agent = Agent(
+            id=1, type=randn(rng, p.d),
+            history_X=Matrix{Float64}(undef, p.d, 16),
+            history_q=Vector{Float64}(undef, 16),
+            nn=nn, nn_grad=NNGradBuffers(nn), predict_buf=zeros(p.h_a),
+            partner_sum=zeros(10), partner_count=zeros(Int, 10),
+        )
+
+        @test available_capacity(agent, 3) == 3
+        push!(agent.active_matches, ActiveMatch(2, 1, false, :self))
+        @test available_capacity(agent, 3) == 2
+        push!(agent.active_matches, ActiveMatch(3, 1, false, :broker))
+        push!(agent.active_matches, ActiveMatch(3, 1, false, :broker))  # duplicate partner allowed
+        @test available_capacity(agent, 3) == 0
+    end
+
+    @testset "CurveGeometry" begin
+        geo = CurveGeometry(8, 6, [1,2,3,4,5,1], rand(6))
+        @test geo.d == 8
+        @test geo.s == 6
+        @test length(geo.freqs) == 6
+        @test length(geo.phases) == 6
+    end
+
+    @testset "CachedNetworkMeasures default" begin
+        cnm = CachedNetworkMeasures()
+        @test cnm.betweenness == 0.0
+        @test cnm.constraint == 1.0
+        @test cnm.effective_size == 0.0
     end
 end

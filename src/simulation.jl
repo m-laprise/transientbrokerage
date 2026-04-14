@@ -4,127 +4,100 @@
 Simulation runner and per-period metric collection.
 """
 
-"""Mean of a vector, or NaN if empty."""
-safe_mean(v::Vector{Float64}) = isempty(v) ? NaN : mean(v)
+using DataFrames: DataFrame
+using Statistics: mean
+
+"""Safe mean that returns NaN on empty vectors."""
+safe_mean(v) = isempty(v) ? NaN : mean(v)
 
 """
     collect_period_metrics(state) -> NamedTuple
 
-Extract one row of metrics from the current state after `step_period!`.
-Prediction quality computed directly from this period's pairs (no rolling window).
-R² returns NaN when n < 5 or Var(realized) < σ_ε²/6 (insufficient signal variation).
-Selected-sample metrics reflect prediction quality on actual matches (subject to winner's curse).
-Holdout metrics reflect model quality on random workers with noiseless truth (no selection bias).
-Broker pool size recorded post-maintenance (before matching depletes the pool).
+Collect all per-period metrics from the state and accumulators.
 """
 function collect_period_metrics(state::ModelState)
+    p = state.params
     a = state.accum
-    b = state.broker
-    cn = state.cached_network
+    agents = state.agents
+    broker = state.broker
+    N = p.N
 
-    # Per-period prediction quality (selected sample — actual hires)
-    σ_ε = state.env.sigma_eps
-    firm_rpq = compute_prediction_quality(a.firm_predicted, a.firm_realized; sigma_eps=σ_ε)
-    broker_rpq = compute_prediction_quality(a.broker_predicted, a.broker_realized; sigma_eps=σ_ε)
+    # Prediction quality
+    se = state.env.sigma_eps
+    agent_holdout = compute_prediction_quality(a.agent_holdout_pred, a.agent_holdout_real; sigma_eps=se)
+    broker_holdout = compute_prediction_quality(a.broker_holdout_pred, a.broker_holdout_real; sigma_eps=se)
 
-    # Per-period holdout quality (random workers at random firms, noiseless truth)
-    firm_hpq = compute_prediction_quality(a.firm_holdout_pred, a.firm_holdout_real; sigma_eps=σ_ε)
-    broker_hpq = compute_prediction_quality(a.broker_holdout_pred, a.broker_holdout_real; sigma_eps=σ_ε)
+    # Agent-level stats
+    n_available = count(ag -> isempty(ag.active_matches), agents)
+    mean_sat_self = mean(ag.satisfaction_self for ag in agents)
+    mean_sat_broker = mean(ag.satisfaction_broker for ag in agents)
 
     return (
         period = state.period,
-        matches = a.matches,
-        outsourcing_rate = a.outsourcing_rate,
-        openings_internal = a.openings_internal,
-        openings_brokered = a.openings_brokered,
-        vacancies_internal = a.vacancies_internal,
-        vacancies_brokered = a.vacancies_brokered,
-        q_direct_mean = safe_mean(a.q_direct),
-        q_placed_mean = safe_mean(a.q_placed),
-        n_direct = length(a.q_direct),
-        n_placed = length(a.q_placed),
-        broker_history_size = effective_history_size(b),
-        broker_pool_size = a.broker_pool_size_post_maintenance,
-        betweenness = cn.betweenness,
-        constraint = cn.constraint,
-        effective_size = cn.effective_size,
-        placement_revenue = a.placement_revenue,
-        cumulative_placement_revenue = a.cumulative_placement_revenue,
+        # Match counts
+        n_self_matches = a.n_self_matches,
+        n_broker_standard = a.n_broker_standard,
+        n_broker_principal = a.n_broker_principal,
+        n_total_matches = a.n_self_matches + a.n_broker_standard + a.n_broker_principal,
+        # Match quality
+        q_self_mean = safe_mean(a.q_self),
+        q_broker_standard_mean = safe_mean(a.q_broker_standard),
+        q_broker_principal_mean = safe_mean(a.q_broker_principal),
+        # Outsourcing
+        n_demanders = a.n_demanders,
+        n_outsourced = a.n_outsourced,
+        outsourcing_rate = a.n_demanders > 0 ? a.n_outsourced / a.n_demanders : 0.0,
+        # Access vs assessment
         access_count = a.access_count,
         assessment_count = a.assessment_count,
-        # Selected-sample metrics (actual matches, subject to winner's curse)
-        firm_r_squared_selected = firm_rpq.r_squared,
-        broker_r_squared_selected = broker_rpq.r_squared,
-        firm_bias_selected = firm_rpq.bias,
-        broker_bias_selected = broker_rpq.bias,
-        firm_rank_corr_selected = firm_rpq.rank_corr,
-        broker_rank_corr_selected = broker_rpq.rank_corr,
-        # Holdout metrics (random workers, noiseless truth, no selection bias)
-        firm_r_squared_holdout = firm_hpq.r_squared,
-        broker_r_squared_holdout = broker_hpq.r_squared,
-        firm_bias_holdout = firm_hpq.bias,
-        broker_bias_holdout = broker_hpq.bias,
-        firm_rank_corr_holdout = firm_hpq.rank_corr,
-        broker_rank_corr_holdout = broker_hpq.rank_corr,
-        # Broker-firm gaps (broker minus firm; positive = broker advantage)
-        gap_r_squared_holdout = broker_hpq.r_squared - firm_hpq.r_squared,
-        gap_rank_corr_selected = broker_rpq.rank_corr - firm_rpq.rank_corr,
-        gap_r_squared_selected = broker_rpq.r_squared - firm_rpq.r_squared,
+        # Prediction quality (holdout)
+        agent_holdout_r2 = agent_holdout.r_squared,
+        agent_holdout_bias = agent_holdout.bias,
+        agent_holdout_rank = agent_holdout.rank_corr,
+        broker_holdout_r2 = broker_holdout.r_squared,
+        broker_holdout_bias = broker_holdout.bias,
+        broker_holdout_rank = broker_holdout.rank_corr,
+        # R2 gap
+        r2_gap = broker_holdout.r_squared - agent_holdout.r_squared,
+        # Broker state
+        broker_reputation = broker.last_reputation,
+        roster_size = a.roster_size,
+        broker_history_size = broker.history_count,
+        broker_cumulative_revenue = broker.cumulative_revenue,
+        # Revenue
+        broker_standard_revenue = a.broker_standard_revenue,
+        broker_principal_revenue = a.broker_principal_revenue,
+        # Capture metrics (Model 1)
+        principal_mode_share = (a.n_broker_standard + a.n_broker_principal) > 0 ?
+            a.n_broker_principal / (a.n_broker_standard + a.n_broker_principal) : 0.0,
+        # Satisfaction
+        mean_satisfaction_self = mean_sat_self,
+        mean_satisfaction_broker = mean_sat_broker,
         # Market state
-        n_available = count(w -> w.status == available, state.workers),
-        avg_firm_size = mean(length(f.employees) for f in state.firms),
-        avg_referral_pool_size = mean(length(f.referral_pool) for f in state.firms),
-        n_broker_clients = length(state.broker_clients),
-        # Satisfaction (§6a)
-        mean_satisfaction_internal = mean(f.satisfaction_internal for f in state.firms),
-        mean_satisfaction_broker = mean(f.satisfaction_broker for f in state.firms),
-        broker_reputation = b.last_reputation,
-        # Surplus apportionment (§8 step 7.3)
-        total_realized_surplus = a.total_realized_surplus,
-        worker_surplus = a.worker_surplus,
-        firm_surplus_direct = a.firm_surplus_direct,
-        firm_surplus_placed = a.firm_surplus_placed,
-        firm_surplus_staffed = a.firm_surplus_staffed,
-        broker_surplus_placement = a.broker_surplus_placement,
-        broker_surplus_staffing = a.broker_surplus_staffing,
-        n_active_staffing = a.n_active_staffing,
-        # Staffing metrics (Model 1; zero when enable_staffing=false)
-        n_staffing_new = a.new_staffing,
-        n_staffed = length(a.q_staffed),
-        q_staffed_mean = safe_mean(a.q_staffed),
-        staffing_revenue = a.staffing_revenue,
-        cumulative_staffing_revenue = a.cumulative_staffing_revenue,
-        flow_capture_rate = let np = a.new_placements; ns = a.new_staffing
-            (np + ns) > 0 ? ns / (np + ns) : NaN
-        end,
+        n_available = n_available,
+        # Network measures
+        betweenness = state.cached_network.betweenness,
+        constraint = state.cached_network.constraint,
+        effective_size = state.cached_network.effective_size,
     )
 end
 
 """
-    run_simulation(params; verify=false) -> (ModelState, DataFrame)
+    run_simulation(params; verify=false, sort_by_pc1=false) -> (ModelState, DataFrame)
 
-Initialize the model and run for T periods, collecting per-period metrics.
-When `verify=true`, calls `verify_invariants` each period.
+Initialize the model and run for T periods. Returns final state and metrics DataFrame.
 """
-function run_simulation(params::ModelParams; verify::Bool = false)
-    if Threads.nthreads() == 1
-        @warn "Running single-threaded; start Julia with --threads=auto for faster betweenness computation"
-    end
-    state = initialize_model(params)
-    T = params.T
+function run_simulation(params::ModelParams; verify::Bool = false, sort_by_pc1::Bool = false)
+    state = initialize_model(params; sort_by_pc1=sort_by_pc1)
+    rows = NamedTuple[]
+    sizehint!(rows, params.T)
 
-    step_period!(state)
-    verify && verify_invariants(state)
-    first_row = collect_period_metrics(state)
-    rows = Vector{typeof(first_row)}(undef, T)
-    rows[1] = first_row
-
-    for t in 2:T
+    for t in 1:params.T
         step_period!(state)
         verify && verify_invariants(state)
-        rows[t] = collect_period_metrics(state)
+        push!(rows, collect_period_metrics(state))
     end
 
-    mdf = DataFrame(rows)
-    return (state, mdf)
+    df = DataFrame(rows)
+    return (state, df)
 end

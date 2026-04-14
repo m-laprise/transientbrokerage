@@ -1,170 +1,360 @@
 """
     learning.jl
 
-Ridge regression prediction for firms and brokers, model fitting, and predict-and-record wrappers.
+Neural network prediction models for agents and broker.
+One-hidden-layer ReLU networks trained by vanilla full-batch gradient descent
+with hand-written forward and backward passes using BLAS `mul!`.
+
+Agent: input x_j (d features), h_a hidden units.
+Broker: input [x_i; x_j] (2d features), h_b hidden units.
+No hand-crafted features; both receive raw type vectors.
 """
 
-"""
-    RidgeModel
+using LinearAlgebra: mul!, dot, BLAS
+using Random: AbstractRNG
 
-Fitted ridge regression: q_hat = beta'w + intercept.
-`beta` is the d-dimensional coefficient vector, `intercept` the bias term.
+# ─────────────────────────────────────────────────────────────────────────────
+# Initialization
+# ─────────────────────────────────────────────────────────────────────────────
+
 """
-struct RidgeModel
-    beta::Vector{Float64}
-    intercept::Float64
+    init_neural_net(d_in, h, rng; b2_init=Q_OFFSET) -> NeuralNet
+
+Initialize a one-hidden-layer ReLU network with Kaiming (He) initialization.
+The output bias `b2` is initialized to `b2_init` (default `Q_OFFSET`) so that an
+untrained network outputs approximately the population mean match quality,
+rather than zero. This avoids a large negative-bias artifact for fresh entrants
+whose NN has not yet been trained, without changing the behavior of mature NNs
+(the first training step on any data shifts `b2` to its fitted value).
+"""
+function init_neural_net(d_in::Int, h::Int, rng::AbstractRNG;
+                         b2_init::Float64 = Q_OFFSET)::NeuralNet
+    # He initialization: scale = sqrt(2 / fan_in)
+    scale_1 = sqrt(2.0 / d_in)
+    W1 = scale_1 .* randn(rng, h, d_in)
+    b1 = zeros(h)
+    # Output layer: Xavier scale
+    scale_2 = sqrt(1.0 / h)
+    w2 = scale_2 .* randn(rng, h)
+    b2 = b2_init
+    return NeuralNet(W1, b1, w2, b2)
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prediction (zero-allocation hot path)
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    predict_nn!(nn, hidden_buf, z) -> Float64
+
+Zero-allocation forward pass: y = w2' * relu(W1 * z + b1) + b2.
+`hidden_buf` is a pre-allocated vector of length h.
+"""
+function predict_nn!(nn::NeuralNet, hidden_buf::Vector{Float64}, z::AbstractVector{Float64})::Float64
+    mul!(hidden_buf, nn.W1, z)
+    hidden_buf .+= nn.b1
+    # ReLU in place
+    @inbounds for i in eachindex(hidden_buf)
+        hidden_buf[i] = max(hidden_buf[i], 0.0)
+    end
+    return dot(nn.w2, hidden_buf) + nn.b2
 end
 
 """
-    fit_ridge(W, q, lambda) -> RidgeModel
+    predict_nn_batch!(nn, H_buf, Y_out, Z_buf, n)
 
-Fit ridge regression q ≈ W'beta + intercept, where W is d × n (columns are observations)
-and q is n-vector of outcomes. Returns RidgeModel with coefficients and intercept.
+Batched forward pass for `n` input columns using BLAS gemm/gemv.
+Buffers must be pre-allocated: Z_buf (d_in x cap), H_buf (h x cap), Y_out (cap).
 """
-function fit_ridge(W::AbstractMatrix{Float64}, q::AbstractVector{Float64},
-                   lambda::Float64)::RidgeModel
-    d, n = size(W)
-    # Center
-    w_mean = Vector{Float64}(undef, d)
-    fill!(w_mean, 0.0)
-    @inbounds for j in 1:n, k in 1:d
-        w_mean[k] += W[k, j]
+function predict_nn_batch!(nn::NeuralNet, H_buf::Matrix{Float64},
+                           Y_out::Vector{Float64}, Z_buf::Matrix{Float64}, n::Int)
+    h, d_in = size(nn.W1)
+    b1 = nn.b1; w2 = nn.w2; b2 = nn.b2
+
+    # H[:,1:n] = W1 * Z[:,1:n]  — use gemm on contiguous column block
+    # BLAS gemm: C = alpha*A*B + beta*C.  A is h x d_in, B is d_in x n.
+    # We call gemm! directly to avoid SubArray overhead from views.
+    BLAS.gemm!('N', 'N', 1.0, nn.W1, view(Z_buf, :, 1:n),
+                              0.0, view(H_buf, :, 1:n))
+
+    # H += b1 (broadcast), then ReLU in place
+    @inbounds for j in 1:n, i in 1:h
+        v = H_buf[i, j] + b1[i]
+        H_buf[i, j] = v > 0.0 ? v : 0.0
     end
-    w_mean ./= n
-    q_mean = sum(q) / n
-    # Build centered feature matrix
-    W_c = Matrix{Float64}(undef, d, n)
-    @inbounds for j in 1:n, k in 1:d
-        W_c[k, j] = W[k, j] - w_mean[k]
-    end
-    q_c = Vector{Float64}(undef, n)
+
+    # Y[1:n] = H[:,1:n]' * w2 + b2
+    # gemv: y = alpha * A' * x + beta * y
+    BLAS.gemv!('T', 1.0, view(H_buf, :, 1:n), w2, 0.0, view(Y_out, 1:n))
     @inbounds for j in 1:n
-        q_c[j] = q[j] - q_mean
+        Y_out[j] += b2
     end
-    # Normal equations via BLAS: beta = (W_c W_c' + lambda I)^{-1} W_c q_c
-    WWT = W_c * W_c'
-    Wq = W_c * q_c
-    @inbounds for k in 1:d
-        WWT[k, k] += lambda
-    end
-    # Cholesky solve (WWT + λI is symmetric positive definite)
-    beta = cholesky!(Symmetric(WWT)) \ Wq
-    intercept = q_mean - dot(beta, w_mean)
-    return RidgeModel(beta, intercept)
+
+    return nothing
 end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Loss function (pure functional, used for numerical-gradient testing)
+# ─────────────────────────────────────────────────────────────────────────────
 
 """
-    predict_ridge(model, w) -> Float64
+    nn_loss(W1, b1, w2, b2_ref, X, q) -> Float64
 
-Predict outcome for worker type `w` using a fitted ridge model.
+Unregularized MSE loss for a one-hidden-layer ReLU network. Retained for
+numerical-gradient testing; not on the hot training path.
+
+X is d_in x n (column-major batch), q is length-n target vector.
+b2_ref wraps the scalar output bias.
 """
-function predict_ridge(model::RidgeModel, w::AbstractVector{Float64})::Float64
-    return dot(model.beta, w) + model.intercept
-end
+function nn_loss(W1::Matrix{Float64}, b1::Vector{Float64},
+                 w2::Vector{Float64}, b2_ref::Base.RefValue{Float64},
+                 X::AbstractMatrix{Float64}, q::AbstractVector{Float64})::Float64
+    b2 = b2_ref[]
+    n = length(q)
+    d_in, _ = size(X)
+    h = length(b1)
 
-"""Pre-fitted regression models for the current period: one per firm and one for the broker."""
-struct PeriodModels
-    firm_models::Vector{RidgeModel}
-    broker_model::RidgeModel
-end
-
-"""Construct firm feature vector [w; w.^2] for prediction."""
-firm_features(w::AbstractVector) = vcat(w, w .^ 2)
-
-"""Construct broker feature vector [w; x; vec(w*x'); w.^2] for prediction.
-Includes full outer product w⊗x (d² features) to capture cross-dimensional interactions."""
-function broker_features(w::AbstractVector, x::AbstractVector)
-    d = length(w)
-    wx = Vector{Float64}(undef, d * d)
-    idx = 0
-    @inbounds for l in 1:d, k in 1:d
-        idx += 1
-        wx[idx] = w[k] * x[l]
+    total_mse = 0.0
+    @inbounds for j in 1:n
+        y_j = b2
+        for i in 1:h
+            act = b1[i]
+            for k in 1:d_in
+                act += W1[i, k] * X[k, j]
+            end
+            act = max(act, 0.0)
+            y_j += w2[i] * act
+        end
+        total_mse += (y_j - q[j])^2
     end
-    return vcat(w, x, wx, w .^ 2)
+    return total_mse / n
 end
 
-"""Broker feature dimension: 2d + d² + d = d² + 3d."""
-broker_feature_dim(d::Int) = d * d + 3 * d
-
-"""Firm prediction: write features [w; w²] into `buf` (length 2d) and return ŷ. Zero-allocation."""
-function predict_ridge!(model::RidgeModel, buf::Vector{Float64}, w::AbstractVector)
-    d = length(w)
-    @views buf[1:d] .= w
-    @views @. buf[d+1:2d] = w ^ 2
-    return dot(model.beta, buf) + model.intercept
-end
-
-"""Broker prediction: write features [w; x; vec(w⊗x); w²] into `buf` (length d²+3d) and return ŷ. Zero-allocation."""
-function predict_ridge!(model::RidgeModel, buf::Vector{Float64},
-                        w::AbstractVector, x::AbstractVector)
-    d = length(w)
-    @views buf[1:d] .= w
-    @views buf[d+1:2d] .= x
-    # Full outer product w⊗x
-    offset = 2d
-    @inbounds for l in 1:d, k in 1:d
-        offset += 1
-        buf[offset] = w[k] * x[l]
-    end
-    # w²
-    @views @. buf[2d + d*d + 1 : 2d + d*d + d] = w ^ 2
-    return dot(model.beta, buf) + model.intercept
-end
-
+# ─────────────────────────────────────────────────────────────────────────────
+# Training
+# ─────────────────────────────────────────────────────────────────────────────
 
 """
-    build_period_models(state, lambda) -> PeriodModels
+    train_step!(nn, grad, X, q, lr)
 
-Fit ridge regression models for all firms (features = [w; w²], 2d dims) and for
-the broker (features = [w; x; w⊗x; w²], d²+3d dims). The full outer product
-w⊗x captures cross-dimensional interactions from the interaction matrix A.
+One vanilla-GD step with hand-written forward + backward, using BLAS `mul!`
+for all three matmuls. `grad` owns pre-allocated activation and gradient
+buffers; resized once on first contact, then reused for the lifetime of the NN.
+
+Forward:
+    Z1 = W1 * X .+ b1
+    A  = relu(Z1)
+    Y  = A' * w2 .+ b2
+
+Backward (MSE on full batch, no regularization):
+    r  = (Y - q)                            shape n
+    dw2 = (2/n) * A * r                     shape h
+    db2 = (2/n) * sum(r)                    scalar
+    dZ1[i,j] = (2/n) * w2[i] * r[j] * (Z1[i,j] > 0)
+    dW1 = dZ1 * X'                          shape h x d_in
+    db1 = sum(dZ1; dims=2)                  shape h
 """
-function build_period_models(state::ModelState, lambda::Float64)::PeriodModels
-    d = state.params.d
-    firms = state.firms
+function train_step!(nn::NeuralNet, grad::NNGradBuffers,
+                     X::Matrix{Float64}, q::Vector{Float64},
+                     lr::Float64)
+    h, d_in = size(nn.W1)
+    n = length(q)
+    ensure_nn_buffers!(grad, h, n)
 
-    # Pre-allocate shared firm feature matrix [w; w²], reused across firms
-    max_firm_n = 0
-    for f in firms
-        n = effective_history_size(f)
-        n > max_firm_n && (max_firm_n = n)
+    Z1 = grad.Z1; A = grad.A; dZ1 = grad.dZ1; Y = grad.Y
+    b1 = nn.b1; w2 = nn.w2; b2 = nn.b2
+
+    # ── Forward: Z1 = W1 * X  (h x n) ────────────────────────────────────────
+    # Use views clipped to the current batch size so BLAS sees tight dims.
+    Z1v  = view(Z1,  :, 1:n)
+    Av   = view(A,   :, 1:n)
+    dZ1v = view(dZ1, :, 1:n)
+    Yv   = view(Y, 1:n)
+
+    mul!(Z1v, nn.W1, X)
+
+    # Z1 += b1 (broadcast along columns), A = relu(Z1)
+    @inbounds for j in 1:n, i in 1:h
+        z = Z1v[i, j] + b1[i]
+        Z1v[i, j] = z
+        Av[i, j] = z > 0.0 ? z : 0.0
     end
-    FF = Matrix{Float64}(undef, 2d, max_firm_n)
 
-    firm_models = Vector{RidgeModel}(undef, length(firms))
-    for (idx, firm) in enumerate(firms)
-        n = effective_history_size(firm)
-        W = @view(firm.history_w[:, 1:n])
-        @views FF[1:d, 1:n] .= W
-        @views @. FF[d+1:2d, 1:n] = W ^ 2
-        firm_models[idx] = fit_ridge(@view(FF[:, 1:n]), @view(firm.history_q[1:n]), lambda)
+    # Y = A' * w2 + b2
+    mul!(Yv, transpose(Av), w2)
+    @inbounds for j in 1:n
+        Yv[j] += b2
     end
 
-    # Broker model: q ≈ beta'[w; x; w⊗x; w²] + alpha
-    broker = state.broker
-    n_b = effective_history_size(broker)
-    W_b = @view(broker.history_w[:, 1:n_b])
-    X_b = @view(broker.history_x[:, 1:n_b])
-    # Build feature matrix: [w; x; outer_product; w²]
-    n_bf = broker_feature_dim(d)
-    BF = Matrix{Float64}(undef, n_bf, n_b)
-    d2 = d * d
-    @inbounds for i in 1:n_b
-        for k in 1:d; BF[k, i] = W_b[k, i]; end
-        for k in 1:d; BF[d + k, i] = X_b[k, i]; end
-        base = 2d
-        for l in 1:d
-            off = base + (l - 1) * d
-            xi_l = X_b[l, i]
-            for k in 1:d
-                BF[off + k, i] = W_b[k, i] * xi_l
+    # ── Backward ─────────────────────────────────────────────────────────────
+    inv_n = 1.0 / n
+    two_over_n = 2.0 * inv_n
+
+    # r = Y - q   (store in Yv; reused below)
+    sum_r = 0.0
+    @inbounds for j in 1:n
+        rj = Yv[j] - q[j]
+        Yv[j] = rj
+        sum_r += rj
+    end
+
+    # dw2 = (2/n) * A * r
+    mul!(grad.dw2, Av, Yv, two_over_n, 0.0)
+
+    # db2 = (2/n) * sum(r)
+    grad.db2[] = two_over_n * sum_r
+
+    # dZ1[i,j] = (2/n) * w2[i] * r[j] * (Z1[i,j] > 0)
+    # db1[i]   = sum_j dZ1[i,j]
+    fill!(grad.db1, 0.0)
+    @inbounds for j in 1:n
+        rj_scaled = two_over_n * Yv[j]
+        for i in 1:h
+            if Z1v[i, j] > 0.0
+                g = w2[i] * rj_scaled
+                dZ1v[i, j] = g
+                grad.db1[i] += g
+            else
+                dZ1v[i, j] = 0.0
             end
         end
-        for k in 1:d; BF[d2 + 2d + k, i] = W_b[k, i] * W_b[k, i]; end
     end
-    broker_model = fit_ridge(BF, @view(broker.history_q[1:n_b]), lambda)
 
-    return PeriodModels(firm_models, broker_model)
+    # dW1 = dZ1 * X'   (h x d_in)
+    mul!(grad.dW1, dZ1v, transpose(X))
+
+    # ── Weight update ────────────────────────────────────────────────────────
+    @inbounds @simd for idx in eachindex(nn.W1)
+        nn.W1[idx] -= lr * grad.dW1[idx]
+    end
+    @inbounds @simd for i in 1:h
+        nn.b1[i] -= lr * grad.db1[i]
+        nn.w2[i] -= lr * grad.dw2[i]
+    end
+    nn.b2 -= lr * grad.db2[]
+
+    return nothing
 end
 
+"""
+    compute_adaptive_steps(E_init, n_new, n_total) -> Int
+
+Adaptive training schedule: more steps when data is new, fewer when history is large.
+Floor of 10 steps ensures meaningful updates even with large histories.
+"""
+function compute_adaptive_steps(E_init::Int, n_new::Int, n_total::Int)::Int
+    n_total <= 0 && return E_init
+    return max(ADAPTIVE_FLOOR, ceil(Int, E_init * n_new / n_total))
+end
+
+"""
+    train_nn!(nn, grad, X, q, n_steps, lr)
+
+Train the network for n_steps of vanilla GD on the full batch (X, q).
+"""
+function train_nn!(nn::NeuralNet, grad::NNGradBuffers,
+                   X::AbstractMatrix{Float64}, q::AbstractVector{Float64},
+                   n_steps::Int, lr::Float64)
+    # BLAS mul! on SubArray hits a slow dispatch path (~5 MB allocs/call).
+    # Materialize the training window into contiguous Matrix/Vector once,
+    # then run the tight train_step! loop on those (zero-alloc per step).
+    Xc = Matrix{Float64}(X)
+    qc = Vector{Float64}(q)
+    for _ in 1:n_steps
+        train_step!(nn, grad, Xc, qc, lr)
+    end
+    return nothing
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Agent training
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""Maximum training window: train on at most this many recent observations.
+The warm start preserves what was learned from older data."""
+const TRAIN_WINDOW = 500
+
+"""Minimum GD steps per training period."""
+const ADAPTIVE_FLOOR = 50
+
+"""
+    train_agent_nn!(agent, params)
+
+Train the agent's neural network on recent history with adaptive step count.
+Uses a sliding window of the most recent TRAIN_WINDOW observations to avoid
+diluting new data in a large full-batch gradient.
+"""
+function train_agent_nn!(agent::Agent, params::ModelParams)
+    n = agent.history_count
+    n <= 0 && return nothing
+
+    # Sliding window: train on the most recent observations (views into history;
+    # train_nn! materializes contiguous copies for BLAS-friendly train_step!).
+    n_use = min(n, TRAIN_WINDOW)
+    start_idx = n - n_use + 1
+    X = view(agent.history_X, :, start_idx:n)
+    q = view(agent.history_q, start_idx:n)
+
+    # Adaptive steps
+    n_steps = compute_adaptive_steps(params.E_init, agent.n_new_obs, n)
+    agent.n_new_obs = 0
+
+    train_nn!(agent.nn, agent.nn_grad, X, q, n_steps, params.eta_lr)
+    return nothing
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Broker training (with symmetry augmentation)
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    train_broker_nn!(broker, params)
+
+Train the broker's neural network on symmetry-augmented recent history.
+Uses a sliding window of the most recent TRAIN_WINDOW observations.
+Each observation produces two training examples (symmetry augmentation).
+"""
+function train_broker_nn!(broker::Broker, params::ModelParams)
+    n = broker.history_count
+    n <= 0 && return nothing
+
+    d = params.d
+
+    # Sliding window
+    n_use = min(n, TRAIN_WINDOW)
+    start_idx = n - n_use + 1
+    n_aug = 2 * n_use
+
+    # Ensure training buffers are large enough
+    if size(broker.train_X, 2) < n_aug
+        new_cap = max(n_aug, 2 * size(broker.train_X, 2))
+        broker.train_X = Matrix{Float64}(undef, 2 * d, new_cap)
+        resize!(broker.train_q, new_cap)
+    end
+
+    # Build symmetry-augmented training data from window
+    @inbounds for (idx, j) in enumerate(start_idx:n)
+        for k in 1:d
+            broker.train_X[k, idx] = broker.history_Xi[k, j]
+            broker.train_X[d + k, idx] = broker.history_Xj[k, j]
+        end
+        broker.train_q[idx] = broker.history_q[j]
+
+        for k in 1:d
+            broker.train_X[k, n_use + idx] = broker.history_Xj[k, j]
+            broker.train_X[d + k, n_use + idx] = broker.history_Xi[k, j]
+        end
+        broker.train_q[n_use + idx] = broker.history_q[j]
+    end
+
+    # Train on views into the pre-allocated training buffers
+    X_view = view(broker.train_X, :, 1:n_aug)
+    q_view = view(broker.train_q, 1:n_aug)
+
+    # Adaptive steps
+    n_steps = compute_adaptive_steps(params.E_init, broker.n_new_obs, n)
+    broker.n_new_obs = 0
+
+    train_nn!(broker.nn, broker.nn_grad, X_view, q_view, n_steps, params.eta_lr)
+    return nothing
+end

@@ -4,39 +4,40 @@
 State snapshots for debugging and inspection.
 """
 
+using Statistics: mean
+
 """
     diagnostic_summary(state) -> Dict{String, Any}
 
-Snapshot of key state variables for debugging. Uses `effective_history_size`
-for history counts.
+Snapshot of key state variables for debugging. Quick-inspect Dict suitable
+for printing or logging during development.
 """
 function diagnostic_summary(state::ModelState)::Dict{String, Any}
-    n_available = count(w -> w.status == available, state.workers)
-    n_employed = count(w -> w.status == employed, state.workers)
-    n_staffed = count(w -> w.status == staffed, state.workers)
-    firm_hist_sizes = [effective_history_size(f) for f in state.firms]
+    agents = state.agents
+    broker = state.broker
+    N = state.params.N
+    agent_hist = [a.history_count for a in agents]
 
     return Dict{String, Any}(
         "period" => state.period,
-        "n_workers" => length(state.workers),
-        "n_firms" => length(state.firms),
-        "n_available" => n_available,
-        "n_employed" => n_employed,
-        "n_staffed" => n_staffed,
-        "open_vacancies" => sum(state.open_vacancies),
-        "broker_pool_size" => length(state.broker.pool),
-        "broker_history_size" => effective_history_size(state.broker),
-        "broker_reputation" => state.broker.last_reputation,
-        "broker_has_had_clients" => state.broker.has_had_clients,
-        "mean_firm_history_size" => mean(firm_hist_sizes),
-        "mean_satisfaction_internal" => mean(f.satisfaction_internal for f in state.firms),
-        "mean_satisfaction_broker" => mean(f.satisfaction_broker for f in state.firms),
+        "N" => N,
+        "n_active_matches" => sum(length(a.active_matches) for a in agents) ÷ 2,
+        "mean_agent_history" => mean(agent_hist),
+        "max_agent_history" => maximum(agent_hist),
+        "broker_history_size" => broker.history_count,
+        "broker_roster_size" => length(broker.roster),
+        "broker_reputation" => broker.last_reputation,
+        "broker_has_had_clients" => broker.has_had_clients,
+        "broker_cumulative_revenue" => broker.cumulative_revenue,
+        "mean_satisfaction_self" => mean(a.satisfaction_self for a in agents),
+        "mean_satisfaction_broker" => mean(a.satisfaction_broker for a in agents),
+        "mean_periods_alive" => mean(a.periods_alive for a in agents),
+        "n_on_roster" => count(a -> a.on_roster, agents),
         "betweenness" => state.cached_network.betweenness,
         "constraint" => state.cached_network.constraint,
         "effective_size" => state.cached_network.effective_size,
-        "next_firm_id" => state.next_firm_id,
-        "r_base" => state.cal.r_base,
-        "f_bar" => state.cal.f_bar,
         "q_pub" => state.cal.q_pub,
+        "r" => state.cal.r,
+        "phi" => state.cal.phi,
     )
 end

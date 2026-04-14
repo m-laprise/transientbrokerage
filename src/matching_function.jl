@@ -1,134 +1,153 @@
 """
     matching_function.jl
 
-Matching function f(w, x) = ρ·sim(w,c) + (1-ρ)·sim(w, Ax).
-Quality is cosine similarity with an ideal worker c.
-Interaction is cosine similarity between w and the transformed firm type Ax,
-where A is a random d×d matrix drawn at initialization.
+Gain-modulated matching function:
+    f(x_i, x_j) = ρ · ½(x_i'c + x_j'c) + (1-ρ) · g(x_i,x_j) · x_i'Ax_j
+    g(x_i, x_j) = 1 + δ · sign(x_i'Bx_j)
 
-Observable match output is q = Q + f(w,x) + ε, where Q is a constant offset
-that shifts q positive for downstream economic computations (wages, surplus).
-Q is deliberately excluded from f so that f represents the pure signal structure
-of the DGP (important for SVD analysis and examining structural complexity).
+A and B are symmetric positive definite (SPD) matrices drawn at initialization.
+All types are on the unit sphere. Quality is a dot product with ideal type c.
+Interaction is a bilinear form through A, modulated by a regime-dependent gain
+determined by B. The gain creates two regimes (high-gain 1+δ, low-gain 1-δ)
+that produce a genuine informational gap between single-agent and cross-agent data.
+
+Observable output: q = Q + f(x_i, x_j) + ε, where Q is a constant offset and
+ε ~ N(0, σ_ε²) is match noise.
 """
 
-"""
-    generate_matching_function(d, rho, firm_types, rng; sigma_w=0.5) -> MatchingEnv
+using LinearAlgebra: dot, mul!, norm, normalize, eigvals, tr
+using Random: AbstractRNG
 
-Build the matching environment. The ideal worker c is drawn as a perturbation
-of a random firm type. The interaction matrix A has iid N(0,1) entries, creating
-cross-dimensional interactions that make the matching problem harder for firms
-to learn from local data alone.
 """
-function generate_matching_function(d::Int, rho::Float64,
-                                     firm_types::Vector{Vector{Float64}},
-                                     rng::AbstractRNG;
-                                     sigma_w::Float64=0.5, sigma_eps::Float64=0.25)
-    σ_per_dim = sigma_w / sqrt(d)
-    ref = firm_types[rand(rng, 1:length(firm_types))]
-    c = ref .+ σ_per_dim .* randn(rng, d)
-    c_norm = norm(c)
-    A = randn(rng, d, d)
-    return MatchingEnv(d, rho, c, c_norm, A, sigma_eps)
+    generate_matching_env(d, rho, delta, sigma_eps, agent_types, rng; sigma_x) -> MatchingEnv
+
+Build the matching environment:
+- Ideal type c drawn as perturbation of a random agent's curve position
+- A = M_A'M_A (SPD interaction matrix)
+- B = M_B'M_B (SPD regime matrix)
+"""
+function generate_matching_env(d::Int, rho::Float64, delta::Float64, sigma_eps::Float64,
+                                agent_types::Vector{Vector{Float64}},
+                                rng::AbstractRNG;
+                                sigma_x::Float64 = 0.5)::MatchingEnv
+    sigma_per_dim = sigma_x / sqrt(d)
+
+    # Ideal type c: perturbation of a random agent type
+    ref = agent_types[rand(rng, 1:length(agent_types))]
+    c = ref .+ sigma_per_dim .* randn(rng, d)
+
+    # SPD interaction matrix: A = M_A'M_A, normalized so E[x'Ax] ≈ 1 for unit vectors
+    # For unit vectors, E[x'Ax] = trace(A)/d. Dividing by trace(A)/d normalizes to unit scale.
+    M_A = randn(rng, d, d)
+    A_raw = M_A' * M_A
+    A = A_raw .* (d / tr(A_raw))
+
+    # SPD regime matrix: B = M_B'M_B, same normalization
+    M_B = randn(rng, d, d)
+    B_raw = M_B' * M_B
+    B = B_raw .* (d / tr(B_raw))
+
+    return MatchingEnv(d, rho, c, A, B, delta, sigma_eps)
 end
 
-"""Cosine similarity a'b / (‖a‖‖b‖), or 0 if either vector is near-zero."""
-function cosine_sim(a::AbstractVector, b::AbstractVector)::Float64
-    a_norm = norm(a)
-    b_norm = norm(b)
-    (a_norm < 1e-12 || b_norm < 1e-12) && return 0.0
-    return dot(a, b) / (a_norm * b_norm)
+# ─────────────────────────────────────────────────────────────────────────────
+# Regime gain
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    regime_gain(xi, xj, env) -> Float64
+
+Compute the regime-dependent gain g(x_i, x_j) = 1 + δ · sign(x_i'Bx_j).
+Returns (1 + δ) for high-gain regime, (1 - δ) for low-gain regime.
+"""
+function regime_gain(xi::AbstractVector, xj::AbstractVector, env::MatchingEnv)::Float64
+    bxj = dot(xi, env.B * xj)
+    return 1.0 + env.delta * sign(bxj)
+end
+
+"""In-place `regime_gain` using pre-allocated buffer for Bx_j."""
+function regime_gain!(Bx_buf::Vector{Float64}, xi::AbstractVector, xj::AbstractVector, env::MatchingEnv)::Float64
+    mul!(Bx_buf, env.B, xj)
+    bxj = dot(xi, Bx_buf)
+    return 1.0 + env.delta * sign(bxj)
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Match signal and output
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    match_signal(xi, xj, env) -> Float64
+
+Deterministic matching function:
+    f(x_i, x_j) = ρ · ½(x_i'c + x_j'c) + (1-ρ) · g(x_i,x_j) · x_i'Ax_j
+
+Does not include the offset Q or noise ε. Used for holdout evaluation and diagnostics.
+"""
+function match_signal(xi::AbstractVector, xj::AbstractVector, env::MatchingEnv)::Float64
+    quality = env.rho * 0.5 * (dot(xi, env.c) + dot(xj, env.c))
+    base_interaction = dot(xi, env.A * xj)
+    g = regime_gain(xi, xj, env)
+    interaction = (1.0 - env.rho) * g * base_interaction
+    return quality + interaction
+end
+
+"""In-place `match_signal` using pre-allocated buffers for Ax_j and Bx_j."""
+function match_signal!(Ax_buf::Vector{Float64}, Bx_buf::Vector{Float64},
+                       xi::AbstractVector, xj::AbstractVector, env::MatchingEnv)::Float64
+    quality = env.rho * 0.5 * (dot(xi, env.c) + dot(xj, env.c))
+    mul!(Ax_buf, env.A, xj)
+    base_interaction = dot(xi, Ax_buf)
+    g = regime_gain!(Bx_buf, xi, xj, env)
+    interaction = (1.0 - env.rho) * g * base_interaction
+    return quality + interaction
 end
 
 """
-    eval_mu(w, env) -> Float64
+    match_output(xi, xj, env, rng) -> Float64
 
-General worker quality: sim(w, c) (cosine similarity with ideal worker).
+Stochastic observable output: q = Q + f(x_i, x_j) + ε, where ε ~ N(0, σ_ε²).
 """
-eval_mu(w::AbstractVector, env::MatchingEnv)::Float64 = cosine_sim(w, env.c)
-
-"""
-    eval_interaction(w, x, env) -> Float64
-
-Match-specific interaction: sim(w, Ax) (cosine similarity between w and the
-transformed firm type Ax). The matrix A introduces cross-dimensional interactions.
-"""
-function eval_interaction(w::AbstractVector, x::AbstractVector, env::MatchingEnv)::Float64
-    return cosine_sim(w, env.A * x)
-end
-
-"""In-place version using pre-allocated buffer for Ax."""
-function eval_interaction!(Ax_buf::Vector{Float64}, w::AbstractVector, x::AbstractVector, env::MatchingEnv)::Float64
-    mul!(Ax_buf, env.A, x)
-    return cosine_sim(w, Ax_buf)
-end
-
-"""Noise standard deviation for match output."""
-const SIGMA_EPS = 0.25
-
-"""Offset added to f(w,x) in the observable output q = Q + f(w,x) + ε.
-Shifts q positive for downstream economic computations; not part of the
-matching function f itself (excluded from match_signal)."""
-const Q_OFFSET = 1.0
-
-"""Reservation wage as fraction of mean match output: r_base = R_BASE_FRAC × f̄."""
-const R_BASE_FRAC = 0.70
-
-"""
-    match_output(w, x, env, rng) -> Float64
-
-Stochastic observable match output q = Q + f(w,x) + ε, where
-f(w,x) = ρ·sim(w,c) + (1-ρ)·sim(w, Ax) is the deterministic signal
-(see `match_signal`), Q = Q_OFFSET shifts q positive for downstream
-economic computations, and ε ~ N(0, σ_ε²) is match noise.
-"""
-function match_output(w::AbstractVector, x::AbstractVector,
+function match_output(xi::AbstractVector, xj::AbstractVector,
                       env::MatchingEnv, rng::AbstractRNG)::Float64
-    return Q_OFFSET + env.rho * eval_mu(w, env) + (1.0 - env.rho) * eval_interaction(w, x, env) + env.sigma_eps * randn(rng)
+    return Q_OFFSET + match_signal(xi, xj, env) + env.sigma_eps * randn(rng)
 end
 
-"""
-    match_signal(w, x, env) -> Float64
-
-Deterministic matching function f(w,x) = ρ·sim(w,c) + (1-ρ)·sim(w, Ax).
-Does not include the offset Q or noise ε. Used for diagnostics, holdout
-evaluation, and SVD analysis where the pure signal structure matters.
-"""
-function match_signal(w::AbstractVector, x::AbstractVector,
-                      env::MatchingEnv)::Float64
-    return env.rho * eval_mu(w, env) + (1.0 - env.rho) * eval_interaction(w, x, env)
+"""In-place `match_output` using pre-allocated buffers."""
+function match_output!(Ax_buf::Vector{Float64}, Bx_buf::Vector{Float64},
+                       xi::AbstractVector, xj::AbstractVector,
+                       env::MatchingEnv, rng::AbstractRNG)::Float64
+    return Q_OFFSET + match_signal!(Ax_buf, Bx_buf, xi, xj, env) + env.sigma_eps * randn(rng)
 end
 
-"""In-place version of `match_signal` using pre-allocated Ax buffer."""
-function match_signal!(Ax_buf::Vector{Float64}, w::AbstractVector,
-                       x::AbstractVector, env::MatchingEnv)::Float64
-    return env.rho * eval_mu(w, env) + (1.0 - env.rho) * eval_interaction!(Ax_buf, w, x, env)
-end
+# ─────────────────────────────────────────────────────────────────────────────
+# Calibration
+# ─────────────────────────────────────────────────────────────────────────────
 
 """
-    calibrate_output_scale(env, firm_types, rng; sigma_w=0.5, n_samples=10_000) -> (f_mean, r_base)
+    calibrate(env, agent_types, params, rng; n_samples=10_000) -> CalibrationConstants
 
-Monte Carlo calibration of E[q] = E[Q + f(w,x)] using random worker-firm pairs.
-Returns (mean_q, r_base) where r_base = R_BASE_FRAC × mean_q.
+Monte Carlo calibration of E[q] from random agent pairs.
+Returns calibration constants: q_pub, r, phi, c_s.
 """
-function calibrate_output_scale(env::MatchingEnv,
-                          firm_types::Vector{Vector{Float64}},
-                          rng::AbstractRNG;
-                          sigma_w::Float64 = 0.5,
-                          n_samples::Int = 10_000)::Tuple{Float64,Float64}
+function calibrate(env::MatchingEnv,
+                   agent_types::Vector{Vector{Float64}},
+                   params::ModelParams,
+                   rng::AbstractRNG;
+                   n_samples::Int = 10_000)::CalibrationConstants
+    n_agents = length(agent_types)
     d = env.d
-    σ_per_dim = sigma_w / sqrt(d)
-    n_firms = length(firm_types)
-    w = Vector{Float64}(undef, d)
+    Ax_buf = Vector{Float64}(undef, d)
+    Bx_buf = Vector{Float64}(undef, d)
     total = 0.0
     for _ in 1:n_samples
-        ref = firm_types[rand(rng, 1:n_firms)]
-        for k in 1:d
-            w[k] = ref[k] + σ_per_dim * randn(rng)
-        end
-        x = firm_types[rand(rng, 1:n_firms)]
-        total += Q_OFFSET + match_signal(w, x, env)
+        i = rand(rng, 1:n_agents)
+        j = rand(rng, 1:n_agents)
+        total += Q_OFFSET + match_signal!(Ax_buf, Bx_buf, agent_types[i], agent_types[j], env)
     end
-    f_mean = total / n_samples
-    return (f_mean, R_BASE_FRAC * f_mean)
+    q_pub = total / n_samples
+    r = R_BASE_FRAC * q_pub
+    phi = params.alpha_phi * (q_pub - r)
+    c_s = params.gamma_c * phi
+    return CalibrationConstants(q_pub, r, phi, c_s)
 end

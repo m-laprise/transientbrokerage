@@ -1,99 +1,111 @@
 """
     invariants.jl
 
-Debug-time state consistency checks. Disable in production runs for performance.
+Debug-time state consistency checks. Called via `run_simulation(...; verify=true)`.
 """
+
+using Graphs: nv, has_edge, degree
 
 """
     verify_invariants(state)
 
-Assert that the simulation state is internally consistent. Checks worker
-conservation, no double-employment, status consistency, vacancy counts in [0,2],
-broker pool (all members available, size <= target P), staffing assignment
-consistency, finite satisfaction, and reservation wage floor.
-Intended for use in test runs; disable in production.
+Assert that the simulation state is internally consistent. Intended for test
+and debug runs; disable in production for performance.
+
+Checks: population count, graph structure, match capacity, match symmetry,
+match-edge consistency, history buffer validity, broker roster consistency,
+finite satisfaction/NN weights, and partner tracking.
 """
 function verify_invariants(state::ModelState)
-    N_W = state.params.N_W
+    p = state.params
+    N = p.N
+    K = p.K
+    agents = state.agents
+    broker = state.broker
+    G = state.G
 
-    # Population counts
-    @assert length(state.workers) == N_W "Expected $N_W workers, got $(length(state.workers))"
+    # ── Population and graph ──
+    @assert length(agents) == N "Expected $N agents, got $(length(agents))"
+    @assert nv(G) == N + 1 "Graph should have $(N+1) nodes, got $(nv(G))"
+    @assert broker.node_id == N + 1 "Broker node_id should be $(N+1), got $(broker.node_id)"
 
-    n_available = count(w -> w.status == available, state.workers)
-    n_employed = count(w -> w.status == employed, state.workers)
-    n_staffed = count(w -> w.status == staffed, state.workers)
-    @assert n_available + n_employed + n_staffed == N_W "Worker count not conserved: $n_available + $n_employed + $n_staffed != $N_W"
+    for i in 1:N
+        @assert agents[i].id == i "Agent at index $i has id=$(agents[i].id)"
+        @assert !has_edge(G, i, i) "Self-edge on agent $i"
+    end
 
-    # No double-employment
-    seen = Set{Int}()
-    for firm in state.firms
-        for wid in firm.employees
-            @assert wid ∉ seen "Worker $wid employed by two firms"
-            push!(seen, wid)
+    # ── Match capacity ──
+    for i in 1:N
+        n_matches = length(agents[i].active_matches)
+        @assert n_matches <= K "Agent $i has $n_matches active matches (K=$K)"
+    end
+
+    # ── Active match symmetry ──
+    for i in 1:N
+        for am in agents[i].active_matches
+            j = am.partner_id
+            @assert 1 <= j <= N "Agent $i has match with invalid partner $j"
+            partner_has_i = any(m -> m.partner_id == i, agents[j].active_matches)
+            @assert partner_has_i "Agent $i lists partner $j but $j does not list $i"
         end
     end
 
-    # Worker-firm status consistency
-    for firm in state.firms
-        for wid in firm.employees
-            w = state.workers[wid]
-            @assert w.status == employed "Worker $wid in firm $(firm.id) employees but status=$(w.status)"
-            @assert w.employer_id == firm.id "Worker $wid in firm $(firm.id) employees but employer_id=$(w.employer_id)"
+    # ── Active match edges (non-principal matches should have an edge) ──
+    for i in 1:N
+        for am in agents[i].active_matches
+            if !am.is_principal
+                @assert has_edge(G, i, am.partner_id) "Non-principal match ($i, $(am.partner_id)) but no edge in G"
+            end
         end
     end
 
-    # Available workers have no employer
-    for w in state.workers
-        if w.status == available
-            @assert w.employer_id == 0 "Available worker $(w.id) has employer_id=$(w.employer_id)"
+    # ── History buffer validity ──
+    for i in 1:N
+        a = agents[i]
+        @assert 0 <= a.history_count <= size(a.history_X, 2) "Agent $i: history_count=$(a.history_count) > capacity=$(size(a.history_X, 2))"
+        @assert a.history_count <= length(a.history_q) "Agent $i: history_count exceeds history_q length"
+        @assert a.n_new_obs >= 0 "Agent $i: negative n_new_obs=$(a.n_new_obs)"
+    end
+    @assert 0 <= broker.history_count <= size(broker.history_Xi, 2) "Broker: history_count=$(broker.history_count) > capacity"
+
+    # ── Broker roster consistency ──
+    for rid in broker.roster
+        @assert 1 <= rid <= N "Broker roster contains invalid id $rid"
+        @assert agents[rid].on_roster "Agent $rid in broker roster but on_roster=false"
+        @assert has_edge(G, rid, broker.node_id) "Agent $rid on roster but no broker edge"
+    end
+    for i in 1:N
+        if agents[i].on_roster
+            @assert i in broker.roster "Agent $i has on_roster=true but not in broker.roster"
         end
     end
 
-    # Open vacancies: vector length matches firms, counts in [0, 2]
-    @assert length(state.open_vacancies) == length(state.firms) "open_vacancies length mismatch"
-    for j in eachindex(state.open_vacancies)
-        @assert 0 <= state.open_vacancies[j] <= 2 "Vacancy count $(state.open_vacancies[j]) out of range for firm $j"
+    # ── Finite satisfaction and NN weights ──
+    for i in 1:N
+        a = agents[i]
+        @assert isfinite(a.satisfaction_self) "NaN/Inf satisfaction_self at agent $i"
+        @assert isfinite(a.satisfaction_broker) "NaN/Inf satisfaction_broker at agent $i"
+        @assert all(isfinite, a.nn.W1) "Non-finite W1 at agent $i"
+        @assert all(isfinite, a.nn.b1) "Non-finite b1 at agent $i"
+        @assert all(isfinite, a.nn.w2) "Non-finite w2 at agent $i"
+        @assert isfinite(a.nn.b2) "Non-finite b2 at agent $i"
+    end
+    @assert all(isfinite, broker.nn.W1) "Non-finite W1 at broker"
+    @assert all(isfinite, broker.nn.b1) "Non-finite b1 at broker"
+    @assert all(isfinite, broker.nn.w2) "Non-finite w2 at broker"
+    @assert isfinite(broker.nn.b2) "Non-finite b2 at broker"
+
+    # ── Partner tracking ──
+    for i in 1:N
+        a = agents[i]
+        @assert length(a.partner_count) == N "Agent $i partner_count length $(length(a.partner_count)) != $N"
+        @assert all(>=(0), a.partner_count) "Agent $i has negative partner_count"
+        @assert all(isfinite, a.partner_sum) "Agent $i has non-finite partner_sum"
     end
 
-    # Broker pool: all members available, size <= target P
-    # Pool may be empty if all workers are employed (no available workers to recruit)
-    P = ceil(Int, state.params.pool_target_frac * state.params.N_W)
-    @assert length(state.broker.pool) <= P "Broker pool size $(length(state.broker.pool)) > target $P"
-    for wid in state.broker.pool
-        @assert state.workers[wid].status == available "Pool member $wid has status=$(state.workers[wid].status)"
-    end
-
-    # Staffing assignment consistency
-    staffed_by_assignment = Set{Int}()
-    for assignment in state.broker.active_assignments
-        w = state.workers[assignment.worker_id]
-        @assert w.status == staffed "Staffed worker $(assignment.worker_id) has status=$(w.status)"
-        @assert assignment.periods_remaining > 0 "Assignment for worker $(assignment.worker_id) has periods_remaining=$(assignment.periods_remaining)"
-        @assert 1 <= assignment.firm_idx <= length(state.firms) "Assignment firm_idx $(assignment.firm_idx) out of bounds"
-        # Lock-in: staffed worker must NOT be in any firm's employee set
-        @assert assignment.worker_id ∉ state.firms[assignment.firm_idx].employees "Staffed worker $(assignment.worker_id) found in firm $(assignment.firm_idx) employees (lock-in violated)"
-        push!(staffed_by_assignment, assignment.worker_id)
-    end
-    # Every staffed worker must have a corresponding assignment
-    for w in state.workers
-        if w.status == staffed
-            @assert w.id in staffed_by_assignment "Worker $(w.id) has status=staffed but no active assignment"
-        end
-    end
-    # No staffed worker in broker pool
-    for wid in state.broker.pool
-        @assert state.workers[wid].status != staffed "Staffed worker $wid found in broker pool"
-    end
-
-    # Finite satisfaction
-    for firm in state.firms
-        @assert isfinite(firm.satisfaction_internal) "NaN/Inf satisfaction_internal at firm $(firm.id)"
-        @assert isfinite(firm.satisfaction_broker) "NaN/Inf satisfaction_broker at firm $(firm.id)"
-    end
-
-    # Reservation wage floor
-    for w in state.workers
-        @assert w.reservation_wage >= state.cal.r_base "Worker $(w.id) reservation wage $(w.reservation_wage) < r_base $(state.cal.r_base)"
+    # ── Periods alive ──
+    for i in 1:N
+        @assert agents[i].periods_alive >= 0 "Agent $i has negative periods_alive"
     end
 
     return nothing

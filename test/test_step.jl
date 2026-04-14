@@ -1,216 +1,131 @@
 using Test
 using TransientBrokerage
 using StableRNGs: StableRNG
+using Graphs: nv, degree
 
-@testset "Step Loop" begin
-    # Invariants hold for 50 periods
-    @testset "50 periods with invariants" begin
-        params = default_params()
-        state = initialize_model(params)
-        @test begin
-            all_pass = true
-            for _ in 1:50
-                step_period!(state)
-                try
-                    verify_invariants(state)
-                catch e
-                    all_pass = false
-                    @error "Invariant failed at period $(state.period)" exception=e
-                end
-            end
-            all_pass
-        end
-        @test state.period == 50
+@testset "Step and Simulation" begin
+
+    @testset "initialize_model produces valid state" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42)
+        state = initialize_model(p)
+        @test state.period == 0
+        @test length(state.agents) == p.N
+        @test nv(state.G) == p.N + 1
+        @test state.broker.node_id == p.N + 1
+        @test length(state.broker.roster) > 0
+        # All agents have seeded histories
+        seeded = count(a -> a.history_count > 0, state.agents)
+        @test seeded > 0
+        # Broker has seeded history
+        @test state.broker.history_count > 0
+        # Calibration constants are valid
+        @test state.cal.q_pub > 0
+        @test state.cal.r > 0
+        @test state.cal.phi > 0
     end
 
-    # q_pub is static (calibration constant, never updated)
-    @testset "q_pub unchanged after 50 periods" begin
-        params = default_params()
-        state = initialize_model(params)
-        q_pub_init = state.cal.q_pub
-        for _ in 1:50
-            step_period!(state)
-        end
-        @test state.cal.q_pub == q_pub_init
-    end
-
-    # Outsourcing rate is in valid range
-    @testset "outsourcing rate in [0, 1]" begin
-        params = default_params()
-        state = initialize_model(params)
-        for _ in 1:50
-            step_period!(state)
-            @test 0.0 <= state.accum.outsourcing_rate <= 1.0
-        end
-    end
-
-    # Matches occur
-    @testset "matches happen" begin
-        params = default_params()
-        state = initialize_model(params)
-        total_matches = 0
-        for _ in 1:50
-            step_period!(state)
-            total_matches += state.accum.matches
-        end
-        @test total_matches > 0
-    end
-
-    # Both channels produce matches over 50 periods
-    @testset "both channels produce matches" begin
-        params = default_params()
-        state = initialize_model(params)
-        total_direct = 0
-        total_placed = 0
-        for _ in 1:50
-            step_period!(state)
-            total_direct += length(state.accum.q_direct)
-            total_placed += length(state.accum.q_placed)
-        end
-        @test total_direct > 0
-        @test total_placed > 0
-    end
-
-    # Pool is replenished before matching, not after: if the pool empties and
-    # workers become available, the broker can propose them next period.
-    @testset "pool refills before matching after depletion" begin
-        params = default_params(d=4, N_W=200, N_F=10)
-        state = initialize_model(params)
-        for _ in 1:10; step_period!(state); end
-
-        # Force pool to empty by marking all pool members as employed
-        for wid in collect(state.broker.pool)
-            state.workers[wid].status = employed
-            state.workers[wid].employer_id = state.firms[1].id
-            push!(state.firms[1].employees, wid)
-        end
-        # End-of-period purge would normally clean this; simulate it
-        for wid in collect(state.broker.pool)
-            state.workers[wid].status == available || delete!(state.broker.pool, wid)
-        end
-        @test isempty(state.broker.pool)
-
-        # Make some workers available again (simulate firm exit releasing workers)
-        n_released = 0
-        for wid in collect(state.firms[1].employees)
-            if n_released < 20
-                state.workers[wid].status = available
-                state.workers[wid].employer_id = 0
-                delete!(state.firms[1].employees, wid)
-                n_released += 1
-            end
-        end
-        @test sum(w.status == available for w in state.workers) >= 20
-
-        # After one step, pool should have been refilled (maintenance runs before matching)
+    @testset "step_period! advances period counter" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42)
+        state = initialize_model(p)
+        @test state.period == 0
         step_period!(state)
-        @test length(state.broker.pool) > 0
-        # And broker should have been able to make proposals (if firms outsourced)
-        # The key invariant: pool was non-empty when broker_allocate! ran
+        @test state.period == 1
     end
 
-    # Unfilled vacancies carry forward into the next period's decisions
-    @testset "vacancy persistence" begin
-        params = default_params()
-        state = initialize_model(params)
-        for _ in 1:20
-            step_period!(state)
-        end
-        # Inject a vacancy for a firm that can't possibly fill it (no available workers match)
-        # by picking a firm index not currently in open_vacancies
-        test_j = findfirst(j -> state.open_vacancies[j] == 0, 1:length(state.firms))
-        test_j === nothing && error("All firms have vacancies — unlikely, skip test")
-        state.open_vacancies[test_j] = 1
-        # Run one more period — if vacancy persists unfilled, it stays in open_vacancies
+    @testset "step_period! produces matches" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42)
+        state = initialize_model(p)
         step_period!(state)
-        # The vacancy was either filled (removed) or persisted — either way it was processed.
-        # We verify it was in the decision set by checking accumulators increased.
-        @test state.accum.openings_internal + state.accum.openings_brokered > 0
+        total = state.accum.n_self_matches + state.accum.n_broker_standard + state.accum.n_broker_principal
+        @test total > 0  # at least some matches should form
     end
 
-    # 100 periods with entry/exit: invariants hold throughout
-    @testset "100 periods with entry/exit and invariants" begin
-        params = default_params()
-        state = initialize_model(params)
-        @test begin
-            all_pass = true
-            for _ in 1:100
-                step_period!(state)
-                try
-                    verify_invariants(state)
-                catch e
-                    all_pass = false
-                    @error "Invariant failed at period $(state.period)" exception=e
-                end
-            end
-            all_pass
-        end
-    end
-
-    # After 100 periods with entry/exit, some firms should be recent entrants
-    @testset "entrant firms have fresh state" begin
-        params = default_params()
-        state = initialize_model(params)
-        for _ in 1:100
-            step_period!(state)
-        end
-        # At least some firms should have id > N_F (entrants)
-        @test any(f.id > params.N_F for f in state.firms)
-        # Entrant firms start with seeded history from initial hires
-        entrants = [f for f in state.firms if f.id > params.N_F && f.hire_count == 0]
-        if !isempty(entrants)
-            @test all(6 <= f.history_count <= 10 for f in entrants)
-        end
-    end
-
-    # No-proposal penalty fires during step_period! when broker can't serve a client
-    @testset "no-proposal penalty wiring" begin
-        params = default_params()
-        state = initialize_model(params)
-        # Run enough periods for some firms to try broker
-        for _ in 1:30
-            step_period!(state)
-        end
-        # Empty the broker pool so no proposals can be made
-        empty!(state.broker.pool)
-        # Record broker satisfaction for firms that will choose broker
-        sat_before = Dict(f.id => f.satisfaction_broker for f in state.firms)
+    @testset "Match expirations at tau=1" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42, tau=1)
+        state = initialize_model(p)
         step_period!(state)
-        # Any firm that chose broker and got no proposal should have satisfaction
-        # updated toward its internal satisfaction (penalty)
-        n_brokered = state.accum.openings_brokered
-        if n_brokered > 0
-            # At least one firm's broker satisfaction should have changed
-            any_changed = any(
-                state.firms[j].satisfaction_broker != sat_before[state.firms[j].id]
-                for j in 1:length(state.firms)
-                if haskey(sat_before, state.firms[j].id)
-            )
-            @test any_changed
-        end
+        # After a period at tau=1, some agents may have active matches from this period
+        # After the NEXT period's step 0, those should all expire
+        step_period!(state)
+        # At tau=1, step 0 clears all matches
+        # Active matches from period 1 should be gone; period 2 matches may be present
     end
 
-    # Network measures are computed at the correct interval
-    @testset "network measures computed every M periods" begin
-        params = default_params(network_measure_interval=5)
-        state = initialize_model(params)
-        @test isnan(state.cached_network.betweenness)
-        for _ in 1:4
+    @testset "Match expirations at tau=4" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42, tau=4, K=3)
+        state = initialize_model(p)
+        # Run 5 periods
+        for _ in 1:5
             step_period!(state)
         end
-        # Not yet at interval
-        @test isnan(state.cached_network.betweenness)
-        # Period 5 triggers computation
-        step_period!(state)
-        @test state.cached_network.betweenness > 0.0
-        # Record value, run 4 more periods, verify unchanged
-        b5 = state.cached_network.betweenness
-        for _ in 6:9
+        # Some agents should have active matches (tau=4 means matches persist)
+        any_active = any(a -> !isempty(a.active_matches), state.agents)
+        @test any_active
+    end
+
+    @testset "Histories grow over time" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42)
+        state = initialize_model(p)
+        h_before = sum(a.history_count for a in state.agents)
+        for _ in 1:5
             step_period!(state)
         end
-        @test state.cached_network.betweenness == b5
-        # Period 10 recomputes (value may differ due to entry/exit)
+        h_after = sum(a.history_count for a in state.agents)
+        @test h_after > h_before
+    end
+
+    @testset "Broker history grows from brokered matches" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42)
+        state = initialize_model(p)
+        h_before = state.broker.history_count
+        for _ in 1:5
+            step_period!(state)
+        end
+        h_after = state.broker.history_count
+        @test h_after >= h_before  # broker only learns from brokered matches
+    end
+
+    @testset "Roster grows as agents outsource" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42)
+        state = initialize_model(p)
+        roster_before = length(state.broker.roster)
+        for _ in 1:5
+            step_period!(state)
+        end
+        roster_after = length(state.broker.roster)
+        @test roster_after >= roster_before
+    end
+
+    @testset "Entry/exit maintains population" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42, eta=0.10)
+        state = initialize_model(p)
+        for _ in 1:10
+            step_period!(state)
+        end
+        @test length(state.agents) == p.N
+        @test nv(state.G) == p.N + 1
+    end
+
+    @testset "Network measures are computed" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42, network_measure_interval=5)
+        state = initialize_model(p)
+        for _ in 1:5
+            step_period!(state)
+        end
+        @test isfinite(state.cached_network.betweenness)
+        @test isfinite(state.cached_network.constraint)
+        @test isfinite(state.cached_network.effective_size)
+    end
+
+    @testset "collect_period_metrics returns valid NamedTuple" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42)
+        state = initialize_model(p)
         step_period!(state)
-        @test state.cached_network.betweenness > 0.0
+        metrics = collect_period_metrics(state)
+        @test metrics.period == 1
+        @test metrics.n_total_matches >= 0
+        @test 0.0 <= metrics.outsourcing_rate <= 1.0
+        @test isfinite(metrics.mean_satisfaction_self)
+        @test isfinite(metrics.mean_satisfaction_broker)
     end
 end

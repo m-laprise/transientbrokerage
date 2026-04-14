@@ -1,88 +1,121 @@
 """
     network.jl
 
-Social network construction, referral pool computation, and coworker tie formation.
+Single undirected network G with N+1 nodes (N agents + 1 broker).
+Edges form from matches; the broker is a permanent node connected to all roster members.
 """
 
-"""
-    build_social_network(N_W, k_S, p_rewire, rng) -> SimpleGraph{Int}
+using Graphs: SimpleGraph, watts_strogatz, add_edge!, neighbors, nv, rem_edge!, has_edge
+using Random: AbstractRNG
 
-Build a Watts-Strogatz small-world graph with `N_W` nodes, degree `k_S`,
-and rewiring probability `p_rewire`.
 """
-function build_social_network(N_W::Int, k_S::Int, p_rewire::Float64,
-                               rng::AbstractRNG)::SimpleGraph{Int}
+    build_network(N, k, p_rewire, rng) -> SimpleGraph{Int}
+
+Build a Watts-Strogatz small-world graph with N+1 nodes (N agents + 1 broker node).
+Agent nodes are 1:N; broker node is N+1 (initially unconnected).
+The `rng` is used to extract a seed for the Watts-Strogatz construction.
+"""
+function build_network(N::Int, k::Int, p_rewire::Float64, rng::AbstractRNG)::SimpleGraph{Int}
     seed = rand(rng, 1:typemax(Int32))
-    return watts_strogatz(N_W, k_S, p_rewire; seed=seed)
+    # Build WS graph for N agent nodes
+    G = watts_strogatz(N, k, p_rewire; seed=seed)
+    # Add broker node (N+1), initially with no edges
+    add_vertex!(G)
+    return G
 end
 
 """
-    compute_referral_pool!(firm, workers, G_S)
+    add_match_edge!(G, i, j)
 
-Set firm's referral pool to the social neighbors of current employees,
-excluding employees themselves. Worker IDs are used as graph node indices
-(worker.id == worker.node_id, enforced at initialization).
+Add an undirected edge between agents i and j in G, if not already present.
+This is the sole mechanism of network densification.
 """
-function compute_referral_pool!(firm::Firm, workers::Vector{Worker},
-                                 G_S::SimpleGraph)
-    empty!(firm.referral_pool)
-    for emp_id in firm.employees
-        for nbr_id in neighbors(G_S, emp_id)
-            if nbr_id ∉ firm.employees
-                push!(firm.referral_pool, nbr_id)
+function add_match_edge!(G::SimpleGraph, i::Int, j::Int)
+    if !has_edge(G, i, j)
+        add_edge!(G, i, j)
+    end
+    return nothing
+end
+
+"""
+    add_broker_edge!(G, agent_id, broker_node)
+
+Connect an agent to the broker node when the agent joins the roster.
+"""
+function add_broker_edge!(G::SimpleGraph, agent_id::Int, broker_node::Int)
+    if !has_edge(G, agent_id, broker_node)
+        add_edge!(G, agent_id, broker_node)
+    end
+    return nothing
+end
+
+"""
+    remove_agent_edges!(G, agent_id)
+
+Remove all edges incident to agent_id. Used on agent exit before reusing the node.
+"""
+function remove_agent_edges!(G::SimpleGraph, agent_id::Int)
+    # Collect neighbors first to avoid modifying while iterating
+    nbrs = collect(neighbors(G, agent_id))
+    for nbr in nbrs
+        rem_edge!(G, agent_id, nbr)
+    end
+    return nothing
+end
+
+"""
+    add_entrant_edges!(G, agent_id, agent_type, agents, rng; n_edges)
+
+Connect a new entrant to `n_edges` existing agents sampled by type proximity.
+Probability of connecting to agent j is proportional to exp(-||x_new - x_j||²).
+"""
+function add_entrant_edges!(G::SimpleGraph, agent_id::Int, agent_type::Vector{Float64},
+                            agents::Vector{Agent}, rng::AbstractRNG;
+                            n_edges::Int)
+    N = length(agents)
+    n_edges = min(n_edges, N - 1)
+    n_edges <= 0 && return nothing
+
+    # Compute weights: exp(-||x_new - x_j||²) for all agents except self
+    weights = Vector{Float64}(undef, N)
+    total_weight = 0.0
+    @inbounds for j in 1:N
+        if j == agent_id
+            weights[j] = 0.0
+        else
+            diff_sq = 0.0
+            xj = agents[j].type
+            @simd for k in eachindex(agent_type)
+                diff_sq += (agent_type[k] - xj[k])^2
             end
+            w = exp(-diff_sq)
+            weights[j] = w
+            total_weight += w
         end
     end
-    return nothing
-end
 
-"""
-    compute_all_referral_pools!(firms, workers, G_S)
-
-Recompute referral pools for all firms.
-"""
-function compute_all_referral_pools!(firms::Vector{Firm}, workers::Vector{Worker},
-                                     G_S::SimpleGraph)
-    for firm in firms
-        compute_referral_pool!(firm, workers, G_S)
-    end
-    return nothing
-end
-
-"""
-    add_coworker_ties!(G_S, worker_id, firm_employees, rng)
-
-Add G_S ties between a newly hired worker and a random half of their coworkers
-(up to 5 new ties). Called on direct hires and placements, not staffing.
-Uses partial Fisher-Yates shuffle — one allocation for the coworker list.
-"""
-function add_coworker_ties!(G_S::SimpleGraph, worker_id::Int,
-                            firm_employees::Set{Int}, rng::AbstractRNG)
-    coworkers = Int[]
-    for wid in firm_employees
-        wid != worker_id && push!(coworkers, wid)
-    end
-    nc = length(coworkers)
-    nc == 0 && return nothing
-    n_ties = min(cld(nc, 2), 5)
-    for i in 1:n_ties
-        j = rand(rng, i:nc)
-        coworkers[i], coworkers[j] = coworkers[j], coworkers[i]
-        add_edge!(G_S, worker_id, coworkers[i])
-    end
-    return nothing
-end
-
-"""
-    add_all_coworker_ties!(G_S, employee_ids)
-
-Connect all members of a group pairwise in G_S. Used for initial employees
-at firm creation (initialization and entry). Deterministic — no RNG consumed.
-"""
-function add_all_coworker_ties!(G_S::SimpleGraph, employee_ids)
-    ids = collect(employee_ids)
-    for i in 1:length(ids), j in (i+1):length(ids)
-        add_edge!(G_S, ids[i], ids[j])
+    # Sample n_edges agents without replacement (weighted)
+    total_weight <= 0.0 && return nothing
+    selected = Set{Int}()
+    for _ in 1:n_edges
+        r = rand(rng) * total_weight
+        cumulative = 0.0
+        chosen = 0
+        @inbounds for j in 1:N
+            cumulative += weights[j]
+            if cumulative >= r
+                chosen = j
+                break
+            end
+        end
+        chosen == 0 && continue
+        if chosen ∉ selected
+            push!(selected, chosen)
+            add_edge!(G, agent_id, chosen)
+            # Remove from future sampling
+            total_weight -= weights[chosen]
+            weights[chosen] = 0.0
+        end
     end
     return nothing
 end

@@ -1,203 +1,253 @@
-using Test
-using TransientBrokerage
-using Graphs: SimpleGraph, add_edge!, star_graph, nv, ne
+@testset "Measures" begin
+    using Graphs: SimpleGraph, add_edge!, nv, path_graph, star_graph, cycle_graph
 
-@testset "Network Measures" begin
+    # ─── Prediction quality ─────────────────────────────────────────────
 
-    # Combined graph has correct node count and edge structure
-    @testset "build_combined_graph structure" begin
-        params = default_params(d=4, N_W=200, N_F=5)
-        state = initialize_model(params)
-        G, broker_node = build_combined_graph(state)
-
-        @test nv(G) == params.N_W + length(state.firms) + 1
-        @test broker_node == nv(G)
-
-        # At init, no periods run → broker_clients is empty
-        n_gs_edges = ne(state.G_S)
-        n_emp_edges = sum(length(f.employees) for f in state.firms)
-        n_pool_edges = length(state.broker.pool)
-        @test ne(G) == n_gs_edges + n_emp_edges + n_pool_edges
-
-        # After a step, G_S has grown (coworker ties) and broker-firm edges appear
-        step_period!(state)
-        G2, _ = build_combined_graph(state)
-        n_gs_edges2 = ne(state.G_S)  # G_S grows from coworker ties during matching
-        n_emp_edges2 = sum(length(f.employees) for f in state.firms)
-        n_pool_edges2 = length(state.broker.pool)
-        n_staffed_edges = length(state.broker.active_assignments)
-        staffing_firm_idxs = Set(sa.firm_idx for sa in state.broker.active_assignments)
-        n_broker_firm_total = length(union(
-            Set(j for (j, f) in enumerate(state.firms) if f.last_channel == :broker),
-            staffing_firm_idxs))
-        @test ne(G2) == n_gs_edges2 + n_emp_edges2 + n_pool_edges2 + n_staffed_edges + n_broker_firm_total
-        @test n_gs_edges2 >= n_gs_edges  # G_S only grows (coworker ties are permanent)
-        @test n_broker_firm_total > 0
+    @testset "compute_prediction_quality: perfect prediction" begin
+        pred = [1.0, 2.0, 3.0, 4.0, 5.0]
+        real = [1.0, 2.0, 3.0, 4.0, 5.0]
+        pq = compute_prediction_quality(pred, real)
+        @test pq.r_squared ≈ 1.0
+        @test pq.bias ≈ 0.0
+        @test pq.rank_corr ≈ 1.0
     end
 
-    # Star graph: center has low constraint (contacts are disconnected)
-    # For a star with k leaves: each p_ij = 1/k, no indirect paths,
-    # so C = k * (1/k)^2 = 1/k
-    @testset "Burt's constraint on star graph" begin
+    @testset "compute_prediction_quality: constant prediction" begin
+        pred = fill(3.0, 10)
+        real = collect(1.0:10.0)
+        pq = compute_prediction_quality(pred, real)
+        @test pq.r_squared < 0.0  # worse than mean
+        @test isapprox(pq.bias, 3.0 - 5.5; atol=0.01)
+    end
+
+    @testset "compute_prediction_quality: perfect rank, wrong scale" begin
+        pred = [10.0, 20.0, 30.0, 40.0, 50.0]
+        real = [1.0, 2.0, 3.0, 4.0, 5.0]
+        pq = compute_prediction_quality(pred, real)
+        @test pq.rank_corr ≈ 1.0
+        @test pq.r_squared < 1.0  # scale is off, MSE > 0
+    end
+
+    @testset "compute_prediction_quality: too few observations -> NaN" begin
+        pq = compute_prediction_quality([1.0, 2.0], [1.0, 2.0])
+        @test isnan(pq.r_squared)
+        @test isnan(pq.bias)
+        @test isnan(pq.rank_corr)
+    end
+
+    @testset "compute_prediction_quality: low variance -> NaN" begin
+        pred = [1.0, 1.0, 1.0, 1.0, 1.0]
+        real = [1.0, 1.001, 1.0, 0.999, 1.0]  # variance < threshold
+        pq = compute_prediction_quality(pred, real)
+        @test isnan(pq.r_squared)
+    end
+
+    # ─── Betweenness centrality ──────────────────────────────────────────
+
+    @testset "betweenness on star graph: center node" begin
+        # Star with 5 leaves: center has betweenness 1.0
+        G = star_graph(6)  # node 1 is center
+        bc = compute_betweenness(G, 1)
+        @test isapprox(bc, 1.0; atol=0.01)
+    end
+
+    @testset "betweenness on star graph: leaf node" begin
         G = star_graph(6)
-        c = compute_burt_constraint(G, 1)
-        @test c ≈ 1.0 / 5.0  # 5 leaves
+        bc = compute_betweenness(G, 2)  # leaf
+        @test isapprox(bc, 0.0; atol=0.01)
     end
 
-    # Star graph: center effective size = deg (all contacts non-redundant)
-    @testset "effective size on star graph" begin
-        G = star_graph(6)
-        es = compute_effective_size(G, 1)
-        @test es ≈ 5.0
+    @testset "betweenness on path graph: middle node" begin
+        # Path 1-2-3-4-5: node 3 has highest betweenness
+        G = path_graph(5)
+        bc3 = compute_betweenness(G, 3)
+        bc1 = compute_betweenness(G, 1)
+        @test bc3 > bc1
+        # Node 3 lies on 4 of the 6 shortest paths between non-adjacent pairs
+        # (1-4, 1-5, 2-4, 2-5) plus is endpoint for 4-5 and 1-2 (doesn't count).
+        # Raw = 8 (counted from both BFS directions), norm = (n-1)*(n-2) = 12
+        @test isapprox(bc3, 2.0/3; atol=0.05)
     end
 
-    # Isolated node: constraint = 1.0, effective_size = 0.0
-    @testset "isolated node" begin
+    @testset "betweenness on complete graph: all equal and low" begin
+        G = SimpleGraph(4)
+        for i in 1:4, j in (i+1):4
+            add_edge!(G, i, j)
+        end
+        bc_vals = [compute_betweenness(G, i) for i in 1:4]
+        # Complete graph: no node is "between" others (direct edges exist)
+        @test all(isapprox(bc, 0.0; atol=0.01) for bc in bc_vals)
+    end
+
+    @testset "betweenness: two-node graph" begin
+        G = SimpleGraph(2)
+        add_edge!(G, 1, 2)
+        @test compute_betweenness(G, 1) == 0.0
+    end
+
+    @testset "betweenness: isolated node" begin
         G = SimpleGraph(3)
         add_edge!(G, 1, 2)
-        @test compute_burt_constraint(G, 3) == 1.0
+        @test compute_betweenness(G, 3) == 0.0
+    end
+
+    @testset "betweenness on path: endpoints are zero" begin
+        G = path_graph(5)
+        @test isapprox(compute_betweenness(G, 1), 0.0; atol=0.01)
+        @test isapprox(compute_betweenness(G, 5), 0.0; atol=0.01)
+    end
+
+    @testset "betweenness on path: symmetry" begin
+        G = path_graph(5)
+        @test isapprox(compute_betweenness(G, 2), compute_betweenness(G, 4); atol=1e-10)
+    end
+
+    @testset "betweenness on path: exact values (n=5)" begin
+        # Path 1-2-3-4-5, n=5, norm = (n-1)(n-2) = 12
+        # Node 2: on paths (1,3),(1,4),(1,5) = 3 pairs, raw from both directions = 6
+        # Normalized: 6/12 = 0.5
+        G = path_graph(5)
+        @test isapprox(compute_betweenness(G, 2), 0.5; atol=1e-10)
+        # Node 3: on paths (1,4),(1,5),(2,4),(2,5) = 4 pairs, raw = 8
+        # Normalized: 8/12 = 2/3
+        @test isapprox(compute_betweenness(G, 3), 2.0/3; atol=1e-10)
+    end
+
+    @testset "betweenness: bridge node in barbell graph" begin
+        # Two K3 cliques (1,2,3) and (5,6,7) connected by bridge node 4
+        # 4 connects to 3 and 5. All paths between cliques go through 4.
+        G = SimpleGraph(7)
+        # Clique 1: 1-2, 1-3, 2-3
+        add_edge!(G, 1, 2); add_edge!(G, 1, 3); add_edge!(G, 2, 3)
+        # Bridge: 3-4, 4-5
+        add_edge!(G, 3, 4); add_edge!(G, 4, 5)
+        # Clique 2: 5-6, 5-7, 6-7
+        add_edge!(G, 5, 6); add_edge!(G, 5, 7); add_edge!(G, 6, 7)
+        bc4 = compute_betweenness(G, 4)
+        # Node 4 is on ALL 9 cross-clique shortest paths (3×3 pairs)
+        # plus paths within each clique that route through 4 (none, since cliques are complete)
+        # and paths between 3 and {5,6,7} and between {1,2,3} and 5
+        # Exact: node 4 is on all s-t paths where s∈{1,2,3} and t∈{5,6,7} (9 pairs)
+        # plus s=3,t∈{5,6,7} routes through 4 (3 of which overlap with above)
+        # Raw from both directions: 18. Norm = (7-1)(7-2) = 30.
+        @test bc4 > 0.5  # bridge node has high betweenness
+        # Non-bridge nodes in a clique should have lower betweenness
+        @test compute_betweenness(G, 1) < bc4
+    end
+
+    @testset "betweenness: disconnected graph" begin
+        # Two isolated components: 1-2-3 and 4-5-6
+        G = SimpleGraph(6)
+        add_edge!(G, 1, 2); add_edge!(G, 2, 3)
+        add_edge!(G, 4, 5); add_edge!(G, 5, 6)
+        # Node 2: on path 1-3 only (can't reach 4,5,6)
+        # Raw = 2 (from both directions), norm = (6-1)(6-2) = 20
+        @test isapprox(compute_betweenness(G, 2), 2.0/20; atol=1e-10)
+        # Node 5: same by symmetry
+        @test isapprox(compute_betweenness(G, 5), 2.0/20; atol=1e-10)
+    end
+
+    @testset "betweenness: single node graph" begin
+        G = SimpleGraph(1)
+        @test compute_betweenness(G, 1) == 0.0
+    end
+
+    @testset "betweenness: allocation-free after warmup (N=100)" begin
+        G = SimpleGraph(100)
+        for i in 1:99; add_edge!(G, i, i+1); end
+        compute_betweenness(G, 50)  # warmup (allocates workspaces)
+        a = @allocated compute_betweenness(G, 50)
+        # CSR build + partial_bc zeros are O(n+m), small and bounded.
+        # No per-source allocations.
+        @test a < 100_000  # < 100 KB for a 100-node graph
+    end
+
+    # ─── Burt's constraint ───────────────────────────────────────────────
+
+    @testset "constraint on star graph: center" begin
+        G = star_graph(6)
+        c = compute_burt_constraint(G, 1)
+        # Center connected to 5 leaves, no edges among leaves
+        # p_ij = 1/5, c_ij = p_ij (no indirect paths), C = 5 * (1/5)^2 = 1/5
+        @test isapprox(c, 0.2; atol=0.01)
+    end
+
+    @testset "constraint on star graph: leaf" begin
+        G = star_graph(6)
+        c = compute_burt_constraint(G, 2)
+        # Leaf has degree 1, p = 1, c_ij = 1, C = 1
+        @test isapprox(c, 1.0; atol=0.01)
+    end
+
+    @testset "constraint on isolated node" begin
+        G = SimpleGraph(3)
+        add_edge!(G, 1, 2)
+        @test compute_burt_constraint(G, 3) == 1.0  # isolated returns 1.0
+    end
+
+    @testset "constraint on complete graph K4" begin
+        G = SimpleGraph(4)
+        for i in 1:4, j in (i+1):4; add_edge!(G, i, j); end
+        c = compute_burt_constraint(G, 1)
+        # K4: each node has 3 neighbors, all interconnected
+        # p = 1/3; c_ij = 1/3 + 2*(1/3)*(1/3) = 1/3 + 2/9 = 5/9
+        # C = 3 * (5/9)^2 = 3 * 25/81 = 75/81 ≈ 0.926
+        @test isapprox(c, 75.0/81; atol=0.01)
+    end
+
+    # ─── Effective size ──────────────────────────────────────────────────
+
+    @testset "effective size on star graph: center" begin
+        G = star_graph(6)
+        es = compute_effective_size(G, 1)
+        # Center: 5 neighbors, no edges among them -> redundancy = 0 -> ES = 5
+        @test isapprox(es, 5.0; atol=0.01)
+    end
+
+    @testset "effective size on star graph: leaf" begin
+        G = star_graph(6)
+        es = compute_effective_size(G, 2)
+        # Leaf: 1 neighbor -> ES = 1 (minimal)
+        @test isapprox(es, 1.0; atol=0.01)
+    end
+
+    @testset "effective size on isolated node" begin
+        G = SimpleGraph(3)
+        add_edge!(G, 1, 2)
         @test compute_effective_size(G, 3) == 0.0
     end
 
-    # Complete triangle: node 1 has 2 neighbors (2,3) who are connected
-    # p_1j = 1/2, deg(2) = deg(3) = 2, so p_qj = 1/2
-    # j=2: indirect = p_13 * p_32 = 1/2 * 1/2 = 1/4; contribution: (1/2 + 1/4)^2 = 9/16
-    # j=3: indirect = p_12 * p_23 = 1/2 * 1/2 = 1/4; contribution: (1/2 + 1/4)^2 = 9/16
-    # Total = 18/16 = 1.125
-    @testset "Burt's constraint on complete triangle" begin
-        G = SimpleGraph(3)
-        add_edge!(G, 1, 2)
-        add_edge!(G, 1, 3)
-        add_edge!(G, 2, 3)
-        c = compute_burt_constraint(G, 1)
-        @test c ≈ 1.125
-    end
-
-    # Complete triangle: effective size
-    # deg = 2, redundancy = sum_j p_1j * sum_{q!=1} p_1q * m_jq
-    # j=2: p_12 * p_13 * m(2,3) = 1/2 * 1/2 * 1 = 1/4
-    # j=3: p_13 * p_12 * m(3,2) = 1/2 * 1/2 * 1 = 1/4
-    # ES = 2 - 1/2 = 1.5
-    @testset "effective size on complete triangle" begin
-        G = SimpleGraph(3)
-        add_edge!(G, 1, 2)
-        add_edge!(G, 1, 3)
-        add_edge!(G, 2, 3)
-        es = compute_effective_size(G, 1)
-        @test es ≈ 1.5
-    end
-
-    # Hand-built 5-node graph: node 1 bridges two disconnected pairs
-    # 1--2, 1--3, 1--4, 1--5, 2--3, 4--5
-    # Node 1 has deg=4, p_1j = 1/4. All neighbors have deg=2, so p_qj = 1/2.
-    # j=2: indirect = p_13 * p_32 = 1/4 * 1/2 = 1/8; contribution: (1/4+1/8)^2 = 9/64
-    # j=3: same = 9/64; j=4: same = 9/64; j=5: same = 9/64
-    # Total C = 36/64 = 0.5625
-    @testset "hand-built bridge graph: constraint" begin
-        G = SimpleGraph(5)
-        add_edge!(G, 1, 2); add_edge!(G, 1, 3)
-        add_edge!(G, 1, 4); add_edge!(G, 1, 5)
-        add_edge!(G, 2, 3); add_edge!(G, 4, 5)
-        c = compute_burt_constraint(G, 1)
-        @test c ≈ 0.5625
-    end
-
-    # Same graph: effective size for node 1
-    # deg=4, redundancy:
-    #   (j=2,q=3): p*p*m(2,3) = 1/16 * 1 = 1/16
-    #   (j=2,q=4): 1/16 * 0 = 0
-    #   (j=2,q=5): 1/16 * 0 = 0
-    #   (j=3,q=2): 1/16 * 1 = 1/16
-    #   (j=3,q=4): 0; (j=3,q=5): 0
-    #   (j=4,q=2): 0; (j=4,q=3): 0
-    #   (j=4,q=5): 1/16 * 1 = 1/16
-    #   (j=5,q=2): 0; (j=5,q=3): 0
-    #   (j=5,q=4): 1/16 * 1 = 1/16
-    # Total redundancy = 4/16 = 1/4
-    # ES = 4 - 0.25 = 3.75
-    @testset "hand-built bridge graph: effective size" begin
-        G = SimpleGraph(5)
-        add_edge!(G, 1, 2); add_edge!(G, 1, 3)
-        add_edge!(G, 1, 4); add_edge!(G, 1, 5)
-        add_edge!(G, 2, 3); add_edge!(G, 4, 5)
-        es = compute_effective_size(G, 1)
-        @test es ≈ 3.75
-    end
-
-    # Cross-mode betweenness: star graph where broker connects disjoint workers and firms
-    # Workers: {1,2}, Firms: {3,4}, Broker: 5
-    # All 4 worker-firm paths pass through broker → crossmode = 1.0
-    @testset "crossmode betweenness: pure broker star" begin
-        G = SimpleGraph(5)
-        add_edge!(G, 5, 1); add_edge!(G, 5, 2)
-        add_edge!(G, 5, 3); add_edge!(G, 5, 4)
-        @test compute_crossmode_betweenness(G, 5, 2, 2) ≈ 1.0
-        # Worker node is never an intermediary (it's always a source/target)
-        @test compute_crossmode_betweenness(G, 1, 2, 2) ≈ 0.0
-        @test compute_crossmode_betweenness(G, 3, 2, 2) ≈ 0.0
-    end
-
-    # Cross-mode betweenness with a bypass edge: worker 1 connected directly to firm 3
-    # Workers: {1,2}, Firms: {3,4}, Broker: 5
-    # Edges: 5-1, 5-2, 5-3, 5-4, 1-3
-    # Paths: 1→3 direct (no broker), 1→4 via 5, 2→3 via 5, 2→4 via 5
-    # Broker crossmode = 3/4 = 0.75
-    @testset "crossmode betweenness: star with bypass" begin
-        G = SimpleGraph(5)
-        add_edge!(G, 5, 1); add_edge!(G, 5, 2)
-        add_edge!(G, 5, 3); add_edge!(G, 5, 4)
-        add_edge!(G, 1, 3)  # bypass
-        @test compute_crossmode_betweenness(G, 5, 2, 2) ≈ 0.75
-    end
-
-    # Cross-mode betweenness on a chain: 1 - 4 - 2 - 3
-    # Workers: {1,2}, Firm: {3}, Broker: 4; N_W=2, N_F=1
-    # 1→3: goes 1→4→2→3 (through 4)
-    # 2→3: goes 2→3 directly (not through 4)
-    # Broker crossmode = 1/2 = 0.5
-    @testset "crossmode betweenness: chain" begin
+    @testset "effective size on complete graph K4" begin
         G = SimpleGraph(4)
-        add_edge!(G, 1, 4); add_edge!(G, 4, 2); add_edge!(G, 2, 3)
-        @test compute_crossmode_betweenness(G, 4, 2, 1) ≈ 0.5
+        for i in 1:4, j in (i+1):4; add_edge!(G, i, j); end
+        es = compute_effective_size(G, 1)
+        # K4: deg=3, redundancy = 3 * 2 * (1/3)^2 = 2/3
+        # ES = 3 - 2/3 ≈ 2.33
+        @test isapprox(es, 3.0 - 2.0/3; atol=0.01)
     end
 
-    # Cross-mode betweenness: broker has no cross-mode paths through it
-    # Workers: {1,2}, Firm: {3}, Broker: 4
-    # Workers directly connected to firm, broker disconnected
-    @testset "crossmode betweenness: disconnected broker" begin
-        G = SimpleGraph(4)
-        add_edge!(G, 1, 3); add_edge!(G, 2, 3)
-        @test compute_crossmode_betweenness(G, 4, 2, 1) ≈ 0.0
-    end
+    # ─── update_cached_network_measures! ─────────────────────────────────
 
-    # Cross-mode betweenness: multiple shortest paths (tie-breaking)
-    # Workers: {1,2}, Firm: {3}, Broker: 4, Extra node: 5
-    # Edges: 1-4, 1-5, 4-3, 5-3, 2-3
-    # 1→3: two shortest paths of length 2: 1→4→3 and 1→5→3
-    #       Node 4 gets credit = 1/2 (one of two paths)
-    # 2→3: direct
-    # Broker crossmode = (1/2) / 2 = 0.25
-    @testset "crossmode betweenness: tied shortest paths" begin
-        G = SimpleGraph(5)
-        add_edge!(G, 1, 4); add_edge!(G, 1, 5)
-        add_edge!(G, 4, 3); add_edge!(G, 5, 3)
-        add_edge!(G, 2, 3)
-        @test compute_crossmode_betweenness(G, 4, 2, 1) ≈ 0.25
-    end
-
-    # update_cached_network_measures! produces finite non-zero values
-    @testset "update_cached_network_measures!" begin
-        params = default_params(d=4, N_W=200, N_F=5)
-        state = initialize_model(params)
-        # Run a few periods to build some history
-        for _ in 1:5
-            step_period!(state)
-        end
+    @testset "update_cached_network_measures! populates all fields" begin
+        p2 = default_params(N=50, seed=42)
+        state = initialize_model(p2)
         update_cached_network_measures!(state)
         @test isfinite(state.cached_network.betweenness)
         @test isfinite(state.cached_network.constraint)
         @test isfinite(state.cached_network.effective_size)
-        @test state.cached_network.betweenness > 0.0
-        @test state.cached_network.effective_size > 0.0
+        @test 0.0 <= state.cached_network.betweenness <= 1.0
+    end
+
+    # ─── Consistency: constraint and effective size are inversely related ─
+
+    @testset "high constraint <-> low effective size (structural holes)" begin
+        # Star center: low constraint, high effective size
+        G = star_graph(11)
+        c_center = compute_burt_constraint(G, 1)
+        es_center = compute_effective_size(G, 1)
+        c_leaf = compute_burt_constraint(G, 2)
+        es_leaf = compute_effective_size(G, 2)
+        @test c_center < c_leaf
+        @test es_center > es_leaf
     end
 end

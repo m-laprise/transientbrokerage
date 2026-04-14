@@ -1,98 +1,144 @@
 using Test
 using TransientBrokerage
 using StableRNGs: StableRNG
-using LinearAlgebra: dot, norm
-using Statistics: var
+using LinearAlgebra: dot, norm, normalize, eigvals
 
-@testset "Phase 1: Matching Function" begin
-    d, rho = 8, 0.50
+@testset "Matching Function" begin
+    d = 8
+    rho = 0.50
 
-    function test_firm_types(d, rng)
-        geo = generate_firm_geometry(:complex, d, 50, rng)
-        generate_firm_types(geo, 50, d, rng)
+    function test_agent_types(d, n, rng)
+        [normalize(randn(rng, d)) for _ in 1:n]
     end
 
-    # generate_matching_function returns a valid MatchingEnv
-    @testset "Construction and dimensions" begin
-        ftypes = test_firm_types(d, StableRNG(10))
-        env = generate_matching_function(d, rho, ftypes, StableRNG(42))
+    @testset "MatchingEnv construction" begin
+        types = test_agent_types(d, 50, StableRNG(10))
+        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
         @test env.d == d
         @test env.rho == rho
+        @test env.delta == 0.5
         @test length(env.c) == d
-        @test env.c_norm ≈ norm(env.c)
+        @test size(env.A) == (d, d)
+        @test size(env.B) == (d, d)
     end
 
-    # Components are cosine-normalized (bounded)
-    @testset "Component bounds" begin
-        ftypes = test_firm_types(d, StableRNG(10))
-        env = generate_matching_function(d, rho, ftypes, StableRNG(42))
+    @testset "A and B are SPD" begin
+        types = test_agent_types(d, 50, StableRNG(10))
+        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        @test all(eigvals(env.A) .> 0)
+        @test all(eigvals(env.B) .> 0)
+        @test env.A ≈ env.A'
+        @test env.B ≈ env.B'
+    end
+
+    @testset "Matching function symmetry: f(x_i, x_j) == f(x_j, x_i)" begin
+        types = test_agent_types(d, 20, StableRNG(10))
+        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
         rng = StableRNG(99)
-        mus = [eval_mu(randn(rng, d), env) for _ in 1:100]
-        ints = [eval_interaction(randn(rng, d),
-                                 randn(rng, d), env) for _ in 1:100]
-        @test all(-1.0 .<= mus .<= 1.0)       # tanh(cos) ∈ [-1,1]
-        @test all(-1.0 .<= ints .<= 1.0)      # cosine sim
+        @test all(1:100) do _
+            i, j = rand(rng, 1:20), rand(rng, 1:20)
+            match_signal(types[i], types[j], env) ≈ match_signal(types[j], types[i], env)
+        end
     end
 
-    # Mixing: at rho=0, output is pure interaction; at rho=1, pure quality
+    @testset "Regime gain values" begin
+        types = test_agent_types(d, 20, StableRNG(10))
+        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        rng = StableRNG(77)
+        gains = [regime_gain(types[rand(rng, 1:20)], types[rand(rng, 1:20)], env) for _ in 1:100]
+        # All gains should be 1+delta or 1-delta
+        @test all(g -> g ≈ 0.5 || g ≈ 1.5, gains)
+    end
+
+    @testset "Regime gain symmetry: g(x_i, x_j) == g(x_j, x_i)" begin
+        types = test_agent_types(d, 20, StableRNG(10))
+        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        rng = StableRNG(55)
+        @test all(1:50) do _
+            i, j = rand(rng, 1:20), rand(rng, 1:20)
+            regime_gain(types[i], types[j], env) ≈ regime_gain(types[j], types[i], env)
+        end
+    end
+
+    @testset "At delta=0, gain is always 1.0" begin
+        types = test_agent_types(d, 20, StableRNG(10))
+        env0 = generate_matching_env(d, rho, 0.0, 0.25, types, StableRNG(42))
+        rng = StableRNG(77)
+        @test all(1:50) do _
+            i, j = rand(rng, 1:20), rand(rng, 1:20)
+            regime_gain(types[i], types[j], env0) ≈ 1.0
+        end
+    end
+
     @testset "Mixing weight rho" begin
-        ftypes = test_firm_types(d, StableRNG(10))
-        env0 = generate_matching_function(d, 0.0, ftypes, StableRNG(42))
-        env1 = generate_matching_function(d, 1.0, ftypes, StableRNG(42))
-        w = randn(StableRNG(1), d)
-        x = randn(StableRNG(2), d)
-        @test match_signal(w, x, env0) ≈ eval_interaction(w, x, env0)
-        @test match_signal(w, x, env1) ≈ eval_mu(w, env1)
+        types = test_agent_types(d, 20, StableRNG(10))
+        # At rho=1: pure quality, no interaction
+        env1 = generate_matching_env(d, 1.0, 0.5, 0.25, types, StableRNG(42))
+        xi, xj = types[1], types[2]
+        expected_q = 0.5 * (dot(xi, env1.c) + dot(xj, env1.c))
+        @test match_signal(xi, xj, env1) ≈ expected_q
+
+        # At rho=0: pure interaction, no quality
+        env0 = generate_matching_env(d, 0.0, 0.5, 0.25, types, StableRNG(42))
+        g = regime_gain(xi, xj, env0)
+        expected_int = g * dot(xi, env0.A * xj)
+        @test match_signal(xi, xj, env0) ≈ expected_int
     end
 
-    # Noiseless output equals rho*mu + (1-rho)*interaction exactly
-    @testset "Decomposition: noiseless = rho*mu + (1-rho)*interaction" begin
-        ftypes = test_firm_types(d, StableRNG(10))
-        env = generate_matching_function(d, rho, ftypes, StableRNG(42))
-        test_rng = StableRNG(77)
+    @testset "In-place match_signal! matches allocating version" begin
+        types = test_agent_types(d, 20, StableRNG(10))
+        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        Ax = zeros(d)
+        Bx = zeros(d)
+        rng = StableRNG(33)
         @test all(1:20) do _
-            w = randn(test_rng, d)
-            x = randn(test_rng, d)
-            expected = rho * eval_mu(w, env) + (1.0 - rho) * eval_interaction(w, x, env)
-            match_signal(w, x, env) ≈ expected
+            i, j = rand(rng, 1:20), rand(rng, 1:20)
+            match_signal(types[i], types[j], env) ≈
+                match_signal!(Ax, Bx, types[i], types[j], env)
         end
     end
 
-    # Nearby workers produce similar mu values (smoothness)
-    @testset "eval_mu smoothness" begin
-        ftypes = test_firm_types(d, StableRNG(10))
-        env = generate_matching_function(d, rho, ftypes, StableRNG(42))
-        w = randn(StableRNG(1), d)
-        w_near = w .+ randn(StableRNG(2), d) .* 0.01
-        @test abs(eval_mu(w, env) - eval_mu(w_near, env)) < 0.1
+    @testset "match_output includes Q_OFFSET and noise" begin
+        types = test_agent_types(d, 20, StableRNG(10))
+        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        xi, xj = types[1], types[2]
+        rng1 = StableRNG(99)
+        q1 = match_output(xi, xj, env, rng1)
+        rng2 = StableRNG(99)
+        q2 = Q_OFFSET + match_signal(xi, xj, env) + env.sigma_eps * randn(rng2)
+        @test q1 ≈ q2
     end
 
-    # calibrate_output_scale returns f_mean and r_base with correct relationship
-    @testset "calibrate_output_scale" begin
-        ftypes = test_firm_types(d, StableRNG(10))
-        env = generate_matching_function(d, rho, ftypes, StableRNG(42))
-        f_mean, r_base = calibrate_output_scale(env, ftypes, StableRNG(55))
-        @test f_mean > 0.0
-        @test r_base > 0.0
-        @test r_base ≈ 0.70 * f_mean
+    @testset "Calibration produces valid constants" begin
+        types = test_agent_types(d, 100, StableRNG(10))
+        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        p = default_params()
+        cal = calibrate(env, types, p, StableRNG(55))
+        @test cal.q_pub > 0.0
+        @test cal.r > 0.0
+        @test cal.r ≈ R_BASE_FRAC * cal.q_pub
+        @test cal.phi > 0.0
+        @test cal.c_s ≈ p.gamma_c * cal.phi
+        @test cal.c_s < cal.phi  # self-search cheaper than broker fee
     end
 
-    # Independent MC check of f_mean (random worker-firm pairs, matching calibration)
-    @testset "Statistical consistency of f_mean" begin
-        ftypes = test_firm_types(d, StableRNG(10))
-        env = generate_matching_function(d, rho, ftypes, StableRNG(42))
-        sigma_w = 0.5
-        f_mean, _ = calibrate_output_scale(env, ftypes, StableRNG(55); sigma_w=sigma_w)
-        σ_per_dim = sigma_w / sqrt(d)
-        check_rng = StableRNG(200)
-        n_f = length(ftypes)
-        total = sum(1:10_000) do _
-            ref = ftypes[rand(check_rng, 1:n_f)]
-            w = ref .+ σ_per_dim .* randn(check_rng, d)
-            x = ftypes[rand(check_rng, 1:n_f)]  # independent firm
-            TransientBrokerage.Q_OFFSET + match_signal(w, x, env)
+    @testset "Two regimes produce different match qualities" begin
+        types = test_agent_types(d, 50, StableRNG(10))
+        env = generate_matching_env(d, 0.0, 0.5, 0.0, types, StableRNG(42))  # pure interaction, no noise
+        # Find pairs in each regime
+        high_gain = Float64[]
+        low_gain = Float64[]
+        for i in 1:50, j in (i+1):50
+            g = regime_gain(types[i], types[j], env)
+            q = match_signal(types[i], types[j], env)
+            if g > 1.0
+                push!(high_gain, q)
+            else
+                push!(low_gain, q)
+            end
         end
-        f_mean_check = total / 10_000
-        @test abs(f_mean_check - f_mean) / max(abs(f_mean), 0.01) < 0.10
+        # Both regimes should be populated
+        @test length(high_gain) > 10
+        @test length(low_gain) > 10
     end
 end

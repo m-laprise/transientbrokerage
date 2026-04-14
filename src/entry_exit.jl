@@ -1,108 +1,113 @@
 """
     entry_exit.jl
 
-Firm entry and exit (§4, §8 step 5). Worker population is fixed.
+Agent entry and exit. Exiting agents are replaced by entrants with fresh types,
+empty histories, and floor(k/2) edges to type-similar neighbors.
 """
 
-"""
-    exit_firm!(state, firm_idx, avail)
-
-Vacate a firm slot: release employees to available, clear from open_vacancies.
-The firm struct remains at `firm_idx` until `enter_firm!` replaces it.
-Workers retain their positions in G_S and broker pool.
-"""
-function exit_firm!(state::ModelState, firm_idx::Int, avail::BitVector)
-    firm = state.firms[firm_idx]
-    for wid in firm.employees
-        state.workers[wid].status = available
-        state.workers[wid].employer_id = 0
-        avail[wid] = true
-    end
-    empty!(firm.employees)
-    state.open_vacancies[firm_idx] = 0
-    # Terminate active staffing assignments at this firm (§9g step 5.1)
-    if state.params.enable_staffing
-        terminate_firm_assignments!(state, firm_idx, avail)
-    end
-    return nothing
-end
+using Random: AbstractRNG
+using LinearAlgebra: norm
 
 """
-    enter_firm!(state, firm_idx, avail, candidates, wts)
+    exit_agent!(state, agent_id)
 
-Reset the firm at `firm_idx` in-place as a fresh entrant: new type, cleared history,
-satisfaction at q_pub, last_channel reset, and 6-10 employees drawn by type proximity
-from `avail` with pairwise coworker ties in G_S. Reuses existing history buffers to
-avoid allocation. `candidates` and `wts` are pre-allocated buffers.
+Remove agent from the simulation: clear all edges in G, terminate active matches
+(counterparties regain capacity), remove from broker roster.
+The agent's node index is reused for the entrant.
 """
-function enter_firm!(state::ModelState, firm_idx::Int, avail::BitVector,
-                     candidates::Vector{Int}, wts::Vector{Float64})
-    rng = state.rng
-    q_pub = state.cal.q_pub
+function exit_agent!(state::ModelState, agent_id::Int)
+    agent = state.agents[agent_id]
 
-    firm = state.firms[firm_idx]
-    new_type = sample_firm_type(state.firm_geo, rand(rng), state.params.d, rng)
-
-    # Reset firm in-place, reusing history buffers
-    firm.id = state.next_firm_id
-    state.next_firm_id += 1
-    firm.type .= new_type
-    empty!(firm.employees)
-    firm.history_count = 0
-    firm.satisfaction_internal = q_pub
-    firm.satisfaction_broker = q_pub
-    firm.tried_internal = false
-    firm.tried_broker = false
-    firm.last_channel = :none
-    empty!(firm.referral_pool)
-    firm.hire_count = 0
-    firm.periods_alive = 0
-
-    n_initial = rand(rng, 6:10)
-    # Gather available worker IDs from BitVector (cache-friendly linear scan)
-    nc = 0
-    @inbounds for wid in eachindex(avail)
-        if avail[wid]
-            nc += 1
-            candidates[nc] = wid
+    # Terminate all active matches: remove from partner's active list
+    for am in agent.active_matches
+        partner = state.agents[am.partner_id]
+        idx = findfirst(m -> m.partner_id == agent_id, partner.active_matches)
+        if idx !== nothing
+            deleteat!(partner.active_matches, idx)
         end
     end
-    n_hire = min(n_initial, nc)
-    if n_hire > 0
-        chosen = sample_by_proximity(rng, candidates, nc, state.workers,
-                                      firm.type, wts, n_hire)
-        for wid in chosen
-            state.workers[wid].status = employed
-            state.workers[wid].employer_id = firm.id
-            push!(firm.employees, wid)
-            avail[wid] = false
-            q = match_output(state.workers[wid].type, firm.type, state.env, rng)
-            record_history!(firm, state.workers[wid].type, q)
-        end
-        add_all_coworker_ties!(state.G_S, firm.employees)
+    empty!(agent.active_matches)
+
+    # Remove all edges from G
+    remove_agent_edges!(state.G, agent_id)
+
+    # Remove from broker roster
+    if agent.on_roster
+        delete!(state.broker.roster, agent_id)
+        agent.on_roster = false
     end
 
     return nothing
 end
 
 """
-    process_entry_exit!(state, avail)
+    enter_agent!(state, agent_id, rng)
 
-Each firm exits with probability eta and is immediately replaced by an entrant (§8 step 5).
-`avail` is the shared available set from the step loop, updated in place.
+Replace an exited agent with a fresh entrant at the same node index.
+New type from curve + noise, empty history, satisfaction at q_pub,
+floor(k/2) edges to type-similar neighbors.
 """
-function process_entry_exit!(state::ModelState, avail::BitVector)
-    rng = state.rng
+function enter_agent!(state::ModelState, agent_id::Int, rng::AbstractRNG)
+    p = state.params
+    d = p.d
+    geo = state.curve_geo
+
+    # Generate fresh type on curve + noise
+    cp = curve_point(rand(rng), geo)
+    sigma_per_dim = p.sigma_x / sqrt(d)
+    new_type = cp .+ sigma_per_dim .* randn(rng, d)
+    new_type_norm = norm(new_type)
+    if new_type_norm > 1e-12
+        new_type ./= new_type_norm
+    end
+
+    agent = state.agents[agent_id]
+
+    # Reset all fields
+    agent.type .= new_type
+    empty!(agent.active_matches)
+    agent.history_count = 0
+    agent.n_new_obs = 0
+
+    # Re-initialize neural network
+    agent.nn = init_neural_net(d, p.h_a, rng)
+    agent.nn_grad = NNGradBuffers(agent.nn)
+    fill!(agent.predict_buf, 0.0)
+
+    # Reset partner tracking
+    fill!(agent.partner_sum, 0.0)
+    fill!(agent.partner_count, 0)
+
+    # Reset satisfaction
+    agent.satisfaction_self = state.cal.q_pub
+    agent.satisfaction_broker = state.cal.q_pub
+    agent.tried_broker = false
+    agent.on_roster = false
+    agent.periods_alive = 0
+
+    # Add edges to type-similar neighbors
+    n_edges = p.k ÷ 2
+    add_entrant_edges!(state.G, agent_id, new_type, state.agents, rng;
+                       n_edges=n_edges)
+
+    return nothing
+end
+
+"""
+    process_entry_exit!(state, rng)
+
+Process agent turnover: each agent exits with probability η, immediately replaced.
+"""
+function process_entry_exit!(state::ModelState, rng::AbstractRNG)
     eta = state.params.eta
-    eta == 0.0 && return nothing
-    N_W = length(avail)
-    candidates = Vector{Int}(undef, N_W)
-    wts = Vector{Float64}(undef, N_W)
-    for j in eachindex(state.firms)
+    eta <= 0.0 && return nothing
+
+    for i in 1:state.params.N
         if rand(rng) < eta
-            exit_firm!(state, j, avail)
-            enter_firm!(state, j, avail, candidates, wts)
+            exit_agent!(state, i)
+            enter_agent!(state, i, rng)
         end
     end
+
     return nothing
 end

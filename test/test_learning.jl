@@ -1,186 +1,117 @@
 using Test
 using TransientBrokerage
 using StableRNGs: StableRNG
-using Statistics: mean
-using LinearAlgebra: dot
+using LinearAlgebra: normalize, norm
 
-# Create a firm with n_obs synthetic history entries
-function make_firm_with_history(d::Int, n_obs::Int, rng::StableRNG)
-    firm = create_firm(1, d, rng)
-    for i in 1:n_obs
-        w = randn(rng, d)
-        firm.history_count += 1
-        firm.history_w[:, firm.history_count] = w
-        firm.history_q[firm.history_count] = dot(w, firm.type) + randn(rng)
-    end
-    return firm
-end
+@testset "Neural Network Learning" begin
 
-# Create a broker with pooled history across multiple firms
-function make_broker_with_history(d::Int, firms::Vector{Firm}, n_per_firm::Int, rng::StableRNG)
-    params = default_params(d=d, N_W=100, N_F=length(firms))
-    workers = [Worker(id=i, node_id=i, type=randn(rng, d),
-                       reservation_wage=1.0) for i in 1:100]
-    broker = create_broker(1, params, workers, rng)
-    for (j, firm) in enumerate(firms)
-        for _ in 1:n_per_firm
-            w = randn(rng, d)
-            record_broker_history!(broker, w, firm.type, j, dot(w, firm.type) + randn(rng))
-        end
-    end
-    return broker
-end
-
-d = 4
-
-@testset "Learning" begin
-    lambda = 1.0
-
-    # Firm with seeded history produces finite, non-trivial predictions
-    @testset "firm prediction with history" begin
-        firm = make_firm_with_history(d, 10, StableRNG(1))
-        n = effective_history_size(firm)
-        model = fit_ridge(@view(firm.history_w[:, 1:n]), @view(firm.history_q[1:n]), lambda)
-        q_hat = predict_ridge(model, randn(StableRNG(2), d))
-        @test isfinite(q_hat)
-    end
-
-    # Ridge regression learns a linear function accurately with enough data
-    @testset "ridge learns linear function" begin
+    @testset "predict_nn! produces finite output" begin
         rng = StableRNG(42)
-        firm = create_firm(1, d, rng)
-        # Generate clean linear data: q = w'x + small noise
-        for i in 1:100
-            w = randn(rng, d)
-            firm.history_count += 1
-            firm.history_w[:, firm.history_count] = w
-            firm.history_q[firm.history_count] = dot(w, firm.type) + 0.1 * randn(rng)
-        end
-        n = effective_history_size(firm)
-        model = fit_ridge(@view(firm.history_w[:, 1:n]), @view(firm.history_q[1:n]), 0.01)
-        # Predictions should be close to true w'x for test workers
-        errors = Float64[]
-        for _ in 1:100
-            w = randn(rng, d)
-            push!(errors, (predict_ridge(model, w) - dot(w, firm.type))^2)
-        end
-        @test mean(errors) < 0.5  # RMSE < 0.7 on a function with output scale ~4
+        nn = init_neural_net(8, 16, rng)
+        buf = zeros(16)
+        z = randn(rng, 8)
+        y = predict_nn!(nn, buf, z)
+        @test isfinite(y)
     end
 
-    # Prediction quality improves with more observations (same firm, growing history)
-    @testset "learning curve: R-squared increases with n" begin
-        firm_type = randn(StableRNG(42), d)
-        r2_vals = Float64[]
-        for n_obs in [5, 20, 100]
-            firm = create_firm(1, copy(firm_type), d)
-            train_rng = StableRNG(n_obs)
-            for _ in 1:n_obs
-                w = randn(train_rng, d)
-                firm.history_count += 1
-                firm.history_w[:, firm.history_count] = w
-                firm.history_q[firm.history_count] = dot(w, firm.type) + randn(train_rng)
-            end
-            n = effective_history_size(firm)
-            model = fit_ridge(@view(firm.history_w[:, 1:n]), @view(firm.history_q[1:n]), lambda)
-            test_rng = StableRNG(999)
-            predicted = Float64[]
-            realized = Float64[]
-            for _ in 1:200
-                w = randn(test_rng, d)
-                push!(predicted, predict_ridge(model, w))
-                push!(realized, dot(w, firm.type) + randn(test_rng))
-            end
-            pq = compute_prediction_quality(predicted, realized)
-            push!(r2_vals, pq.r_squared)
-        end
-        @test r2_vals[3] > r2_vals[1]
-    end
-
-    # Broker pooled model should outperform individual firm models
-    @testset "broker pooling advantage" begin
+    @testset "predict_nn! is deterministic" begin
         rng = StableRNG(42)
-        n_firms = 5
-        firms = [create_firm(j, d, rng) for j in 1:n_firms]
-        broker = make_broker_with_history(d, firms, 20, rng)
-
-        state = initialize_model(default_params(d=d, N_W=100, N_F=n_firms))
-        models = build_period_models(state, lambda)
-
-        # Broker model should exist (pooled data)
-        n_b = effective_history_size(state.broker)
-        @test n_b >= 0  # may be 0 at init, but the test below uses the mock broker
-
-        # Build broker model from mock data
-        n_bm = effective_history_size(broker)
-        W = @view(broker.history_w[:, 1:n_bm])
-        X = @view(broker.history_x[:, 1:n_bm])
-        broker_model = fit_ridge(
-            hcat([broker_features(W[:, i], X[:, i]) for i in 1:n_bm]...),
-            @view(broker.history_q[1:n_bm]), lambda)
-
-        # Test: broker predictions are finite and reasonable
-        test_w = randn(rng, d)
-        q_b = predict_ridge(broker_model, broker_features(test_w, firms[1].type))
-        @test isfinite(q_b)
+        nn = init_neural_net(8, 16, rng)
+        buf = zeros(16)
+        z = randn(StableRNG(1), 8)
+        y1 = predict_nn!(nn, buf, z)
+        y2 = predict_nn!(nn, buf, z)
+        @test y1 == y2
     end
 
-    # Broker model on full outer product features produces finite predictions
-    @testset "broker prediction with pooled model" begin
+    @testset "nn_loss is finite and positive" begin
         rng = StableRNG(42)
-        firms = [create_firm(j, d, rng) for j in 1:3]
-        broker = make_broker_with_history(d, firms, 20, rng)
-        n_b = effective_history_size(broker)
-        W = @view(broker.history_w[:, 1:n_b])
-        X = @view(broker.history_x[:, 1:n_b])
-        BF = hcat([broker_features(W[:, i], X[:, i]) for i in 1:n_b]...)
-        broker_model = fit_ridge(BF, @view(broker.history_q[1:n_b]), lambda)
-        test_w = randn(rng, d)
-        q = predict_ridge(broker_model, broker_features(test_w, firms[1].type))
-        @test isfinite(q)
+        nn = init_neural_net(8, 16, rng)
+        X = randn(rng, 8, 10)
+        q = randn(rng, 10)
+        loss = nn_loss(nn.W1, nn.b1, nn.w2, Ref(nn.b2), X, q)
+        @test isfinite(loss)
+        @test loss > 0.0
     end
 
-    # After initialization, all agents have seeded history so all models are fitted
-    @testset "build_period_models after initialization" begin
-        state = initialize_model(default_params(d=d, N_W=100, N_F=5))
-        models = build_period_models(state, lambda)
-        @test length(models.firm_models) == 5
-        @test all(m isa RidgeModel for m in models.firm_models)
-        @test models.broker_model isa RidgeModel
-    end
-end
+    @testset "Training reduces loss" begin
+        rng = StableRNG(42)
+        nn = init_neural_net(8, 16, rng)
+        grad = NNGradBuffers(nn)
+        X = randn(StableRNG(1), 8, 20)
+        q = randn(StableRNG(2), 20)
 
-@testset "Prediction Quality" begin
-    # Perfect predictions give R-squared = 1
-    @testset "perfect predictions" begin
-        predicted = Float64[1.0, 2.0, 3.0, 4.0, 5.0]
-        realized = Float64[1.0, 2.0, 3.0, 4.0, 5.0]
-        pq = compute_prediction_quality(predicted, realized)
-        @test pq.r_squared ≈ 1.0
-        @test pq.bias ≈ 0.0
-        @test pq.rank_corr ≈ 1.0
+        loss_before = nn_loss(nn.W1, nn.b1, nn.w2, Ref(nn.b2), X, q)
+        train_nn!(nn, grad, X, q, 50, 0.01)
+        loss_after = nn_loss(nn.W1, nn.b1, nn.w2, Ref(nn.b2), X, q)
+
+        @test loss_after < loss_before
     end
 
-    # Too few observations returns NaN
-    @testset "too few observations returns NaN" begin
-        pq = compute_prediction_quality(Float64[1.0, 2.0], Float64[1.0, 2.0])
-        @test isnan(pq.r_squared)
-        @test isnan(pq.bias)
-        @test isnan(pq.rank_corr)
+    @testset "NN can learn a linear function" begin
+        rng = StableRNG(42)
+        d = 8
+        nn = init_neural_net(d, 16, rng)
+        grad = NNGradBuffers(nn)
+
+        n = 100
+        X = randn(StableRNG(1), d, n)
+        q = [2.0 * X[1, j] + 0.5 * X[2, j] + 1.0 for j in 1:n]
+
+        train_nn!(nn, grad, X, Vector{Float64}(q), 200, 0.01)
+
+        X_test = randn(StableRNG(99), d, 20)
+        q_test = [2.0 * X_test[1, j] + 0.5 * X_test[2, j] + 1.0 for j in 1:20]
+        buf = zeros(16)
+        preds = [predict_nn!(nn, buf, X_test[:, j]) for j in 1:20]
+        mse = sum((preds .- q_test).^2) / 20
+        @test mse < 0.5
     end
 
-    # Positive bias detected
-    @testset "positive bias detected" begin
-        predicted = Float64[3.0, 4.0, 5.0, 6.0, 7.0]
-        realized = Float64[1.0, 2.0, 3.0, 4.0, 5.0]
-        pq = compute_prediction_quality(predicted, realized)
-        @test pq.bias > 0.0
+    @testset "Adaptive step schedule" begin
+        @test compute_adaptive_steps(100, 5, 5) == 100     # all new
+        @test compute_adaptive_steps(100, 3, 5) == 60      # 3 of 5 new (above floor)
+        @test compute_adaptive_steps(100, 1, 50) == 50     # floor at ADAPTIVE_FLOOR=50
+        @test compute_adaptive_steps(100, 1, 200) == 50    # floor
+        @test compute_adaptive_steps(100, 0, 100) >= 50    # floor
+        @test compute_adaptive_steps(100, 1, 0) == 100     # empty history
     end
 
-    # Negative R-squared for bad predictions
-    @testset "negative R-squared for bad predictions" begin
-        predicted = Float64[10.0, -10.0, 10.0, -10.0, 10.0]
-        realized = Float64[1.0, 2.0, 3.0, 4.0, 5.0]
-        pq = compute_prediction_quality(predicted, realized)
-        @test pq.r_squared < 0.0
+    @testset "train_agent_nn! resets n_new_obs" begin
+        rng = StableRNG(42)
+        p = default_params(N=20)
+        nn = init_neural_net(p.d, p.h_a, rng)
+        agent = Agent(
+            id=1, type=normalize(randn(rng, p.d)),
+            history_X=randn(rng, p.d, 16), history_q=randn(rng, 16),
+            history_count=5, n_new_obs=5,
+            nn=nn, nn_grad=NNGradBuffers(nn), predict_buf=zeros(p.h_a),
+            partner_sum=zeros(20), partner_count=zeros(Int, 20),
+        )
+        train_agent_nn!(agent, p)
+        @test agent.n_new_obs == 0
     end
+
+    @testset "train_agent_nn! with empty history is no-op" begin
+        rng = StableRNG(42)
+        p = default_params(N=20)
+        nn = init_neural_net(p.d, p.h_a, rng)
+        w1_before = copy(nn.W1)
+        agent = Agent(
+            id=1, type=normalize(randn(rng, p.d)),
+            history_X=Matrix{Float64}(undef, p.d, 16),
+            history_q=Vector{Float64}(undef, 16),
+            history_count=0, n_new_obs=0,
+            nn=nn, nn_grad=NNGradBuffers(nn), predict_buf=zeros(p.h_a),
+            partner_sum=zeros(20), partner_count=zeros(Int, 20),
+        )
+        train_agent_nn!(agent, p)
+        @test agent.nn.W1 == w1_before
+    end
+
+    # Weight decay removed: the NN has no explicit L2 regularization. With MSE
+    # targets of zero the weights still trend toward zero via pure gradient
+    # descent, but that's a property of the optimization target, not of a
+    # separate decay term. See scan results showing λ had no measurable effect
+    # at tested scales; decay removed for simplicity.
 end

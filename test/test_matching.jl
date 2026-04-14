@@ -1,385 +1,180 @@
 using Test
 using TransientBrokerage
+using Graphs: has_edge, neighbors
 using StableRNGs: StableRNG
 
-@testset "Matching" begin
+@testset "Match Formation and Outsourcing" begin
+    p = default_params(N=30, T=5, T_burn=1, K=3, seed=42)
+    state = initialize_model(p)
+    agents = state.agents
+    broker = state.broker
+    G = state.G
+    cal = state.cal
+    env = state.env
 
-    # Wage = r_i + beta_W * max(q_hat - r_i, 0)
-    @testset "compute_wage formula" begin
-        @test compute_wage(10.0, 3.0, 0.5) == 3.0 + 0.5 * 7.0  # 6.5
-        @test compute_wage(2.0, 3.0, 0.5) == 3.0  # no surplus
-        @test compute_wage(3.0, 3.0, 0.5) == 3.0  # zero surplus
-        @test compute_wage(10.0, 3.0, 1.0) == 10.0  # full surplus to worker
-        @test compute_wage(10.0, 3.0, 0.0) == 3.0  # no surplus share
-    end
-
-    # Worker accepts highest-wage offer
-    @testset "conflict resolution: highest wage wins" begin
-        p1 = ProposedMatch(1, 42, :internal, 8.0, 0.0, 5.5)
-        p2 = ProposedMatch(2, 42, :broker, 10.0, 10.0, 7.0)
-        accepted = resolve_conflicts([p1, p2], StableRNG(1))
-        @test length(accepted) == 1
-        @test accepted[1].firm_idx == 2
-        @test accepted[1].wage == 7.0
-    end
-
-    # Equal wages: resolved randomly (both outcomes possible)
-    @testset "conflict resolution: ties broken randomly" begin
-        p1 = ProposedMatch(1, 42, :internal, 8.0, 0.0, 5.0)
-        p2 = ProposedMatch(2, 42, :broker, 8.0, 8.0, 5.0)
-        outcomes = Set{Int}()
-        for seed in 1:100
-            accepted = resolve_conflicts([p1, p2], StableRNG(seed))
-            push!(outcomes, accepted[1].firm_idx)
+    @testset "Sequential formation accepts valid proposals" begin
+        # Seed partner history so counterparties can evaluate
+        for i in 1:10, j in 11:20
+            update_partner_mean!(agents[j], i, 2.0)
+            add_match_edge!(G, i, j)
         end
-        @test length(outcomes) == 2
+        proposals = [
+            ProposedMatch(1, 15, :self, 2.0, false),
+            ProposedMatch(2, 16, :broker, 2.0, false),
+        ]
+        rng = StableRNG(77)
+        accepted = sequential_match_formation!(proposals, agents, broker, env, G, p, cal, rng)
+        @test length(accepted) >= 1
+        for m in accepted
+            @test isfinite(m.q_realized)
+            @test 1 <= m.demander_id <= p.N
+            @test 1 <= m.counterparty_id <= p.N
+        end
     end
 
-    # No conflicts: all proposals accepted
-    @testset "conflict resolution: no conflicts" begin
-        p1 = ProposedMatch(1, 10, :internal, 8.0, 0.0, 5.0)
-        p2 = ProposedMatch(2, 20, :broker, 9.0, 9.0, 6.0)
-        accepted = resolve_conflicts([p1, p2], StableRNG(1))
-        @test length(accepted) == 2
-    end
-
-    # Empty proposals
-    @testset "conflict resolution: empty" begin
-        accepted = resolve_conflicts(ProposedMatch[], StableRNG(1))
+    @testset "Sequential formation checks capacity" begin
+        state2 = initialize_model(p)
+        # Fill agent 5's capacity
+        for _ in 1:p.K
+            push!(state2.agents[5].active_matches, ActiveMatch(10, 0, false, :self))
+        end
+        proposals = [ProposedMatch(1, 5, :self, 10.0, false)]
+        for j in 1:30
+            update_partner_mean!(state2.agents[5], 1, 2.0)
+            update_partner_mean!(state2.agents[1], 5, 2.0)
+        end
+        add_match_edge!(state2.G, 1, 5)
+        rng = StableRNG(88)
+        accepted = sequential_match_formation!(proposals, state2.agents, state2.broker,
+                                                state2.env, state2.G, p, cal, rng)
+        # Agent 5 has no capacity, should be skipped
         @test isempty(accepted)
     end
 
-    # After finalize_match!, worker is employed, firm has the employee
-    @testset "finalize_match! updates state" begin
-        params = default_params(d=4, N_W=100, N_F=10)
-        state = initialize_model(params)
-        # Find an available worker
-        avail_w = findfirst(w -> w.status == available, state.workers)
-        worker = state.workers[avail_w]
-        firm_idx = 1
-        firm = state.firms[firm_idx]
-        old_emp_count = length(firm.employees)
-        old_hist_count = firm.history_count
+    @testset "Standard match creates edge and updates histories" begin
+        state3 = initialize_model(p)
+        a1, a2 = state3.agents[1], state3.agents[2]
+        h1_before = a1.history_count
+        h2_before = a2.history_count
 
-        match = ProposedMatch(firm_idx, avail_w, :internal, 5.0, 0.0,
-                              compute_wage(5.0, worker.reservation_wage, params.beta_W))
+        # Seed partner history so counterparty evaluates positively
+        update_partner_mean!(a2, 1, 5.0)
+        add_match_edge!(state3.G, 1, 2)
 
-        q = finalize_match!(match, state)
-
-        @test isfinite(q)
-        @test worker.status == employed
-        @test worker.employer_id == firm.id
-        @test avail_w in firm.employees
-        @test length(firm.employees) == old_emp_count + 1
-        @test firm.history_count == old_hist_count + 1
-        @test firm.hire_count == 1
-    end
-
-    # Brokered match records to broker history; placed worker NOT added to pool
-    @testset "finalize_match! broker match updates broker" begin
-        params = default_params(d=4, N_W=100, N_F=10)
-        state = initialize_model(params)
-        # Pick an available worker that is in the pool
-        pool_w = first(w for w in state.workers if w.status == available && w.id in state.broker.pool)
-        old_broker_count = state.broker.history_count
-
-        match = ProposedMatch(1, pool_w.id, :broker, 5.0, 6.0,
-                              compute_wage(5.0, pool_w.reservation_wage, params.beta_W))
-
-        finalize_match!(match, state)
-
-        @test state.broker.history_count == old_broker_count + 1
-        # Worker is now employed; pool removal happens during step 4.4 maintenance
-        @test state.workers[pool_w.id].status == employed
-    end
-
-    # Surplus three-way split: internal match
-    @testset "finalize_match! internal surplus accounting" begin
-        params = default_params(d=4, N_W=100, N_F=10, beta_W=0.4, alpha=0.20, L=4)
-        state = initialize_model(params)
-        reset_accumulators!(state.accum)
-
-        avail_w = findfirst(w -> w.status == available, state.workers)
-        worker = state.workers[avail_w]
-        r_i = worker.reservation_wage
-        q_hat_firm = 5.0
-        wage = compute_wage(q_hat_firm, r_i, params.beta_W)
-
-        match = ProposedMatch(1, avail_w, :internal, q_hat_firm, 0.0, wage)
-        q = finalize_match!(match, state)
-
-        @test state.accum.total_realized_surplus ≈ q - r_i
-        @test state.accum.worker_surplus ≈ wage - r_i
-        @test state.accum.firm_surplus_direct ≈ q - wage
-        @test state.accum.broker_surplus_placement == 0.0
-        @test state.accum.firm_surplus_placed == 0.0
-    end
-
-    # Surplus three-way split: placement match
-    @testset "finalize_match! placement surplus accounting" begin
-        params = default_params(d=4, N_W=100, N_F=10, beta_W=0.4, alpha=0.20, L=4)
-        state = initialize_model(params)
-        reset_accumulators!(state.accum)
-
-        pool_w = first(w for w in state.workers if w.status == available && w.id in state.broker.pool)
-        r_i = pool_w.reservation_wage
-        q_hat_firm = 5.0
-        wage = compute_wage(q_hat_firm, r_i, params.beta_W)
-        fee = params.alpha * wage
-
-        match = ProposedMatch(1, pool_w.id, :broker, q_hat_firm, 6.0, wage)
-        q = finalize_match!(match, state)
-
-        @test state.accum.total_realized_surplus ≈ q - r_i
-        @test state.accum.worker_surplus ≈ wage - r_i
-        @test state.accum.broker_surplus_placement ≈ fee
-        @test state.accum.firm_surplus_placed ≈ q - wage - fee
-        @test state.accum.firm_surplus_direct == 0.0
-    end
-
-    # Circular buffer wraps correctly, effective_history_size stays capped
-    @testset "record_history! circular buffer" begin
-        rng = StableRNG(1)
-        firm = create_firm(1, 4, rng)
-        cap = size(firm.history_w, 2)  # 200
-        # Fill to capacity
-        for i in 1:cap
-            record_history!(firm, randn(rng, 4), Float64(i))
+        proposals = [ProposedMatch(1, 2, :self, 5.0, false)]
+        rng = StableRNG(55)
+        accepted = sequential_match_formation!(proposals, state3.agents, state3.broker,
+                                                state3.env, state3.G, p, cal, rng)
+        if !isempty(accepted)
+            @test a1.history_count == h1_before + 1
+            @test a2.history_count == h2_before + 1
+            @test has_edge(state3.G, 1, 2)
         end
-        @test firm.history_count == cap
-        @test effective_history_size(firm) == cap
-        @test firm.history_q[cap] == Float64(cap)
-        # Write one more — wraps to position 1
-        record_history!(firm, ones(4), 999.0)
-        @test firm.history_count == cap + 1
-        @test effective_history_size(firm) == cap  # capped
-        @test firm.history_q[1] == 999.0  # overwrote position 1
-        @test firm.history_w[:, 1] == ones(4)
     end
 
-    # Prediction still works after buffer overflow (integration test for the fix)
-    # Prediction still works after circular buffer wraps
-    @testset "prediction after history overflow" begin
-        rng = StableRNG(1)
-        firm = create_firm(1, 4, rng)
-        cap = size(firm.history_w, 2)
-        for i in 1:(cap + 50)
-            record_history!(firm, randn(rng, 4), randn(rng))
+    @testset "Principal match does NOT update agent histories or create edges" begin
+        state4 = initialize_model(default_params(N=30, T=5, T_burn=1, K=3, seed=99, enable_principal=true))
+        a1, a2 = state4.agents[1], state4.agents[2]
+        h1_before = a1.history_count
+        h2_before = a2.history_count
+        broker_h_before = state4.broker.history_count
+
+        # Remove edge if exists so we can check it's not added
+        TransientBrokerage.remove_agent_edges!(state4.G, 1)
+
+        proposals = [ProposedMatch(1, 2, :broker, 5.0, true)]
+        rng = StableRNG(44)
+        accepted = sequential_match_formation!(proposals, state4.agents, state4.broker,
+                                                state4.env, state4.G,
+                                                state4.params, state4.cal, rng)
+        if !isempty(accepted)
+            @test a1.history_count == h1_before       # NOT updated
+            @test a2.history_count == h2_before       # NOT updated
+            @test state4.broker.history_count == broker_h_before + 1  # broker learns
+            @test !has_edge(state4.G, 1, 2)           # no edge formed
         end
-        n = effective_history_size(firm)
-        model = fit_ridge(@view(firm.history_w[:, 1:n]), @view(firm.history_q[1:n]), 1.0)
-        q_hat = predict_ridge(model, randn(rng, 4))
-        @test isfinite(q_hat)
     end
 
-    # Broker circular buffer wraps correctly (broker is pre-seeded with 20 entries)
-    @testset "record_broker_history! circular buffer" begin
-        params = default_params(d=4, N_W=100, N_F=5)
-        state = initialize_model(params)
-        broker = state.broker
-        cap = size(broker.history_w, 2)
-        seed_count = broker.history_count  # 5 from init seeding
-        rng = StableRNG(1)
-        # Fill remaining capacity
-        for i in 1:(cap - seed_count)
-            record_broker_history!(broker, randn(rng, 4), randn(rng, 4), 1, Float64(i))
-        end
-        @test broker.history_count == cap
-        @test effective_history_size(broker) == cap
-        # One more wraps
-        record_broker_history!(broker, ones(4), ones(4) * 2, 3, 888.0)
-        @test broker.history_count == cap + 1
-        @test effective_history_size(broker) == cap
-        idx = mod1(cap + 1, cap)
-        @test broker.history_q[idx] == 888.0
-        @test broker.history_firm_idx[idx] == 3
+    @testset "Satisfaction EWMA update" begin
+        state5 = initialize_model(p)
+        omega = p.omega
+        q_pub = state5.cal.q_pub
+        phi = state5.cal.phi
+        c_s = state5.cal.c_s
+
+        # Agent 1 self-searches, gets one match
+        d_ids = [1]; d_chs = [:self]; d_cnts = [1]
+        accepted = [(demander_id=1, counterparty_id=5, channel=:self,
+                      is_principal=false, q_realized=2.0, q_predicted=1.5)]
+        sat_before = state5.agents[1].satisfaction_self
+        update_satisfaction!(state5.agents, accepted, d_ids, d_chs, state5.cal, p)
+        expected = (1 - omega) * sat_before + omega * (2.0 - c_s)
+        @test state5.agents[1].satisfaction_self ≈ expected
     end
 
-    # EWMA satisfaction update
-    @testset "update_satisfaction! EWMA formula" begin
-        firm = create_firm(1, 4, StableRNG(1))
-        firm.satisfaction_internal = 5.0
-        firm.satisfaction_broker = 5.0
-        omega = 0.3
-        # Internal: s = 0.7*5 + 0.3*(10 - 2) = 3.5 + 2.4 = 5.9
-        update_satisfaction!(firm, :internal, 10.0, omega; cost_above_ri=2.0)
-        @test firm.satisfaction_internal ≈ 5.9
-        @test firm.tried_internal == true
-        # Broker: s = 0.7*5 + 0.3*(8 - 1) = 3.5 + 2.1 = 5.6
-        update_satisfaction!(firm, :broker, 8.0, omega; cost_above_ri=1.0)
-        @test firm.satisfaction_broker ≈ 5.6
-        @test firm.tried_broker == true
+    @testset "No-match penalty decays satisfaction" begin
+        state6 = initialize_model(p)
+        omega = p.omega
+        sat_before = state6.agents[1].satisfaction_broker
+        d_ids = [1]; d_chs = [:broker]
+        accepted = NamedTuple{(:demander_id, :counterparty_id, :channel, :is_principal, :q_realized, :q_predicted),
+                              Tuple{Int, Int, Symbol, Bool, Float64, Float64}}[]
+        update_satisfaction!(state6.agents, accepted, d_ids, d_chs, state6.cal, p)
+        @test state6.agents[1].satisfaction_broker ≈ (1 - omega) * sat_before
     end
 
-    # No-proposal penalty pulls broker satisfaction toward zero
-    @testset "penalize_no_proposal!" begin
-        firm = create_firm(1, 4, StableRNG(1))
-        firm.satisfaction_internal = 8.0
-        firm.satisfaction_broker = 4.0
-        penalize_no_proposal!(firm, 0.3)
-        @test firm.satisfaction_broker ≈ 0.7 * 4.0
+    @testset "Principal-mode satisfaction: no fee deducted" begin
+        state7 = initialize_model(default_params(N=30, T=5, T_burn=1, K=3, seed=77, enable_principal=true))
+        omega = p.omega
+        sat_before = state7.agents[1].satisfaction_broker
+        d_ids = [1]; d_chs = [:broker]
+        accepted = [(demander_id=1, counterparty_id=5, channel=:broker,
+                      is_principal=true, q_realized=3.0, q_predicted=2.5)]
+        update_satisfaction!(state7.agents, accepted, d_ids, d_chs, state7.cal, state7.params)
+        # No fee for principal mode: cost = 0
+        expected = (1 - omega) * sat_before + omega * 3.0
+        @test state7.agents[1].satisfaction_broker ≈ expected
     end
 
-    # Access vs assessment classification
-    @testset "record_match! access vs assessment" begin
-        accum = PeriodAccumulators()
-        # Brokered match, worker NOT in referral pool → access
-        record_match!(accum, :broker, false)
-        @test accum.access_count == 1
-        @test accum.assessment_count == 0
-        @test accum.matches == 1
-        # Brokered match, worker IN referral pool → assessment
-        record_match!(accum, :broker, true)
-        @test accum.assessment_count == 1
-        @test accum.access_count == 1
-        @test accum.matches == 2
-        # Internal match → neither access nor assessment
-        record_match!(accum, :internal, false)
-        @test accum.access_count == 1
-        @test accum.assessment_count == 1
-        @test accum.matches == 3
+    @testset "Outsourcing decision follows satisfaction" begin
+        state8 = initialize_model(p)
+        agent = state8.agents[1]
+        # High self-satisfaction, low broker satisfaction
+        agent.satisfaction_self = 5.0
+        agent.satisfaction_broker = 1.0
+        agent.tried_broker = true
+        @test outsourcing_decision(agent, 0.0, StableRNG(1)) == :self
+
+        # Reverse
+        agent.satisfaction_self = 1.0
+        agent.satisfaction_broker = 5.0
+        @test outsourcing_decision(agent, 0.0, StableRNG(1)) == :broker
     end
 
-    # Wage uses firm's prediction, not broker's
-    @testset "wage uses firm prediction for brokered match" begin
-        q_hat_firm = 10.0
-        q_hat_broker = 15.0
-        r_i = 3.0
-        beta_W = 0.5
-        wage = compute_wage(q_hat_firm, r_i, beta_W)
-        @test wage == r_i + beta_W * (q_hat_firm - r_i)
-        @test wage != r_i + beta_W * (q_hat_broker - r_i)
-    end
-end
-
-@testset "Outsourcing Decision" begin
-    # Equal satisfaction: random tie-breaking produces both outcomes over many draws
-    @testset "equal satisfaction -> random choice" begin
-        firm = create_firm(1, 4, StableRNG(1))
-        firm.satisfaction_internal = 5.0
-        firm.satisfaction_broker = 5.0
-        firm.tried_broker = true
-        params = default_params(d=4, N_W=100, N_F=5)
-        state = initialize_model(params)
-        broker = state.broker
-        clients = Set{Int}()
-        outcomes = [outsourcing_decision(firm, broker, 5.0, StableRNG(i))
-                    for i in 1:100]
-        @test :internal in outcomes
-        @test :broker in outcomes
+    @testset "Untried broker uses reputation" begin
+        state9 = initialize_model(p)
+        agent = state9.agents[1]
+        agent.tried_broker = false
+        agent.satisfaction_self = 1.0
+        # High broker reputation should make agent outsource
+        @test outsourcing_decision(agent, 10.0, StableRNG(1)) == :broker
     end
 
-    # Higher broker satisfaction leads to outsourcing
-    @testset "higher broker satisfaction -> :broker" begin
-        firm = create_firm(1, 4, StableRNG(1))
-        firm.satisfaction_internal = 3.0
-        firm.satisfaction_broker = 7.0
-        firm.tried_broker = true
-        params = default_params(d=4, N_W=100, N_F=5)
-        state = initialize_model(params)
-        dec = outsourcing_decision(firm, state.broker, 5.0, StableRNG(1))
-        @test dec == :broker
+    @testset "Broker reputation update" begin
+        state10 = initialize_model(p)
+        state10.agents[1].satisfaction_broker = 3.0
+        state10.agents[2].satisfaction_broker = 5.0
+        client_ids = [1, 2]
+        update_broker_reputation!(state10.broker, state10.agents, client_ids)
+        @test state10.broker.last_reputation ≈ 4.0
+        @test state10.broker.has_had_clients == true
     end
 
-    # Higher internal satisfaction leads to internal
-    @testset "higher internal satisfaction -> :internal" begin
-        firm = create_firm(1, 4, StableRNG(1))
-        firm.satisfaction_internal = 7.0
-        firm.satisfaction_broker = 3.0
-        firm.tried_broker = true
-        params = default_params(d=4, N_W=100, N_F=5)
-        state = initialize_model(params)
-        dec = outsourcing_decision(firm, state.broker, 5.0, StableRNG(1))
-        @test dec == :internal
-    end
-
-    # Untried broker uses cached reputation
-    @testset "untried broker uses reputation" begin
-        params = default_params(d=4, N_W=100, N_F=5)
-        state = initialize_model(params)
-        firm = state.firms[1]
-        firm.tried_broker = false
-        firm.satisfaction_internal = 3.0
-        # Cache a high reputation via update_broker_reputation!
-        state.firms[2].satisfaction_broker = 10.0
-        update_broker_reputation!(state.broker, state.firms, Set{Int}([2]))
-        dec = outsourcing_decision(firm, state.broker, 5.0, StableRNG(1))
-        @test dec == :broker
-    end
-
-    # update_broker_reputation! caches value; broker_reputation reads it back;
-    # sticky: retains value when broker loses all clients
-    @testset "broker reputation sticky with update" begin
-        params = default_params(d=4, N_W=100, N_F=5)
-        state = initialize_model(params)
-        broker = state.broker
-        # Update with clients -> caches last_reputation
-        state.firms[1].satisfaction_broker = 8.0
-        update_broker_reputation!(broker, state.firms, Set{Int}([1]))
-        @test broker.has_had_clients == true
-        @test broker.last_reputation == 8.0
-        @test broker_reputation(broker, 5.0) == 8.0
-        # Change client satisfaction, re-update -> cache updates
-        state.firms[1].satisfaction_broker = 6.0
-        update_broker_reputation!(broker, state.firms, Set{Int}([1]))
-        @test broker.last_reputation == 6.0
-        # No clients this period -> cache unchanged (sticky)
-        update_broker_reputation!(broker, state.firms, Set{Int}())
-        @test broker_reputation(broker, 5.0) == 6.0
-    end
-
-    # Broker that has never had clients defaults to q_pub
-    @testset "never-had-clients defaults to q_pub" begin
-        params = default_params(d=4, N_W=100, N_F=5)
-        state = initialize_model(params)
-        broker = state.broker
-        broker.has_had_clients = false
-        @test broker_reputation(broker, 3.14) == 3.14
-    end
-
-    # Negative satisfaction: no floor applied
-    @testset "negative satisfaction allowed" begin
-        firm = create_firm(1, 4, StableRNG(1))
-        firm.satisfaction_broker = -5.0
-        firm.tried_broker = true
-        firm.satisfaction_internal = -3.0
-        params = default_params(d=4, N_W=100, N_F=5)
-        state = initialize_model(params)
-        # Internal is higher (-3 > -5), so should pick internal
-        dec = outsourcing_decision(firm, state.broker, 5.0, StableRNG(1))
-        @test dec == :internal
-    end
-
-    # Channel switching: decision flips when satisfaction trajectory crosses
-    @testset "channel switching when trajectories cross" begin
-        firm = create_firm(1, 4, StableRNG(1))
-        firm.tried_broker = true
-        firm.satisfaction_internal = 6.0
-        firm.satisfaction_broker = 4.0
-        params = default_params(d=4, N_W=100, N_F=5)
-        state = initialize_model(params)
-        # Initially internal wins
-        dec1 = outsourcing_decision(firm, state.broker, 5.0, StableRNG(1))
-        @test dec1 == :internal
-        # After good broker experience, broker wins
-        firm.satisfaction_broker = 8.0
-        dec2 = outsourcing_decision(firm, state.broker, 5.0, StableRNG(1))
-        @test dec2 == :broker
-    end
-
-    # Known analytic EWMA trajectory
-    @testset "satisfaction matches analytic EWMA trajectory" begin
-        firm = create_firm(1, 4, StableRNG(1))
-        firm.satisfaction_internal = 5.0
-        omega = 0.3
-        # Period 1: q=10, cost=2 -> s = 0.7*5 + 0.3*8 = 5.9
-        update_satisfaction!(firm, :internal, 10.0, omega; cost_above_ri=2.0)
-        @test firm.satisfaction_internal ≈ 5.9
-        # Period 2: q=4, cost=1 -> s = 0.7*5.9 + 0.3*3 = 4.13 + 0.9 = 5.03
-        update_satisfaction!(firm, :internal, 4.0, omega; cost_above_ri=1.0)
-        @test firm.satisfaction_internal ≈ 5.03
-        # Period 3: q=7, cost=0 -> s = 0.7*5.03 + 0.3*7 = 3.521 + 2.1 = 5.621
-        update_satisfaction!(firm, :internal, 7.0, omega; cost_above_ri=0.0)
-        @test firm.satisfaction_internal ≈ 5.621
+    @testset "Broker reputation is sticky with no clients" begin
+        state11 = initialize_model(p)
+        state11.broker.last_reputation = 3.5
+        state11.broker.has_had_clients = true
+        update_broker_reputation!(state11.broker, state11.agents, Int[])
+        @test state11.broker.last_reputation == 3.5  # unchanged
     end
 end

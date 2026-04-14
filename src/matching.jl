@@ -1,249 +1,233 @@
 """
     matching.jl
 
-Wage computation, conflict resolution, match finalization, satisfaction updates,
-outsourcing decision, and match recording.
+Sequential match formation, satisfaction tracking, and outsourcing decision.
+No wages in v0.2: match economics use fixed fees (phi, c_s) and the outside option r.
+Under principal mode (Model 1), the broker's compensation is the spread q_ij - ask_j.
 """
 
-"""
-    compute_wage(q_hat, reservation_wage, beta_W) -> Float64
+using Random: AbstractRNG, shuffle!
+using Graphs: has_edge
 
-Wage = r_i + beta_W * max(q_hat - r_i, 0) per §3a.
-"""
-function compute_wage(q_hat::Float64, reservation_wage::Float64,
-                      beta_W::Float64)::Float64
-    return reservation_wage + beta_W * max(q_hat - reservation_wage, 0.0)
-end
+# ─────────────────────────────────────────────────────────────────────────────
+# Sequential match formation (§9 Step 3)
+# ─────────────────────────────────────────────────────────────────────────────
 
 """
-    resolve_conflicts(proposals, rng) -> Vector{ProposedMatch}
+    sequential_match_formation!(proposals, agents, broker, env, G, params, cal, rng)
+        -> Vector{NamedTuple}
 
-Workers accept the highest-wage offer; ties broken randomly (§3.2.1).
+Process all proposals in random order. Check both sides' capacity; counterparty
+evaluates independently (history average for known neighbors, NN prediction for
+strangers). Returns a vector of accepted match records.
+
+Each accepted match record is a NamedTuple with fields:
+  demander_id, counterparty_id, channel, is_principal, q_realized, q_predicted
 """
-function resolve_conflicts(proposals::Vector{ProposedMatch},
-                           rng::AbstractRNG)::Vector{ProposedMatch}
-    isempty(proposals) && return ProposedMatch[]
+function sequential_match_formation!(proposals::Vector{ProposedMatch},
+                                      agents::Vector{Agent},
+                                      broker::Broker,
+                                      env::MatchingEnv,
+                                      G::SimpleGraph,
+                                      params::ModelParams,
+                                      cal::CalibrationConstants,
+                                      rng::AbstractRNG)
+    accepted = NamedTuple{(:demander_id, :counterparty_id, :channel, :is_principal, :q_realized, :q_predicted),
+                          Tuple{Int, Int, Symbol, Bool, Float64, Float64}}[]
+    isempty(proposals) && return accepted
 
-    # Group by worker_id
-    worker_proposals = Dict{Int, Vector{ProposedMatch}}()
-    for p in proposals
-        push!(get!(worker_proposals, p.worker_id, ProposedMatch[]), p)
-    end
+    N = length(agents)
+    K = params.K
+    d = params.d
+    broker_node = broker.node_id
 
-    accepted = ProposedMatch[]
-    for (_, offers) in worker_proposals
-        if length(offers) == 1
-            push!(accepted, offers[1])
-            continue
-        end
-        # Reservoir sampling over tied-best offers
-        best_wage = -Inf
-        winner = offers[1]
-        n_tied = 0
-        for o in offers
-            if o.wage > best_wage
-                best_wage = o.wage
-                winner = o
-                n_tied = 1
-            elseif o.wage == best_wage
-                n_tied += 1
-                if rand(rng) < 1.0 / n_tied
-                    winner = o
-                end
+    # Pre-allocated buffers for match_output! (avoid alloc per match)
+    Ax_buf = Vector{Float64}(undef, d)
+    Bx_buf = Vector{Float64}(undef, d)
+
+    # Mutable capacity counters (decremented on acceptance)
+    remaining_cap = [available_capacity(agents[i], K) for i in 1:N]
+
+    # Shuffle proposals
+    shuffle!(rng, proposals)
+
+    for pm in proposals
+        i = pm.demander_id
+        j = pm.counterparty_id
+
+        # Check both sides have capacity
+        remaining_cap[i] <= 0 && continue
+        remaining_cap[j] <= 0 && continue
+
+        if pm.is_principal
+            # Principal mode: counterparty acceptance is automatic (broker pays r)
+            # Demander's participation constraint was applied during broker allocation
+        else
+            # Counterparty evaluates independently
+            counterparty_eval = if has_edge(G, j, i) && agents[j].partner_count[i] > 0
+                # Known neighbor: use historical average
+                partner_mean(agents[j], i)
+            else
+                # Stranger: use NN prediction
+                predict_nn!(agents[j].nn, agents[j].predict_buf, agents[i].type)
             end
+
+            # Participation constraint
+            counterparty_eval <= cal.r && continue
         end
-        push!(accepted, winner)
+
+        # ── Accept the match ──
+
+        # Realize output
+        q_realized = match_output!(Ax_buf, Bx_buf, agents[i].type, agents[j].type, env, rng)
+
+        # Decrement capacity
+        remaining_cap[i] -= 1
+        remaining_cap[j] -= 1
+
+        if pm.is_principal
+            # Principal mode: broker learns, agents don't, no edge
+            record_broker_history!(broker, agents[i].type, agents[j].type, q_realized)
+            # Active match entries (both sides)
+            push!(agents[i].active_matches, ActiveMatch(j, 0, true, :broker))  # period filled in step.jl
+            push!(agents[j].active_matches, ActiveMatch(i, 0, true, :broker))
+        else
+            # Standard match: both parties learn, edge forms
+            record_agent_history!(agents[i], agents[j].type, q_realized)
+            record_agent_history!(agents[j], agents[i].type, q_realized)
+            update_partner_mean!(agents[i], j, q_realized)
+            update_partner_mean!(agents[j], i, q_realized)
+            if pm.channel == :broker
+                record_broker_history!(broker, agents[i].type, agents[j].type, q_realized)
+            end
+            add_match_edge!(G, i, j)
+            push!(agents[i].active_matches, ActiveMatch(j, 0, false, pm.channel))
+            push!(agents[j].active_matches, ActiveMatch(i, 0, false, pm.channel))
+        end
+
+        push!(accepted, (demander_id=i, counterparty_id=j, channel=pm.channel,
+                         is_principal=pm.is_principal, q_realized=q_realized,
+                         q_predicted=pm.evaluation))
     end
+
     return accepted
 end
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Satisfaction tracking (§6a)
+# ─────────────────────────────────────────────────────────────────────────────
+
 """
-    finalize_match!(match, state) -> Float64
+    update_satisfaction!(agents, accepted_matches, demand_agent_ids, demand_channels, cal, params)
 
-Realize match output, update worker status, firm employees, coworker ties in G_S,
-histories, satisfaction, and surplus. For direct hires and placements only;
-staffing uses `create_staffing_assignment!`.
+Update satisfaction indices for all agents that had demand this period.
+Multiple same-channel outcomes are averaged into a single EWMA update.
+No-match penalty (decay toward zero) if all slots through a channel failed.
 """
-function finalize_match!(match::ProposedMatch, state::ModelState)::Float64
-    @assert match.source in (:internal, :broker) "finalize_match! called with source=$(match.source); staffing should use create_staffing_assignment!"
-    worker = state.workers[match.worker_id]
-    firm = state.firms[match.firm_idx]
+function update_satisfaction!(agents::Vector{Agent},
+                              accepted_matches::Vector{<:NamedTuple},
+                              demand_agent_ids::Vector{Int},
+                              demand_channels::Vector{Symbol},
+                              cal::CalibrationConstants,
+                              params::ModelParams)
+    omega = params.omega
 
-    # Realize output
-    q_realized = match_output(worker.type, firm.type, state.env, state.rng)
-
-    # Update worker
-    worker.status = employed
-    worker.employer_id = firm.id
-    push!(firm.employees, match.worker_id)
-    add_coworker_ties!(state.G_S, match.worker_id, firm.employees, state.rng)
-
-    # Record to firm history
-    record_history!(firm, worker.type, q_realized)
-    firm.hire_count += 1
-
-    # Broker-specific: record to broker history (placed worker removed from pool during step 4.4)
-    if match.source == :broker
-        record_broker_history!(state.broker, worker.type, firm.type,
-                               match.firm_idx, q_realized)
+    # Group accepted matches by demander: accumulate sum and count per agent
+    demander_sum = Dict{Int, Float64}()
+    demander_count = Dict{Int, Int}()
+    for m in accepted_matches
+        i = m.demander_id
+        cost = if m.channel == :self
+            cal.c_s
+        elseif m.is_principal
+            0.0
+        else
+            cal.phi
+        end
+        tilde_q = m.q_realized - cost
+        demander_sum[i] = get(demander_sum, i, 0.0) + tilde_q
+        demander_count[i] = get(demander_count, i, 0) + 1
     end
 
-    # Satisfaction update (§6a)
-    r_i = worker.reservation_wage
-    surplus_share = state.params.beta_W * max(match.q_hat_firm - r_i, 0.0)
-    cost = if match.source == :broker
-        surplus_share + state.params.alpha * match.wage / state.params.L
+    # Update each agent that had demand
+    for idx in eachindex(demand_agent_ids)
+        agent_id = demand_agent_ids[idx]
+        channel = demand_channels[idx]
+        agent = agents[agent_id]
+        n_matched = get(demander_count, agent_id, 0)
+
+        if n_matched > 0
+            tilde_q = demander_sum[agent_id] / n_matched
+            if channel == :self
+                agent.satisfaction_self = (1.0 - omega) * agent.satisfaction_self + omega * tilde_q
+            else
+                agent.satisfaction_broker = (1.0 - omega) * agent.satisfaction_broker + omega * tilde_q
+                agent.tried_broker = true
+            end
+        else
+            if channel == :self
+                agent.satisfaction_self *= (1.0 - omega)
+            else
+                agent.satisfaction_broker *= (1.0 - omega)
+                agent.tried_broker = true
+            end
+        end
+    end
+
+    return nothing
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Outsourcing decision (§6b)
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    outsourcing_decision(agent, broker_rep, rng) -> Symbol
+
+Agent chooses :self or :broker based on satisfaction scores.
+If agent has never tried the broker, substitutes broker reputation.
+"""
+function outsourcing_decision(agent::Agent, broker_rep::Float64,
+                              rng::AbstractRNG)::Symbol
+    score_self = agent.satisfaction_self
+    score_broker = agent.tried_broker ? agent.satisfaction_broker : broker_rep
+
+    if score_self > score_broker
+        return :self
+    elseif score_broker > score_self
+        return :broker
     else
-        surplus_share
+        return rand(rng) < 0.5 ? :self : :broker
     end
-    update_satisfaction!(firm, match.source, q_realized, state.params.omega;
-                         cost_above_ri=cost)
-
-    # Surplus apportionment (§8, step 7.3)
-    # Uses full placement fee (α·wage) so the three-way split reflects actual surplus flows.
-    a = state.accum
-    a.total_realized_surplus += q_realized - r_i
-    a.worker_surplus += match.wage - r_i
-    if match.source == :internal
-        a.firm_surplus_direct += q_realized - match.wage
-    else  # :broker placement
-        fee = state.params.alpha * match.wage
-        a.firm_surplus_placed += q_realized - match.wage - fee
-        a.broker_surplus_placement += fee
-    end
-
-    return q_realized
 end
 
-"""
-    record_history!(firm, worker_type, q_realized)
-
-Write a new observation to the firm's circular history buffer.
-"""
-function record_history!(firm::Firm, worker_type::AbstractVector{Float64},
-                         q_realized::Float64)
-    cap = size(firm.history_w, 2)
-    firm.history_count += 1
-    idx = mod1(firm.history_count, cap)
-    @views firm.history_w[:, idx] .= worker_type
-    firm.history_q[idx] = q_realized
-    return nothing
-end
-
-"""
-    record_broker_history!(broker, worker_type, firm_type, firm_idx, q_realized)
-
-Write a new observation to the broker's circular history buffer.
-"""
-function record_broker_history!(broker::Broker, worker_type::AbstractVector{Float64},
-                                firm_type::AbstractVector{Float64},
-                                firm_idx::Int, q_realized::Float64)
-    cap = size(broker.history_w, 2)
-    broker.history_count += 1
-    idx = mod1(broker.history_count, cap)
-    @views broker.history_w[:, idx] .= worker_type
-    @views broker.history_x[:, idx] .= firm_type
-    broker.history_q[idx] = q_realized
-    broker.history_firm_idx[idx] = firm_idx
-    return nothing
-end
-
-"""
-    update_satisfaction!(firm, source, q_realized, omega; cost_above_ri=0.0)
-
-EWMA update per §6a: s = (1-omega)*s + omega*(q_realized - cost_above_ri).
-"""
-function update_satisfaction!(firm::Firm, source::Symbol, q_realized::Float64,
-                              omega::Float64; cost_above_ri::Float64 = 0.0)
-    q_net = q_realized - cost_above_ri
-    if source == :internal
-        firm.satisfaction_internal = (1.0 - omega) * firm.satisfaction_internal + omega * q_net
-        firm.tried_internal = true
-    else
-        firm.satisfaction_broker = (1.0 - omega) * firm.satisfaction_broker + omega * q_net
-        firm.tried_broker = true
-    end
-    return nothing
-end
-
-"""
-    penalize_no_proposal!(firm, omega)
-
-No-proposal penalty (§6a): broker satisfaction decays toward zero via
-`s_broker = (1-ω) * s_broker`. Called when a firm outsourced but the broker
-made no proposal (pool exhausted or no surplus-positive candidate).
-"""
-function penalize_no_proposal!(firm::Firm, omega::Float64)
-    firm.satisfaction_broker = (1.0 - omega) * firm.satisfaction_broker
-    return nothing
-end
+# ─────────────────────────────────────────────────────────────────────────────
+# Broker reputation (§6c)
+# ─────────────────────────────────────────────────────────────────────────────
 
 """
     broker_reputation(broker, q_pub) -> Float64
 
-Current broker reputation (§6b): the cached value from the last period that had
-clients, or q_pub if the broker has never had clients. Pure read — no mutation.
+Return the broker's current reputation for untried agents.
 """
 function broker_reputation(broker::Broker, q_pub::Float64)::Float64
     return broker.has_had_clients ? broker.last_reputation : q_pub
 end
 
 """
-    update_broker_reputation!(broker, firms, current_broker_firms)
+    update_broker_reputation!(broker, agents, client_ids)
 
-Cache broker reputation at end of period (§6b). Computes mean broker satisfaction
-of current clients. If no clients this period, the cached value is unchanged (sticky).
+Update broker reputation to mean broker satisfaction of current clients.
+If no clients this period, hold previous value.
 """
-function update_broker_reputation!(broker::Broker, firms::Vector{Firm},
-                                   current_broker_firms::Set{Int})
-    isempty(current_broker_firms) && return nothing
+function update_broker_reputation!(broker::Broker, agents::Vector{Agent},
+                                   client_ids::AbstractVector{Int})
+    isempty(client_ids) && return nothing
     total = 0.0
-    for j in current_broker_firms
-        total += firms[j].satisfaction_broker
+    @inbounds for cid in client_ids
+        total += agents[cid].satisfaction_broker
     end
-    broker.last_reputation = total / length(current_broker_firms)
+    broker.last_reputation = total / length(client_ids)
     broker.has_had_clients = true
-    return nothing
-end
-
-"""
-    outsourcing_decision(firm, broker, q_pub, rng) -> Symbol
-
-Firm chooses :internal or :broker based on satisfaction scores (§6b).
-Untried broker uses reputation. Ties broken randomly.
-"""
-function outsourcing_decision(firm::Firm, broker::Broker,
-                              q_pub::Float64, rng::AbstractRNG)::Symbol
-    score_int = firm.satisfaction_internal
-    score_broker = if firm.tried_broker
-        firm.satisfaction_broker
-    else
-        broker_reputation(broker, q_pub)
-    end
-    if score_int > score_broker
-        return :internal
-    elseif score_broker > score_int
-        return :broker
-    else
-        return rand(rng, (:internal, :broker))
-    end
-end
-
-"""
-    record_match!(accum, source, in_referral_pool)
-
-Increment match count. For brokered matches, classify as access (worker not in R_j)
-or assessment (worker in R_j) per §8.
-"""
-function record_match!(accum::PeriodAccumulators, source::Symbol,
-                       in_referral_pool::Bool)
-    accum.matches += 1
-    if source == :broker
-        if in_referral_pool
-            accum.assessment_count += 1
-        else
-            accum.access_count += 1
-        end
-    end
     return nothing
 end

@@ -1,8 +1,14 @@
 """
     parameters.jl
 
-Default parameter construction and validation for the Transient Brokerage ABM.
+Default parameter construction and validation for the Transient Brokerage ABM (v0.2).
 """
+
+# Constant offset shifting q positive for downstream economics
+const Q_OFFSET = 1.0
+
+# Calibration fraction: r = R_BASE_FRAC * q_pub
+const R_BASE_FRAC = 0.60
 
 """
     default_params(; seed=42, kwargs...)::ModelParams
@@ -11,59 +17,70 @@ Construct a `ModelParams` with baseline defaults, overriding any field via keywo
 """
 function default_params(; seed::Int = 42, kwargs...)::ModelParams
     defaults = Dict{Symbol,Any}(
-        :d => 4,
+        # Population and types
+        :N => 1000,
+        :d => 8,
+        :s => 8,
+        # Matching function
         :rho => 0.50,
-        :firm_geometry => :complex,
-        :N_W => 1000,
-        :N_F => 50,
-        :eta => 0.05,
-        :beta_W => 0.50,
-        :lambda => 1.0,
-        :k_S => 6,
+        :delta => 0.5,
+        :sigma_x => 0.5,
+        :sigma_eps => 0.10,
+        # Match lifecycle
+        :K => 5,
+        :tau => 1,
+        :p_demand => 0.50,
+        # Network
+        :k => 6,
         :p_rewire => 0.1,
+        # Economics
         :omega => 0.3,
-        :alpha => 0.20,
-        :L => 4,
-        :mu_b => 0.25,
-        :c_emp_frac => 0.15,
-        :p_vac => 0.50,
-        :pool_target_frac => 0.10,
-        :sigma_w => 0.5,
-        :sigma_eps => 0.25,
-        :n_candidates_frac => 0.03,
+        :alpha_phi => 0.20,
+        :gamma_c => 0.5,
+        # Neural network
+        :eta_lr => 0.03,
+        :E_init => 200,
+        :h_a => 16,
+        :h_b => 32,
+        # Search
+        :n_strangers => 10,
+        :eta => 0.02,
+        # Model 1
+        :enable_principal => false,
+        # Simulation
         :network_measure_interval => 10,
-        :enable_staffing => false,
         :T => 200,
         :T_burn => 30,
         :seed => seed,
     )
-    for (k, v) in kwargs
-        haskey(defaults, k) || error("Unknown parameter: $k")
-        defaults[k] = v
+    for (kw, v) in kwargs
+        haskey(defaults, kw) || error("Unknown parameter: $kw")
+        defaults[kw] = v
     end
     p = ModelParams(
+        defaults[:N],
         defaults[:d],
+        defaults[:s],
         defaults[:rho],
-        defaults[:firm_geometry],
-        defaults[:N_W],
-        defaults[:N_F],
-        defaults[:eta],
-        defaults[:beta_W],
-        defaults[:lambda],
-        defaults[:k_S],
+        defaults[:delta],
+        defaults[:sigma_x],
+        defaults[:sigma_eps],
+        defaults[:K],
+        defaults[:tau],
+        defaults[:p_demand],
+        defaults[:k],
         defaults[:p_rewire],
         defaults[:omega],
-        defaults[:alpha],
-        defaults[:L],
-        defaults[:mu_b],
-        defaults[:c_emp_frac],
-        defaults[:p_vac],
-        defaults[:pool_target_frac],
-        defaults[:sigma_w],
-        defaults[:sigma_eps],
-        defaults[:n_candidates_frac],
+        defaults[:alpha_phi],
+        defaults[:gamma_c],
+        defaults[:eta_lr],
+        defaults[:E_init],
+        defaults[:h_a],
+        defaults[:h_b],
+        defaults[:n_strangers],
+        defaults[:eta],
+        defaults[:enable_principal],
         defaults[:network_measure_interval],
-        defaults[:enable_staffing],
         defaults[:T],
         defaults[:T_burn],
         defaults[:seed],
@@ -78,30 +95,47 @@ end
 Assert that all parameter values satisfy model constraints. Throws on violation.
 """
 function validate_params(p::ModelParams)
-    @assert p.d >= 2 "d must be ≥ 2, got $(p.d)"
+    # Population and types
+    @assert p.N >= 10 "N must be >= 10, got $(p.N)"
+    @assert p.d >= 2 "d must be >= 2, got $(p.d)"
+    @assert 1 <= p.s <= p.d "s must be in [1, d], got s=$(p.s), d=$(p.d)"
+
+    # Matching function
     @assert 0.0 <= p.rho <= 1.0 "rho must be in [0, 1], got $(p.rho)"
-    @assert p.firm_geometry in (:unstructured, :simple, :complex) "firm_geometry must be :unstructured, :simple, or :complex"
-    @assert p.N_W >= 1 "N_W must be ≥ 1, got $(p.N_W)"
-    @assert p.N_F >= 1 "N_F must be ≥ 1, got $(p.N_F)"
-    @assert 0.0 <= p.eta < 1.0 "eta must be in [0, 1), got $(p.eta)"
-    @assert 0.0 < p.beta_W < 1.0 "beta_W must be in (0, 1), got $(p.beta_W)"
-    @assert p.lambda > 0.0 "lambda must be > 0, got $(p.lambda)"
-    @assert p.k_S >= 2 "k_S must be ≥ 2 (even degree for Watts-Strogatz), got $(p.k_S)"
-    @assert iseven(p.k_S) "k_S must be even for Watts-Strogatz, got $(p.k_S)"
+    @assert 0.0 <= p.delta <= 1.0 "delta must be in [0, 1], got $(p.delta)"
+    @assert p.sigma_x > 0.0 "sigma_x must be > 0, got $(p.sigma_x)"
+    @assert p.sigma_eps >= 0.0 "sigma_eps must be >= 0, got $(p.sigma_eps)"
+
+    # Match lifecycle
+    @assert p.K >= 1 "K must be >= 1, got $(p.K)"
+    @assert p.tau >= 1 "tau must be >= 1, got $(p.tau)"
+    @assert 0.0 < p.p_demand <= 1.0 "p_demand must be in (0, 1], got $(p.p_demand)"
+
+    # Network
+    @assert p.k >= 2 "k must be >= 2, got $(p.k)"
+    @assert iseven(p.k) "k must be even for Watts-Strogatz, got $(p.k)"
     @assert 0.0 <= p.p_rewire <= 1.0 "p_rewire must be in [0, 1], got $(p.p_rewire)"
+
+    # Economics
     @assert 0.0 < p.omega < 1.0 "omega must be in (0, 1), got $(p.omega)"
-    @assert 0.0 < p.alpha <= 1.0 "alpha must be in (0, 1], got $(p.alpha)"
-    @assert p.L >= 1 "L must be ≥ 1, got $(p.L)"
-    @assert 0.0 < p.mu_b < 1.0 "mu_b must be in (0, 1), got $(p.mu_b)"
-    @assert 0.0 < p.c_emp_frac < 1.0 "c_emp_frac must be in (0, 1), got $(p.c_emp_frac)"
-    @assert 0.0 < p.p_vac <= 1.0 "p_vac must be in (0, 1], got $(p.p_vac)"
-    @assert 0.0 < p.pool_target_frac <= 1.0 "pool_target_frac must be in (0, 1], got $(p.pool_target_frac)"
-    @assert p.sigma_w > 0.0 "sigma_w must be > 0, got $(p.sigma_w)"
-    @assert p.sigma_eps >= 0.0 "sigma_eps must be ≥ 0, got $(p.sigma_eps)"
-    @assert 0.0 < p.n_candidates_frac <= 1.0 "n_candidates_frac must be in (0, 1], got $(p.n_candidates_frac)"
-    @assert p.network_measure_interval >= 1 "network_measure_interval must be ≥ 1, got $(p.network_measure_interval)"
-    @assert p.T >= 1 "T must be ≥ 1, got $(p.T)"
-    @assert p.T_burn >= 0 "T_burn must be ≥ 0, got $(p.T_burn)"
+    @assert 0.0 < p.alpha_phi <= 1.0 "alpha_phi must be in (0, 1], got $(p.alpha_phi)"
+    @assert 0.0 <= p.gamma_c <= 1.0 "gamma_c must be in [0, 1], got $(p.gamma_c)"
+
+    # Neural network
+    @assert p.eta_lr > 0.0 "eta_lr must be > 0, got $(p.eta_lr)"
+    @assert p.E_init >= 1 "E_init must be >= 1, got $(p.E_init)"
+    @assert p.h_a >= 1 "h_a must be >= 1, got $(p.h_a)"
+    @assert p.h_b >= 1 "h_b must be >= 1, got $(p.h_b)"
+
+    # Search
+    @assert p.n_strangers >= 0 "n_strangers must be >= 0, got $(p.n_strangers)"
+    @assert 0.0 <= p.eta < 1.0 "eta must be in [0, 1), got $(p.eta)"
+
+    # Simulation
+    @assert p.network_measure_interval >= 1 "network_measure_interval must be >= 1"
+    @assert p.T >= 1 "T must be >= 1, got $(p.T)"
+    @assert p.T_burn >= 0 "T_burn must be >= 0, got $(p.T_burn)"
     @assert p.T_burn < p.T "T_burn must be < T, got T_burn=$(p.T_burn), T=$(p.T)"
+
     return nothing
 end

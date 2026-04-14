@@ -1,153 +1,99 @@
-using Test
-using TransientBrokerage
-using DataFrames: DataFrame, nrow, names, eltype
+@testset "Integration Tests" begin
+    using DataFrames: nrow
 
-@testset "Integration: run_simulation" begin
-    params = default_params()
-
-    # Full 200-period run with invariant checking
-    @testset "200 periods with invariants" begin
-        state, mdf = run_simulation(params; verify=true)
-        @test state.period == params.T
-        @test nrow(mdf) == params.T
+    @testset "Full simulation completes without error" begin
+        p = default_params(N=100, T=20, T_burn=5, seed=42)
+        state, df = run_simulation(p)
+        @test nrow(df) == 20
+        @test state.period == 20
     end
 
-    # DataFrame has expected columns
-    @testset "DataFrame columns" begin
-        _, mdf = run_simulation(params)
-        expected_cols = [:period, :matches, :outsourcing_rate,
-                         :openings_internal, :openings_brokered,
-                         :vacancies_internal, :vacancies_brokered,
-                         :q_direct_mean, :q_placed_mean,
-                         :n_direct, :n_placed,
-                         :broker_history_size, :broker_pool_size,
-                         :broker_reputation, :betweenness, :constraint,
-                         :effective_size, :placement_revenue,
-                         :cumulative_placement_revenue,
-                         :access_count, :assessment_count,
-                         :firm_r_squared_selected, :broker_r_squared_selected,
-                         :firm_bias_selected, :broker_bias_selected,
-                         :firm_rank_corr_selected, :broker_rank_corr_selected,
-                         :firm_r_squared_holdout, :broker_r_squared_holdout,
-                         :firm_bias_holdout, :broker_bias_holdout,
-                         :firm_rank_corr_holdout, :broker_rank_corr_holdout,
-                         :n_available, :avg_firm_size,
-                         :avg_referral_pool_size, :n_broker_clients,
-                         :total_realized_surplus, :worker_surplus,
-                         :firm_surplus_direct, :firm_surplus_placed,
-                         :firm_surplus_staffed, :broker_surplus_placement,
-                         :broker_surplus_staffing, :n_active_staffing]
-        @test all(col in Symbol.(names(mdf)) for col in expected_cols)
+    @testset "Determinism: same seed produces identical results" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42)
+        _, df1 = run_simulation(p)
+        _, df2 = run_simulation(p)
+        @test df1.n_total_matches == df2.n_total_matches
+        @test df1.outsourcing_rate == df2.outsourcing_rate
+        @test df1.agent_holdout_r2 == df2.agent_holdout_r2
+        @test df1.broker_holdout_r2 == df2.broker_holdout_r2
     end
 
-    # No NaN in non-optional integer columns
-    @testset "integer columns have no NaN" begin
-        _, mdf = run_simulation(params)
-        int_cols = [:period, :matches, :openings_internal, :openings_brokered,
-                    :vacancies_internal, :vacancies_brokered, :n_direct, :n_placed,
-                    :broker_history_size, :broker_pool_size,
-                    :access_count, :assessment_count]
-        for col in int_cols
-            @test all(isfinite.(Float64.(mdf[!, col])))
-        end
+    @testset "Different seeds produce different results" begin
+        p1 = default_params(N=50, T=10, T_burn=2, seed=42)
+        p2 = default_params(N=50, T=10, T_burn=2, seed=123)
+        _, df1 = run_simulation(p1)
+        _, df2 = run_simulation(p2)
+        @test df1.n_total_matches != df2.n_total_matches
     end
 
-    # Network measures are NaN before first measurement, finite after
-    @testset "network measures finite after period M" begin
-        _, mdf = run_simulation(params)
-        M = params.network_measure_interval
-        @test all(isnan.(mdf.betweenness[1:M-1]))
-        @test all(isfinite.(mdf.betweenness[M:end]))
-        @test all(isfinite.(mdf.constraint[M:end]))
-        @test all(isfinite.(mdf.effective_size[M:end]))
+    @testset "Match counts are consistent" begin
+        p = default_params(N=100, T=20, T_burn=5, seed=42)
+        _, df = run_simulation(p)
+        @test all(df.n_total_matches .== df.n_self_matches .+ df.n_broker_standard .+ df.n_broker_principal)
     end
 
-    # Holdout R-squared should be finite after a few periods
-    @testset "holdout R-squared becomes finite" begin
-        _, mdf = run_simulation(params)
-        post_burn = mdf.firm_r_squared_holdout[params.T_burn+1:end]
-        @test any(isfinite.(post_burn))
-        post_burn_b = mdf.broker_r_squared_holdout[params.T_burn+1:end]
-        @test any(isfinite.(post_burn_b))
+    @testset "Outsourcing rate is bounded [0, 1]" begin
+        p = default_params(N=100, T=20, T_burn=5, seed=42)
+        _, df = run_simulation(p)
+        @test all(0.0 .<= df.outsourcing_rate .<= 1.0)
     end
 
-    # Outsourcing rate always in [0, 1]
-    @testset "outsourcing rate in valid range" begin
-        _, mdf = run_simulation(params)
-        @test all(0.0 .<= mdf.outsourcing_rate .<= 1.0)
+    @testset "Broker revenue accumulates" begin
+        p = default_params(N=100, T=20, T_burn=5, seed=42)
+        _, df = run_simulation(p)
+        @test all(df.broker_cumulative_revenue[2:end] .>= df.broker_cumulative_revenue[1:end-1] .- 1e-10)
     end
 
-    # Cumulative placement revenue is monotonically non-decreasing
-    @testset "cumulative revenue monotonic" begin
-        _, mdf = run_simulation(params)
-        @test all(diff(mdf.cumulative_placement_revenue) .>= -1e-10)
+    @testset "Roster grows monotonically (no exits)" begin
+        p = default_params(N=100, T=20, T_burn=5, seed=42, eta=0.0)
+        _, df = run_simulation(p)
+        @test all(df.roster_size[2:end] .>= df.roster_size[1:end-1])
     end
 
-    # Surplus apportionment: positive on average (individual periods can go negative
-    # when noise pushes q below r_i), staffing fields zero in base model
-    @testset "surplus apportionment" begin
-        _, mdf = run_simulation(params)
-        @test mean(mdf.total_realized_surplus) > 0.0
-        @test mean(mdf.worker_surplus) > 0.0
-        # Staffing fields are zero in base model
-        @test all(mdf.firm_surplus_staffed .== 0.0)
-        @test all(mdf.broker_surplus_staffing .== 0.0)
-        @test all(mdf.n_active_staffing .== 0)
-        # Accounting: worker + firm + broker ≈ total
-        # (Tolerance for placement fee amortization timing mismatch)
-        residual = mdf.total_realized_surplus .-
-            (mdf.worker_surplus .+ mdf.firm_surplus_direct .+ mdf.firm_surplus_placed .+
-             mdf.firm_surplus_staffed .+ mdf.broker_surplus_placement .+ mdf.broker_surplus_staffing)
-        # The mismatch comes from placement fee: broker gets alpha*w at formation,
-        # but firm's surplus deducts alpha*w/L per period. Net difference per placement
-        # is alpha*w*(1 - 1/L). Over many periods this does not cancel.
-        # Check that residual is bounded, not that it's zero.
-        @test all(abs.(residual) .< maximum(mdf.total_realized_surplus))
+    @testset "Principal mode simulation" begin
+        p = default_params(N=100, T=20, T_burn=5, seed=42, enable_principal=true)
+        _, df = run_simulation(p)
+        @test nrow(df) == 20
+        @test all(0.0 .<= df.principal_mode_share .<= 1.0)
+        @test sum(df.n_broker_principal) > 0
     end
 
-    # Deterministic: same params + seed produces identical DataFrame
-    @testset "deterministic with fixed seed" begin
-        _, mdf1 = run_simulation(params)
-        _, mdf2 = run_simulation(params)
-        @test mdf1.matches == mdf2.matches
-        @test mdf1.outsourcing_rate == mdf2.outsourcing_rate
-        @test mdf1.broker_history_size == mdf2.broker_history_size
+    @testset "High-K regime" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42, K=20, tau=1)
+        _, df = run_simulation(p)
+        @test nrow(df) == 10
+        @test df.n_total_matches[end] > 50
     end
 
-    # diagnostic_summary returns a populated Dict
-    @testset "diagnostic_summary" begin
-        state, _ = run_simulation(params)
-        d = diagnostic_summary(state)
-        @test d["period"] == params.T
-        @test d["n_workers"] == params.N_W
-        @test d["n_firms"] == length(state.firms)
-        @test isfinite(d["betweenness"])
-        @test isfinite(d["broker_reputation"])
+    @testset "High-tau regime" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42, K=2, tau=4)
+        _, df = run_simulation(p)
+        @test nrow(df) == 10
     end
 
-    # Prediction/outcome pairs are correctly wired in step_period!
-    @testset "prediction pair recording" begin
-        params2 = default_params()
-        state = initialize_model(params2)
-        # Run enough periods for matches to accumulate
-        for _ in 1:20
-            step_period!(state)
-        end
-        a = state.accum
-        # firm_predicted and firm_realized have same length (one pair per match)
-        @test length(a.firm_predicted) == length(a.firm_realized)
-        @test length(a.firm_predicted) == a.matches
-        # broker pairs are a subset (only broker matches)
-        @test length(a.broker_predicted) == length(a.broker_realized)
-        @test length(a.broker_predicted) <= a.matches
-        # Values are finite (not uninitialized)
-        if !isempty(a.firm_predicted)
-            @test all(isfinite, a.firm_predicted)
-            @test all(isfinite, a.firm_realized)
-        end
-        if !isempty(a.broker_predicted)
-            @test all(isfinite, a.broker_predicted)
-            @test all(isfinite, a.broker_realized)
+    @testset "Holdout R² values are finite or NaN" begin
+        p = default_params(N=100, T=20, T_burn=5, seed=42)
+        _, df = run_simulation(p)
+        @test all(r2 -> isnan(r2) || isfinite(r2), df.agent_holdout_r2)
+        @test all(r2 -> isnan(r2) || isfinite(r2), df.broker_holdout_r2)
+    end
+
+    @testset "Satisfaction values are finite" begin
+        p = default_params(N=100, T=20, T_burn=5, seed=42)
+        state, _ = run_simulation(p)
+        @test all(isfinite(a.satisfaction_self) for a in state.agents)
+        @test all(isfinite(a.satisfaction_broker) for a in state.agents)
+    end
+
+    @testset "Parameter regime variants complete without error" begin
+        for (label, kwargs) in [
+            ("delta=0", (delta=0.0,)),
+            ("rho=0.1", (rho=0.1,)),
+            ("rho=0.9", (rho=0.9,)),
+        ]
+            p = default_params(N=50, T=10, T_burn=2, seed=42; kwargs...)
+            _, df = run_simulation(p)
+            @test nrow(df) == 10
         end
     end
 end

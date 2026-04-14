@@ -1,165 +1,129 @@
-using Test
-using TransientBrokerage
-using StableRNGs: StableRNG
-
 @testset "Entry/Exit" begin
-    params = default_params(d=4, N_W=200, N_F=20)
-    N_W = params.N_W
+    using Graphs: degree, has_edge, neighbors, nv
 
-    # Helper: build available set from state
-    make_avail(state) = let bv = falses(length(state.workers)); for w in state.workers; w.status == available && (bv[w.id] = true); end; bv end
+    p = default_params(N=50, T=5, T_burn=1, seed=42, eta=0.10)
+    state, _ = run_simulation(p)
+    N = p.N; K = p.K
+    broker_node = state.broker.node_id
 
-    # exit_firm! releases employees and clears vacancy
-    @testset "exit_firm! releases employees" begin
-        state = initialize_model(params)
-        firm_idx = 1
-        emp_ids = collect(state.firms[firm_idx].employees)
-        @test !isempty(emp_ids)
+    @testset "exit_agent! clears edges, matches, and roster" begin
+        # Pick an agent on the roster with at least one active match
+        target = findfirst(i -> state.agents[i].on_roster &&
+                                !isempty(state.agents[i].active_matches), 1:N)
+        if target !== nothing
+            partners_before = [am.partner_id for am in state.agents[target].active_matches]
+            @test degree(state.G, target) > 0
+            @test target in state.broker.roster
 
-        state.open_vacancies[firm_idx] = 1
-        avail = make_avail(state)
-        exit_firm!(state, firm_idx, avail)
+            exit_agent!(state, target)
 
-        @test isempty(state.firms[firm_idx].employees)
-        @test all(state.workers[wid].status == available for wid in emp_ids)
-        @test all(state.workers[wid].employer_id == 0 for wid in emp_ids)
-        @test state.open_vacancies[firm_idx] == 0
-        # Released employees added to available set
-        @test all(avail[wid] for wid in emp_ids)
-    end
+            @test degree(state.G, target) == 0
+            @test isempty(state.agents[target].active_matches)
+            @test !(target in state.broker.roster)
+            @test !state.agents[target].on_roster
 
-    # enter_firm! creates a fresh firm with employees
-    @testset "enter_firm! creates fresh entrant" begin
-        state = initialize_model(params)
-        avail = make_avail(state)
-        exit_firm!(state, 1, avail)
-        old_next_id = state.next_firm_id
-        candidates = Vector{Int}(undef, N_W)
-        wts = Vector{Float64}(undef, N_W)
-
-        enter_firm!(state, 1, avail, candidates, wts)
-        new_firm = state.firms[1]
-
-        @test new_firm.id == old_next_id
-        @test state.next_firm_id == old_next_id + 1
-        @test 6 <= length(new_firm.employees) <= 10
-        @test 6 <= new_firm.history_count <= 10  # seeded from initial hires
-        @test new_firm.satisfaction_internal == state.cal.q_pub
-        @test new_firm.satisfaction_broker == state.cal.q_pub
-        @test new_firm.tried_internal == false
-        @test new_firm.tried_broker == false
-        @test all(-3.0 .<= new_firm.type .<= 3.0)
-    end
-
-    # Entrant's employees are correctly linked and removed from available
-    @testset "enter_firm! employees have correct status" begin
-        state = initialize_model(params)
-        avail = make_avail(state)
-        exit_firm!(state, 1, avail)
-        candidates = Vector{Int}(undef, N_W)
-        wts = Vector{Float64}(undef, N_W)
-        enter_firm!(state, 1, avail, candidates, wts)
-        new_firm = state.firms[1]
-        for wid in new_firm.employees
-            @test state.workers[wid].status == employed
-            @test state.workers[wid].employer_id == new_firm.id
-            @test !avail[wid]
+            # Partners no longer list the exited agent
+            for pid in partners_before
+                @test !any(m -> m.partner_id == target, state.agents[pid].active_matches)
+            end
         end
     end
 
-    # Worker conservation after exit+enter cycle
-    @testset "worker conservation" begin
-        state = initialize_model(params)
-        n_before = count(w -> w.status == available, state.workers) +
-                   count(w -> w.status == employed, state.workers)
-        avail = make_avail(state)
-        candidates = Vector{Int}(undef, N_W)
-        wts = Vector{Float64}(undef, N_W)
-        exit_firm!(state, 1, avail)
-        enter_firm!(state, 1, avail, candidates, wts)
-        n_after = count(w -> w.status == available, state.workers) +
-                  count(w -> w.status == employed, state.workers)
-        @test n_after == n_before
-        @test n_after == N_W
+    @testset "enter_agent! resets all fields to fresh state" begin
+        state2 = initialize_model(default_params(N=50, seed=99))
+        rng = state2.rng
+        agent_id = 1
+
+        # Dirty the agent first
+        a = state2.agents[agent_id]
+        a.history_count = 10
+        a.n_new_obs = 5
+        a.satisfaction_self = 999.0
+        a.satisfaction_broker = 999.0
+        a.tried_broker = true
+        a.on_roster = true
+        a.periods_alive = 100
+        push!(a.active_matches, ActiveMatch(2, 1, false, :self))
+
+        enter_agent!(state2, agent_id, rng)
+        a = state2.agents[agent_id]
+
+        @test a.history_count == 0
+        @test a.n_new_obs == 0
+        @test a.satisfaction_self == state2.cal.q_pub
+        @test a.satisfaction_broker == state2.cal.q_pub
+        @test a.tried_broker == false
+        @test a.on_roster == false
+        @test a.periods_alive == 0
+        @test isempty(a.active_matches)
+        @test all(==(0), a.partner_count)
+        @test all(==(0.0), a.partner_sum)
     end
 
-    # Workers released by exit stay in broker pool if they were there
-    @testset "exit preserves broker pool membership" begin
-        state = initialize_model(params)
-        emp_id = first(state.firms[1].employees)
-        push!(state.broker.pool, emp_id)
-
-        avail = make_avail(state)
-        exit_firm!(state, 1, avail)
-        @test emp_id in state.broker.pool
-    end
-
-    # enter_firm! resets all mutable Firm fields (guards against stale state after in-place reset)
-    @testset "enter_firm! resets all fields" begin
-        state = initialize_model(params)
-        firm = state.firms[1]
-
-        # Poison every mutable field with non-default values
-        firm.tried_internal = true
-        firm.tried_broker = true
-        push!(firm.referral_pool, 9999)
-        firm.hire_count = 42
-        firm.periods_alive = 100
-        firm.satisfaction_internal = -999.0
-        firm.satisfaction_broker = -999.0
-        firm.history_count = 9999
-
-        old_id = firm.id
-        avail = make_avail(state)
-        exit_firm!(state, 1, avail)
-        candidates = Vector{Int}(undef, N_W)
-        wts = Vector{Float64}(undef, N_W)
-        enter_firm!(state, 1, avail, candidates, wts)
-
-        new_firm = state.firms[1]
-        @test new_firm.id != old_id
-        @test new_firm.id == state.next_firm_id - 1
-        @test new_firm.tried_internal == false
-        @test new_firm.tried_broker == false
-        @test isempty(new_firm.referral_pool)
-        @test new_firm.hire_count == 0
-        @test new_firm.periods_alive == 0
-        @test new_firm.satisfaction_internal == state.cal.q_pub
-        @test new_firm.satisfaction_broker == state.cal.q_pub
-        @test new_firm.history_count == length(new_firm.employees)
-    end
-
-    # process_entry_exit! runs without error and maintains invariants
-    # (pool maintenance runs after entry/exit in step_period!, so clean pool here)
-    @testset "process_entry_exit! maintains invariants" begin
-        state = initialize_model(params)
-        for _ in 1:10
-            step_period!(state)
+    @testset "enter_agent! produces unit-norm type on the sphere" begin
+        state3 = initialize_model(default_params(N=50, seed=77))
+        rng = state3.rng
+        for i in 1:5
+            enter_agent!(state3, i, rng)
+            t = state3.agents[i].type
+            @test all(isfinite, t)
+            @test length(t) == state3.params.d
+            @test isapprox(sqrt(sum(t .^ 2)), 1.0; atol=1e-10)
         end
-        avail = make_avail(state)
-        process_entry_exit!(state, avail)
-        # Clean pool (normally done in step 6 of step_period!)
-        for wid in collect(state.broker.pool)
-            state.workers[wid].status == available || delete!(state.broker.pool, wid)
-        end
-        verify_invariants(state)
     end
 
-    # Turnover rate approximately equals eta over many periods
-    @testset "turnover rate approximates eta" begin
-        state = initialize_model(params)
-        n_periods = 500
-        exit_count = 0
-        for _ in 1:n_periods
-            ids_before = Set(f.id for f in state.firms)
-            avail = make_avail(state)
-            process_entry_exit!(state, avail)
-            ids_after = Set(f.id for f in state.firms)
-            exit_count += length(setdiff(ids_before, ids_after))
+    @testset "enter_agent! creates edges to type-similar neighbors" begin
+        state4 = initialize_model(default_params(N=50, k=6, seed=33))
+        rng = state4.rng
+        remove_agent_edges!(state4.G, 1)
+        @test degree(state4.G, 1) == 0
+
+        enter_agent!(state4, 1, rng)
+        expected_edges = state4.params.k ÷ 2
+        @test degree(state4.G, 1) == expected_edges
+        @test !has_edge(state4.G, 1, 1)  # no self-edge
+    end
+
+    @testset "enter_agent! initializes NN with b2 = Q_OFFSET" begin
+        state5 = initialize_model(default_params(N=20, seed=55))
+        enter_agent!(state5, 1, state5.rng)
+        @test state5.agents[1].nn.b2 == Q_OFFSET
+        @test all(isfinite, state5.agents[1].nn.W1)
+    end
+
+    @testset "process_entry_exit! conserves population count" begin
+        p2 = default_params(N=100, T=1, T_burn=0, seed=42, eta=0.20)
+        state6 = initialize_model(p2)
+        n_before = length(state6.agents)
+        process_entry_exit!(state6, state6.rng)
+        @test length(state6.agents) == n_before
+        @test nv(state6.G) == p2.N + 1  # N agents + 1 broker
+    end
+
+    @testset "process_entry_exit! turnover rate approximates eta" begin
+        p3 = default_params(N=200, T=1, T_burn=0, seed=42, eta=0.10)
+        state7 = initialize_model(p3)
+        old_types = [copy(a.type) for a in state7.agents]
+        process_entry_exit!(state7, state7.rng)
+        n_changed = count(i -> state7.agents[i].type != old_types[i], 1:p3.N)
+        # With N=200, eta=0.10: expected ~20 exits, stdev ~4.2
+        @test 5 <= n_changed <= 45
+    end
+
+    @testset "process_entry_exit! with eta=0 is a no-op" begin
+        p4 = default_params(N=50, T=1, T_burn=0, seed=42, eta=0.0)
+        state8 = initialize_model(p4)
+        old_types = [copy(a.type) for a in state8.agents]
+        process_entry_exit!(state8, state8.rng)
+        @test all(state8.agents[i].type == old_types[i] for i in 1:p4.N)
+    end
+
+    @testset "exit + enter preserves graph symmetry" begin
+        state9 = initialize_model(default_params(N=50, seed=11))
+        exit_agent!(state9, 5)
+        enter_agent!(state9, 5, state9.rng)
+        for nbr in neighbors(state9.G, 5)
+            @test has_edge(state9.G, nbr, 5)
         end
-        observed_rate = exit_count / (n_periods * params.N_F)
-        expected = params.eta
-        se = sqrt(expected * (1 - expected) / (n_periods * params.N_F))
-        @test abs(observed_rate - expected) < 2 * se
     end
 end

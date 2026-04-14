@@ -1,132 +1,161 @@
-using Test
-using TransientBrokerage
-using StableRNGs: StableRNG
-using Graphs: nv, is_connected
-
 @testset "Initialization" begin
-    params = default_params()
-    state = initialize_model(params)
+    using Graphs: nv, ne, degree, has_edge, neighbors
+    using LinearAlgebra: norm, issymmetric, isposdef, tr
+    using Statistics: mean
+
+    p = default_params(N=100, seed=42)
+    state = initialize_model(p)
+    N = p.N; d = p.d
 
     @testset "initialize_model returns valid ModelState" begin
         @test state isa ModelState
         @test state.env isa MatchingEnv
         @test state.cal isa CalibrationConstants
         @test state.period == 0
+        @test length(state.agents) == N
+        @test state.broker.node_id == N + 1
     end
 
-    @testset "calibration constants are positive" begin
-        @test state.cal.r_base > 0
-        @test state.cal.f_bar > 0
-        @test state.cal.q_pub == state.cal.f_bar  # both are E[f]
-        @test state.cal.r_base ≈ 0.70 * state.cal.f_bar
+    @testset "calibration constants are positive and consistent" begin
+        @test state.cal.q_pub > 0
+        @test state.cal.r > 0
+        @test state.cal.phi > 0
+        @test state.cal.c_s >= 0
+        @test state.cal.r < state.cal.q_pub
+        @test state.cal.r ≈ R_BASE_FRAC * state.cal.q_pub
     end
 
-    @testset "correct agent counts" begin
-        @test length(state.workers) == params.N_W
-        @test length(state.firms) == params.N_F
+    @testset "agent types are unit vectors in R^d" begin
+        @test all(length(a.type) == d for a in state.agents)
+        @test all(isapprox(norm(a.type), 1.0; atol=1e-10) for a in state.agents)
+        @test all(all(isfinite, a.type) for a in state.agents)
     end
 
-    @testset "worker properties" begin
-        @test all(1 <= w.node_id <= params.N_W for w in state.workers)
-        @test all(all(isfinite.(w.type)) for w in state.workers)
-        @test all(length(w.type) == params.d for w in state.workers)
+    @testset "agent IDs match indices" begin
+        @test all(state.agents[i].id == i for i in 1:N)
     end
 
-    @testset "firm properties" begin
-        @test all(length(f.type) == params.d for f in state.firms)
-        # Firm types are on the unit sphere
-        @test all(isapprox(sqrt(sum(f.type .^ 2)), 1.0; atol=1e-10) for f in state.firms)
+    @testset "matching environment matrices are SPD with correct normalization" begin
+        env = state.env
+        @test size(env.A) == (d, d)
+        @test size(env.B) == (d, d)
+        @test issymmetric(env.A)
+        @test issymmetric(env.B)
+        @test isposdef(env.A)
+        @test isposdef(env.B)
+        # Trace normalization: tr(A) ≈ d (so E[x'Ax] ≈ 1 for unit vectors)
+        @test isapprox(tr(env.A), Float64(d); atol=1e-10)
+        @test isapprox(tr(env.B), Float64(d); atol=1e-10)
+        @test length(env.c) == d
+        @test all(isfinite, env.c)
     end
 
-    @testset "initial employment: 6-10 per firm, no double-counting" begin
-        @test all(6 <= length(f.employees) <= 10 for f in state.firms)
-        all_employed = reduce(union, (f.employees for f in state.firms))
-        total_assigned = sum(length(f.employees) for f in state.firms)
-        @test length(all_employed) == total_assigned
+    @testset "network has correct structure" begin
+        G = state.G
+        @test nv(G) == N + 1  # N agents + 1 broker
+        # No self-edges
+        @test !any(has_edge(G, i, i) for i in 1:N)
+        # All agents have at least 1 edge (from WS initialization)
+        @test all(degree(G, i) >= 1 for i in 1:N)
     end
 
-    @testset "worker status consistent with employment" begin
-        employed_ids = reduce(union, (f.employees for f in state.firms))
-        @test all(w.status == employed && w.employer_id > 0
-                  for w in state.workers if w.id in employed_ids)
-        @test all(w.status == available && w.employer_id == 0
-                  for w in state.workers if w.id ∉ employed_ids)
+    @testset "broker roster seeded correctly" begin
+        roster = state.broker.roster
+        expected_size = ceil(Int, 0.20 * N)
+        @test length(roster) == expected_size
+        @test all(1 <= rid <= N for rid in roster)
+        # Roster members have on_roster flag
+        @test all(state.agents[rid].on_roster for rid in roster)
+        # Roster members have broker edge
+        @test all(has_edge(state.G, rid, state.broker.node_id) for rid in roster)
     end
 
-    @testset "reservation wages >= r_base" begin
-        @test all(w.reservation_wage >= state.cal.r_base for w in state.workers)
+    @testset "broker history seeded" begin
+        @test state.broker.history_count > 0
+        @test state.broker.history_count <= 20
+        @test state.broker.n_new_obs == 0  # training consumed them
     end
 
-    @testset "compute_reservation_wage keyword args change behavior" begin
-        rng1 = StableRNG(1)
-        rng2 = StableRNG(1)
-        r1 = compute_reservation_wage(3, 10, 1.0, rng1; network_premium=0.20)
-        r2 = compute_reservation_wage(3, 10, 1.0, rng2; network_premium=0.50)
-        @test r1 != r2
+    @testset "agent histories seeded from neighbors" begin
+        # Most agents should have some seed observations (up to 5)
+        n_with_history = count(a -> a.history_count > 0, state.agents)
+        @test n_with_history > N * 0.5  # most agents have neighbors
+        # No agent has more than 5 seed observations
+        @test all(a.history_count <= 5 for a in state.agents)
+        # n_new_obs was reset after initial training
+        @test all(a.n_new_obs == 0 for a in state.agents)
     end
 
-    @testset "broker" begin
-        expected_pool = ceil(Int, params.pool_target_frac * params.N_W)
-        @test length(state.broker.pool) == expected_pool
-        @test all(state.workers[wid].status == available for wid in state.broker.pool)
-        @test state.broker.last_reputation == state.cal.q_pub
-        @test size(state.broker.history_w) == (params.d, 10000)
-        @test size(state.broker.history_x) == (params.d, 10000)
-        @test length(state.broker.history_q) == 10000
-        @test length(state.broker.history_firm_idx) == 10000
-        @test state.broker.history_count == 20  # seeded from 20 random initial matches
+    @testset "neural networks initialized and trained" begin
+        for a in state.agents
+            @test size(a.nn.W1) == (p.h_a, d)
+            @test length(a.nn.b1) == p.h_a
+            @test length(a.nn.w2) == p.h_a
+            @test isfinite(a.nn.b2)
+            @test all(isfinite, a.nn.W1)
+        end
+        @test size(state.broker.nn.W1) == (p.h_b, 2 * d)
+        @test isfinite(state.broker.nn.b2)
     end
 
-    @testset "firm history and satisfaction" begin
-        @test all(size(f.history_w) == (params.d, 200) for f in state.firms)
-        @test all(length(f.history_q) == 200 for f in state.firms)
-        @test all(6 <= f.history_count <= 10 for f in state.firms)
-        @test all(f.satisfaction_internal == state.cal.q_pub for f in state.firms)
-        @test all(f.satisfaction_broker == state.cal.q_pub for f in state.firms)
+    @testset "satisfaction initialized to q_pub" begin
+        @test all(a.satisfaction_self == state.cal.q_pub for a in state.agents)
+        @test all(a.satisfaction_broker == state.cal.q_pub for a in state.agents)
+        @test all(!a.tried_broker for a in state.agents)
+        @test all(a.periods_alive == 0 for a in state.agents)
     end
 
-    @testset "social network has correct size" begin
-        @test nv(state.G_S) == params.N_W
-    end
-
-    @testset "next_firm_id set correctly" begin
-        @test state.next_firm_id == params.N_F + 1
-    end
-end
-
-@testset "Firm Curve" begin
-    using StableRNGs: StableRNG
-
-    d = 4
-
-    # Complex curve: nearby positions produce similar firm types
-    @testset "nearby positions produce similar types" begin
-        geo = generate_firm_geometry(:complex, d, 50, StableRNG(42))
-        t1 = sample_firm_type(geo, 0.50, d, StableRNG(1))
-        t2 = sample_firm_type(geo, 0.51, d, StableRNG(2))
-        t_far = sample_firm_type(geo, 0.90, d, StableRNG(3))
-        near_dist = sum((t1 .- t2).^2)
-        far_dist = sum((t1 .- t_far).^2)
-        @test near_dist < far_dist
-    end
-
-    # All three geometries produce finite, unit-norm types
-    @testset "all geometries produce valid types" begin
-        for mode in (:unstructured, :simple, :complex)
-            geo = generate_firm_geometry(mode, d, 50, StableRNG(42))
-            types = generate_firm_types(geo, 50, d, StableRNG(1))
-            @test all(all(isfinite.(t)) for t in types)
-            norms = [sqrt(sum(t .^ 2)) for t in types]
-            @test all(isapprox.(norms, 1.0; atol=0.01))
+    @testset "curve_point returns unit vectors" begin
+        geo = state.curve_geo
+        for t in [0.0, 0.25, 0.5, 0.75, 1.0]
+            cp = TransientBrokerage.curve_point(t, geo)
+            @test length(cp) == d
+            @test isapprox(norm(cp), 1.0; atol=1e-10)
         end
     end
 
-    # Deterministic with fixed seed
-    @testset "deterministic" begin
-        g1 = generate_firm_geometry(:complex, d, 50, StableRNG(42))
-        g2 = generate_firm_geometry(:complex, d, 50, StableRNG(42))
-        t1 = sample_firm_type(g1, 0.5, d, StableRNG(1))
-        t2 = sample_firm_type(g2, 0.5, d, StableRNG(1))
-        @test t1 == t2
+    @testset "generate_agent_types produces N unit vectors" begin
+        rng = StableRNG(123)
+        geo = TransientBrokerage.generate_curve_geometry(d, p.s, rng)
+        types, inv = TransientBrokerage.generate_agent_types(N, geo, p.sigma_x, rng)
+        @test length(types) == N
+        @test all(length(t) == d for t in types)
+        @test all(isapprox(norm(t), 1.0; atol=1e-10) for t in types)
+        # Default sort_by_pc1=false: inv_order is identity
+        @test inv == collect(1:N)
+    end
+
+    @testset "sort_by_pc1 option produces sorted types" begin
+        rng1 = StableRNG(7)
+        geo = TransientBrokerage.generate_curve_geometry(d, p.s, rng1)
+        types_unsorted, _ = TransientBrokerage.generate_agent_types(N, geo, p.sigma_x, rng1)
+
+        rng2 = StableRNG(7)
+        geo2 = TransientBrokerage.generate_curve_geometry(d, p.s, rng2)
+        types_sorted, inv = TransientBrokerage.generate_agent_types(N, geo2, p.sigma_x, rng2; sort_by_pc1=true)
+
+        @test length(types_sorted) == N
+        # The sorted and unsorted should contain the same types (in different order)
+        @test Set(types_sorted) == Set(types_unsorted)
+        # inv_order should be a valid permutation
+        @test sort(inv) == collect(1:N)
+    end
+
+    @testset "deterministic initialization: same seed -> identical state" begin
+        s1 = initialize_model(default_params(N=50, seed=42))
+        s2 = initialize_model(default_params(N=50, seed=42))
+        @test all(s1.agents[i].type == s2.agents[i].type for i in 1:50)
+        @test s1.env.A == s2.env.A
+        @test s1.env.B == s2.env.B
+        @test s1.env.c == s2.env.c
+        @test s1.cal.q_pub == s2.cal.q_pub
+        @test s1.broker.history_count == s2.broker.history_count
+    end
+
+    @testset "different seeds produce different states" begin
+        s1 = initialize_model(default_params(N=50, seed=42))
+        s2 = initialize_model(default_params(N=50, seed=99))
+        @test s1.agents[1].type != s2.agents[1].type
+        @test s1.env.A != s2.env.A
     end
 end
