@@ -221,9 +221,41 @@
         G = SimpleGraph(4)
         for i in 1:4, j in (i+1):4; add_edge!(G, i, j); end
         es = compute_effective_size(G, 1)
-        # K4: deg=3, redundancy = 3 * 2 * (1/3)^2 = 2/3
-        # ES = 3 - 2/3 ≈ 2.33
-        @test isapprox(es, 3.0 - 2.0/3; atol=0.01)
+        # K4: d=3, t=3 (all 3 neighbor pairs connected)
+        # ES = 3 - 2*3/3 = 1.0 (Borgatti 1997)
+        @test isapprox(es, 1.0; atol=0.01)
+    end
+
+    @testset "effective size and constraint: Muscillo (2021) Fig. 1" begin
+        # 7-node graph from Muscillo (2021): A=1,B=2,C=3,D=4,E=5,F=6,G=7
+        G = SimpleGraph(7)
+        add_edge!(G,1,2); add_edge!(G,1,5); add_edge!(G,1,6); add_edge!(G,1,7)
+        add_edge!(G,2,4); add_edge!(G,2,7)
+        add_edge!(G,3,7); add_edge!(G,4,7); add_edge!(G,5,7); add_edge!(G,6,7)
+
+        # Effective size from the paper (Table on p.4)
+        @test isapprox(compute_effective_size(G, 1), 2.5;   atol=0.001)   # A
+        @test isapprox(compute_effective_size(G, 2), 5.0/3;  atol=0.001)  # B
+        @test isapprox(compute_effective_size(G, 3), 1.0;   atol=0.001)   # C
+        @test isapprox(compute_effective_size(G, 4), 1.0;   atol=0.001)   # D
+        @test isapprox(compute_effective_size(G, 5), 1.0;   atol=0.001)   # E
+        @test isapprox(compute_effective_size(G, 6), 1.0;   atol=0.001)   # F
+        @test isapprox(compute_effective_size(G, 7), 14.0/3; atol=0.001)  # G
+
+        # Constraint: nodes with high effective size should have low constraint
+        @test compute_burt_constraint(G, 7) < compute_burt_constraint(G, 3)
+        @test compute_burt_constraint(G, 1) < compute_burt_constraint(G, 4)
+    end
+
+    @testset "constraint: hand-calculated example with unequal degrees" begin
+        # Graph: 1-2, 1-4, 2-3, 2-4. Node 1 has d=2, node 2 has d=3, node 4 has d=2.
+        # From hand calculation (Ruqin Ren):
+        # c_12 = (1/2 + (1/2)*(1/2))^2 = (3/4)^2 = 9/16 (indirect via 4: p14*p42 = 0.5*0.5)
+        # c_14 = (1/2 + (1/2)*(1/3))^2 = (2/3)^2 = 4/9 (indirect via 2: p12*p24 = 0.5*1/3)
+        # C_1 = 9/16 + 4/9 = 1.007
+        G = SimpleGraph(4)
+        add_edge!(G, 1, 2); add_edge!(G, 1, 4); add_edge!(G, 2, 3); add_edge!(G, 2, 4)
+        @test isapprox(compute_burt_constraint(G, 1), 9.0/16 + 4.0/9; atol=0.001)
     end
 
     # ─── update_cached_network_measures! ─────────────────────────────────

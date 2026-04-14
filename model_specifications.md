@@ -589,9 +589,9 @@ where $n = N+1$, $\sigma_{st}$ is the number of shortest paths from $s$ to $t$, 
 $$C_b = \sum_j \left(p_{bj} + \sum_{h \neq b,j}
 p_{bh}\, p_{hj}\right)^2$$
 
-where $p_{bj}$ is the proportion of the broker's ties invested in node $j$. Low constraint = broker spans structural holes. High constraint = broker's contacts are interconnected.
+where $p_{bj} = 1/d_b$ is the proportion of the broker's ties invested in node $j$ (for the unweighted network), and $p_{kj} = 1/d_k$ is the proportion of intermediary $k$'s ties invested in $j$ (Everett & Borgatti, 2020). Note that the indirect term uses the intermediary's degree, not the ego's. Low constraint = broker spans structural holes. High constraint = broker's contacts are interconnected.
 
-**Effective size.** The number of non-redundant contacts in the broker's ego network (Burt, 1992): $\text{ES}_b = |N(b)| - \sum_j p_{bj} \sum_{h \neq b} p_{bh}\, m_{jh}$ where $m_{jh} = 1$ if $j$ and $h$ are connected.
+**Effective size.** The number of non-redundant contacts in the broker's ego network. Using the Borgatti (1997) simplification for binary undirected networks: $\text{ES}_b = d_b - 2t_b / d_b$, where $d_b$ is the broker's degree and $t_b$ is the number of ties among the broker's neighbors (not counting ties to the broker). Equivalently: $\text{ES}_b = |N(b)| - \sum_j p_{bj} \sum_{h \neq b, h \in N(b)} m_{jh}$ where $p_{bj} = 1/d_b$ and $m_{jh} = 1$ if $j$ and $h$ are connected.
 
 #### Prediction quality
 
@@ -1013,6 +1013,8 @@ Bethune, Z., Sultanum, B., & Trachter, N. (2024). An information-based theory of
 
 Brandes, U. (2001). A faster algorithm for betweenness centrality. *Journal of Mathematical Sociology*, *25*(2), 163–177.
 
+Borgatti, S. P. (1997). Structural holes: Unpacking Burt's redundancy measures. *Connections*, *20*(1), 35–38.
+
 Brenner, T. (2006). Agent learning representation: Advice on modelling economic learning. In K. Judd & L. Tesfatsion (Eds.), *Handbook of computational economics* (Vol. 2, pp. 895–947). North-Holland.
 
 Burt, R. S. (1992). *Structural holes: The social structure of competition*. Harvard University Press.
@@ -1021,9 +1023,13 @@ Burt, R. S. (2005). *Brokerage and closure: An introduction to social capital*. 
 
 Duffie, D., Gârleanu, N., & Pedersen, L. H. (2005). Over-the-counter markets. *Econometrica*, *73*(6), 1815–1847.
 
+Everett, M. G., & Borgatti, S. P. (2020). Unpacking Burt's constraint measure. *Social Networks*, *62*, 50–57.
+
 Freeman, L. C. (1977). A set of measures of centrality based on betweenness. *Sociometry*, *40*(1), 35–41.
 
 Li, D. D. (1998). Middlemen and private information. *Journal of Monetary Economics*, *42*(1), 131–159.
+
+Muscillo, A. (2021). A note on matricial ways to compute Burt's structural holes in networks. *arXiv preprint arXiv:2102.05114*.
 
 Rogerson, R., Shimer, R., & Wright, R. (2005). Search-theoretic models of the labor market: A survey. *Journal of Economic Literature*, *43*(4), 959–988.
 

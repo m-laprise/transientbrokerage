@@ -273,25 +273,32 @@ end
 """
     compute_burt_constraint(G, node) -> Float64
 
-Burt's network constraint: C = Σ_j (p_ij + Σ_{h≠i,j} p_ih · p_hj)².
+Burt's aggregate network constraint (Burt, 1992; Everett & Borgatti, 2020):
+
+    C_i = Σ_{j∈N(i)} (p_ij + Σ_{k∈N(i)} p_ik · p_kj)²
+
+where p_ij = 1/d_i (proportion of i's ties invested in j) for unweighted
+networks, and p_kj = 1/d_k (proportion of k's ties invested in j).
+Note: the indirect term uses k's degree, not i's degree.
 Returns 1.0 if isolated.
 """
 function compute_burt_constraint(G::SimpleGraph, node::Int)::Float64
     nbrs = neighbors(G, node)
     deg = length(nbrs)
     deg == 0 && return 1.0
-    p = 1.0 / deg
+    p_i = 1.0 / deg
 
     constraint = 0.0
     for j in nbrs
-        c_ij = p
-        for h in nbrs
-            h == j && continue
-            if has_edge(G, h, j)
-                c_ij += p * p
+        c_ij = p_i  # direct: p_ij = 1/d_i
+        for k in nbrs
+            k == j && continue
+            if has_edge(G, k, j)
+                # indirect: p_ik * p_kj = (1/d_i) * (1/d_k)
+                c_ij += p_i / length(neighbors(G, k))
             end
         end
-        constraint += c_ij^2
+        constraint += c_ij * c_ij
     end
     return constraint
 end
@@ -299,7 +306,16 @@ end
 """
     compute_effective_size(G, node) -> Float64
 
-Burt's effective size: ES = |N(i)| - Σ_j p_ij Σ_{h≠i} p_ih · m_jh.
+Burt's effective size (Burt, 1992; Borgatti, 1997):
+
+    s_i = d_i - 2t_i / d_i
+
+where d_i is i's degree and t_i is the number of ties among i's neighbors
+(not counting ties to i). Equivalently:
+
+    s_i = Σ_{j∈N(i)} [1 - Σ_{q∈N(i), q≠j} (1/d_i) · m_jq]
+
+where m_jq = 1 if j and q are connected, 0 otherwise.
 Returns 0.0 if isolated.
 """
 function compute_effective_size(G::SimpleGraph, node::Int)::Float64
@@ -308,12 +324,14 @@ function compute_effective_size(G::SimpleGraph, node::Int)::Float64
     deg == 0 && return 0.0
     p = 1.0 / deg
 
+    # Count ties among neighbors (each undirected edge counted once per
+    # ordered pair in the double loop, so the sum = 2t_i * p = 2t_i/d_i)
     redundancy = 0.0
     for j in nbrs
         for h in nbrs
             h == j && continue
             if has_edge(G, j, h)
-                redundancy += p * p
+                redundancy += p  # p_iq * m_jq = (1/d_i) * 1
             end
         end
     end
