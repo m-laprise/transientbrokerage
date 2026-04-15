@@ -1,7 +1,7 @@
 using Test
 using TransientBrokerage
 using StableRNGs: StableRNG
-using LinearAlgebra: normalize, norm
+using LinearAlgebra: normalize
 
 @testset "Neural Network Learning" begin
 
@@ -22,6 +22,21 @@ using LinearAlgebra: normalize, norm
         y1 = predict_nn!(nn, buf, z)
         y2 = predict_nn!(nn, buf, z)
         @test y1 == y2
+    end
+
+    @testset "predict_nn_batch! matches scalar predict_nn!" begin
+        rng = StableRNG(202)
+        nn = init_neural_net(8, 16, rng)
+        n = 12
+        cap = 16
+        Z = randn(rng, 8, cap)
+        H = zeros(16, cap)
+        Y = zeros(cap)
+        predict_nn_batch!(nn, H, Y, Z, n)
+
+        buf = zeros(16)
+        y_scalar = [predict_nn!(nn, buf, Z[:, j]) for j in 1:n]
+        @test all(isapprox.(Y[1:n], y_scalar; atol=1e-12))
     end
 
     @testset "nn_loss is finite and positive" begin
@@ -46,6 +61,26 @@ using LinearAlgebra: normalize, norm
         loss_after = nn_loss(nn.W1, nn.b1, nn.w2, Ref(nn.b2), X, q)
 
         @test loss_after < loss_before
+    end
+
+    @testset "train_step! matches one-step train_nn!" begin
+        rng = StableRNG(303)
+        nn0 = init_neural_net(8, 16, rng)
+        nn_step = NeuralNet(copy(nn0.W1), copy(nn0.b1), copy(nn0.w2), nn0.b2)
+        nn_loop = NeuralNet(copy(nn0.W1), copy(nn0.b1), copy(nn0.w2), nn0.b2)
+        grad_step = NNGradBuffers(nn_step)
+        grad_loop = NNGradBuffers(nn_loop)
+        X = randn(rng, 8, 20)
+        q = randn(rng, 20)
+        lr = 0.01
+
+        train_step!(nn_step, grad_step, X, q, lr)
+        train_nn!(nn_loop, grad_loop, X, q, 1, lr)
+
+        @test nn_step.W1 == nn_loop.W1
+        @test nn_step.b1 == nn_loop.b1
+        @test nn_step.w2 == nn_loop.w2
+        @test nn_step.b2 == nn_loop.b2
     end
 
     @testset "NN can learn a linear function" begin
@@ -107,6 +142,21 @@ using LinearAlgebra: normalize, norm
         )
         train_agent_nn!(agent, p)
         @test agent.nn.W1 == w1_before
+    end
+
+    @testset "train_broker_nn! resets n_new_obs and updates weights" begin
+        p = default_params(N=30, seed=42)
+        state = initialize_model(p)
+        broker = state.broker
+        w1_before = copy(broker.nn.W1)
+
+        record_broker_history!(broker, state.agents[1].type, state.agents[2].type, 1.2)
+        record_broker_history!(broker, state.agents[2].type, state.agents[3].type, 1.4)
+        @test broker.n_new_obs == 2
+
+        train_broker_nn!(broker, p)
+        @test broker.n_new_obs == 0
+        @test broker.nn.W1 != w1_before
     end
 
     # Weight decay removed: the NN has no explicit L2 regularization. With MSE

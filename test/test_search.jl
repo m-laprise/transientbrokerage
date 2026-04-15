@@ -1,6 +1,5 @@
 using Test
 using TransientBrokerage
-using Graphs: neighbors
 using StableRNGs: StableRNG
 
 @testset "Search" begin
@@ -25,21 +24,23 @@ using StableRNGs: StableRNG
     end
 
     @testset "Self-search uses history for known neighbors" begin
-        nbrs = collect(neighbors(G, 1))
-        filter!(n -> n != broker.node_id && n <= p.N, nbrs)
-        if !isempty(nbrs)
-            target = nbrs[1]
-            agents[1].partner_sum[target] = 100.0
-            agents[1].partner_count[target] = 1
-            rng = StableRNG(77)
-            props = self_search(agents[1], agents, G, broker.node_id, p, rng, 1, cal.r)
-            if !isempty(props)
-                @test props[1].counterparty_id == target
-                @test props[1].evaluation ≈ 100.0
-            end
-            agents[1].partner_sum[target] = 0.0
-            agents[1].partner_count[target] = 0
-        end
+        p2 = default_params(N=20, T=5, T_burn=1, K=3, n_strangers=0, seed=7)
+        state2 = initialize_model(p2)
+        agents2 = state2.agents
+        G2 = state2.G
+        broker_node2 = state2.broker.node_id
+
+        remove_agent_edges!(G2, 1)
+        add_match_edge!(G2, 1, 2)
+        agents2[1].partner_sum[2] = 100.0
+        agents2[1].partner_count[2] = 1
+
+        rng = StableRNG(77)
+        props = self_search(agents2[1], agents2, G2, broker_node2, p2, rng, 1, -1e9)
+
+        @test length(props) == 1
+        @test props[1].counterparty_id == 2
+        @test props[1].evaluation ≈ 100.0
     end
 
     @testset "Self-search respects participation constraint" begin

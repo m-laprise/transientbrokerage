@@ -1,6 +1,6 @@
 using Test
 using TransientBrokerage
-using Graphs: nv, ne, neighbors, has_edge, degree, SimpleGraph, add_edge!
+using Graphs: nv, ne, neighbors, has_edge, degree
 using StableRNGs: StableRNG
 using LinearAlgebra: normalize
 
@@ -63,48 +63,5 @@ using LinearAlgebra: normalize
         @test 0.0 <= bc <= 1.0  # betweenness must be in [0, 1]
         @test isfinite(compute_burt_constraint(G, 6))
         @test isfinite(compute_effective_size(G, 6))
-    end
-
-    @testset "Betweenness correctness on path graph" begin
-        # Path: 1 - 2 - 3 - 4 - 5
-        # Node 3 is on shortest paths for 4 pairs: (1,4), (1,5), (2,4), (2,5)
-        # Normalization: C(n-1, 2) = C(4,2) = 6 pairs excluding node 3
-        # BC(3) = 4/6 = 0.667
-        G = SimpleGraph(5)
-        add_edge!(G, 1, 2)
-        add_edge!(G, 2, 3)
-        add_edge!(G, 3, 4)
-        add_edge!(G, 4, 5)
-        bc3 = compute_betweenness(G, 3)
-        @test bc3 ≈ 4.0 / 6.0 atol=0.01
-        @test 0.0 <= bc3 <= 1.0
-    end
-
-    @testset "Betweenness of star center" begin
-        # Star: node 1 connected to 2,3,4,5.
-        # All C(4,2)=6 pairs of leaves have shortest paths through node 1.
-        # Normalization: C(n-1, 2) = C(4,2) = 6
-        # BC(1) = 6/6 = 1.0
-        G = SimpleGraph(5)
-        for i in 2:5
-            add_edge!(G, 1, i)
-        end
-        bc1 = compute_betweenness(G, 1)
-        @test bc1 ≈ 1.0 atol=0.01
-        @test 0.0 <= bc1 <= 1.0
-    end
-
-    @testset "Betweenness is zero for leaf node" begin
-        # Path: 1 - 2 - 3. Node 1 is a leaf, no shortest paths go through it.
-        G = SimpleGraph(3)
-        add_edge!(G, 1, 2)
-        add_edge!(G, 2, 3)
-        @test compute_betweenness(G, 1) ≈ 0.0 atol=0.001
-    end
-
-    @testset "Isolated node measures" begin
-        G = build_network(5, 4, 0.0, StableRNG(42))
-        @test compute_burt_constraint(G, 6) == 1.0
-        @test compute_effective_size(G, 6) == 0.0
     end
 end

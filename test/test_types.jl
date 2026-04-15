@@ -7,6 +7,7 @@ using LinearAlgebra: norm
 
     @testset "default_params construction" begin
         p = default_params()
+        @test p isa ModelParams
         @test p.N == 1000
         @test p.d == 8
         @test p.K == 5
@@ -117,6 +118,44 @@ using LinearAlgebra: norm
         @test agent.history_count == 5
         @test size(agent.history_X, 2) >= 8  # doubled from 4
         @test agent.history_q[5] == 5.0
+    end
+
+    @testset "effective_history_size for agent and broker" begin
+        state = initialize_model(default_params(N=20, seed=17))
+        state.agents[1].history_count = 7
+        state.broker.history_count = 11
+        @test effective_history_size(state.agents[1]) == 7
+        @test effective_history_size(state.broker) == 11
+    end
+
+    @testset "record_broker_history! records and grows buffers" begin
+        rng = StableRNG(123)
+        p = default_params(N=20, seed=123)
+        state = initialize_model(p)
+        broker = state.broker
+        d = p.d
+
+        broker.history_Xi = Matrix{Float64}(undef, d, 2)
+        broker.history_Xj = Matrix{Float64}(undef, d, 2)
+        broker.history_q = Vector{Float64}(undef, 2)
+        broker.train_X = Matrix{Float64}(undef, 2 * d, 4)
+        broker.train_q = Vector{Float64}(undef, 4)
+        broker.history_count = 0
+        broker.n_new_obs = 0
+
+        xi1 = randn(rng, d); xj1 = randn(rng, d)
+        xi2 = randn(rng, d); xj2 = randn(rng, d)
+        xi3 = randn(rng, d); xj3 = randn(rng, d)
+        record_broker_history!(broker, xi1, xj1, 1.0)
+        record_broker_history!(broker, xi2, xj2, 2.0)
+        record_broker_history!(broker, xi3, xj3, 3.0)  # triggers growth
+
+        @test broker.history_count == 3
+        @test broker.n_new_obs == 3
+        @test size(broker.history_Xi, 2) >= 3
+        @test size(broker.history_Xj, 2) >= 3
+        @test size(broker.train_X, 2) >= 6
+        @test broker.history_q[3] == 3.0
     end
 
     @testset "Partner mean tracking" begin

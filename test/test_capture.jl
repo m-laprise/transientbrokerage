@@ -76,10 +76,8 @@ using StableRNGs: StableRNG
 
     @testset "Full simulation with principal mode" begin
         p = default_params(N=50, T=10, T_burn=2, seed=42, enable_principal=true)
-        state, df = run_simulation(p)
-        # Should have some principal matches
-        total_principal = sum(df.n_broker_principal)
-        @test total_principal >= 0  # may be 0 in early periods
+        _, df = run_simulation(p)
+        @test length(df.n_broker_principal) == p.T
         # Principal mode share is between 0 and 1
         @test all(0.0 .<= df.principal_mode_share .<= 1.0)
     end

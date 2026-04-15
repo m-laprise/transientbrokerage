@@ -65,11 +65,10 @@ using StableRNGs: StableRNG
         rng = StableRNG(55)
         accepted = sequential_match_formation!(proposals, state3.agents, state3.broker,
                                                 state3.env, state3.G, p, cal, rng)
-        if !isempty(accepted)
-            @test a1.history_count == h1_before + 1
-            @test a2.history_count == h2_before + 1
-            @test has_edge(state3.G, 1, 2)
-        end
+        @test length(accepted) == 1
+        @test a1.history_count == h1_before + 1
+        @test a2.history_count == h2_before + 1
+        @test has_edge(state3.G, 1, 2)
     end
 
     @testset "Principal match does NOT update agent histories or create edges" begin
@@ -87,12 +86,11 @@ using StableRNGs: StableRNG
         accepted = sequential_match_formation!(proposals, state4.agents, state4.broker,
                                                 state4.env, state4.G,
                                                 state4.params, state4.cal, rng)
-        if !isempty(accepted)
-            @test a1.history_count == h1_before       # NOT updated
-            @test a2.history_count == h2_before       # NOT updated
-            @test state4.broker.history_count == broker_h_before + 1  # broker learns
-            @test !has_edge(state4.G, 1, 2)           # no edge formed
-        end
+        @test length(accepted) == 1
+        @test a1.history_count == h1_before       # NOT updated
+        @test a2.history_count == h2_before       # NOT updated
+        @test state4.broker.history_count == broker_h_before + 1  # broker learns
+        @test !has_edge(state4.G, 1, 2)           # no edge formed
     end
 
     @testset "Satisfaction EWMA update" begin

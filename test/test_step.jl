@@ -44,11 +44,8 @@ using Graphs: nv, degree
         p = default_params(N=50, T=10, T_burn=2, seed=42, tau=1)
         state = initialize_model(p)
         step_period!(state)
-        # After a period at tau=1, some agents may have active matches from this period
-        # After the NEXT period's step 0, those should all expire
         step_period!(state)
-        # At tau=1, step 0 clears all matches
-        # Active matches from period 1 should be gone; period 2 matches may be present
+        @test all(am.formation_period == state.period for a in state.agents for am in a.active_matches)
     end
 
     @testset "Match expirations at tau=4" begin
@@ -91,8 +88,6 @@ using Graphs: nv, degree
         for _ in 1:5; step_period!(state); end
         # Roster should be less than N (not everyone outsources)
         @test length(state.broker.roster) < p.N
-        # Roster may be 0 at small N if broker can't compete with self-search
-        @test length(state.broker.roster) >= 0
     end
 
     @testset "Entry/exit maintains population" begin

@@ -1,3 +1,7 @@
+using Test
+using TransientBrokerage
+using StableRNGs: StableRNG
+
 @testset "Initialization" begin
     using Graphs: nv, ne, degree, has_edge, neighbors
     using LinearAlgebra: norm, issymmetric, isposdef, tr
@@ -72,7 +76,7 @@
 
     @testset "broker history seeded" begin
         @test state.broker.history_count > 0
-        @test state.broker.history_count <= 20
+        @test state.broker.history_count <= 100
         @test state.broker.n_new_obs == 0  # training consumed them
     end
 

@@ -1,31 +1,37 @@
+using Test
+using TransientBrokerage
+
 @testset "Entry/Exit" begin
     using Graphs: degree, has_edge, neighbors, nv
 
-    p = default_params(N=50, T=5, T_burn=1, seed=42, eta=0.10)
-    state, _ = run_simulation(p)
-    N = p.N; K = p.K
-    broker_node = state.broker.node_id
-
     @testset "exit_agent! clears edges, matches, and roster" begin
-        # Pick an agent in the roster with at least one active match
-        target = findfirst(i -> (i in state.broker.roster) &&
-                                !isempty(state.agents[i].active_matches), 1:N)
-        if target !== nothing
-            partners_before = [am.partner_id for am in state.agents[target].active_matches]
-            @test degree(state.G, target) > 0
+        state1 = initialize_model(default_params(N=20, seed=42))
+        target = 1
+        partner = 2
 
-            exit_agent!(state, target)
+        empty!(state1.agents[target].active_matches)
+        empty!(state1.agents[partner].active_matches)
+        push!(state1.agents[target].active_matches, ActiveMatch(partner, 1, false, :self))
+        push!(state1.agents[partner].active_matches, ActiveMatch(target, 1, false, :self))
+        add_match_edge!(state1.G, target, partner)
 
-            @test degree(state.G, target) == 0
-            @test isempty(state.agents[target].active_matches)
-            @test !(target in state.broker.roster)
-            @test state.agents[target].last_outsource_period == 0
+        push!(state1.broker.roster, target)
+        state1.agents[target].last_outsource_period = 1
+        state1.agents[partner].partner_sum[target] = 5.0
+        state1.agents[partner].partner_count[target] = 2
+        push!(state1.broker.familiar_pairs, (target, partner))
 
-            # Partners no longer list the exited agent
-            for pid in partners_before
-                @test !any(m -> m.partner_id == target, state.agents[pid].active_matches)
-            end
-        end
+        @test degree(state1.G, target) > 0
+        exit_agent!(state1, target)
+
+        @test degree(state1.G, target) == 0
+        @test isempty(state1.agents[target].active_matches)
+        @test !(target in state1.broker.roster)
+        @test state1.agents[target].last_outsource_period == 0
+        @test !any(m -> m.partner_id == target, state1.agents[partner].active_matches)
+        @test state1.agents[partner].partner_sum[target] == 0.0
+        @test state1.agents[partner].partner_count[target] == 0
+        @test !((target, partner) in state1.broker.familiar_pairs)
     end
 
     @testset "enter_agent! resets all fields to fresh state" begin

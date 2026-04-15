@@ -60,6 +60,17 @@ using LinearAlgebra: dot, norm, normalize, eigvals
         end
     end
 
+    @testset "In-place regime_gain! matches allocating version" begin
+        types = test_agent_types(d, 20, StableRNG(10))
+        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        Bx = zeros(d)
+        rng = StableRNG(556)
+        @test all(1:30) do _
+            i, j = rand(rng, 1:20), rand(rng, 1:20)
+            regime_gain(types[i], types[j], env) ≈ regime_gain!(Bx, types[i], types[j], env)
+        end
+    end
+
     @testset "At delta=0, gain is always 1.0" begin
         types = test_agent_types(d, 20, StableRNG(10))
         env0 = generate_matching_env(d, rho, 0.0, 0.25, types, StableRNG(42))
@@ -106,6 +117,19 @@ using LinearAlgebra: dot, norm, normalize, eigvals
         q1 = match_output(xi, xj, env, rng1)
         rng2 = StableRNG(99)
         q2 = Q_OFFSET + match_signal(xi, xj, env) + env.sigma_eps * randn(rng2)
+        @test q1 ≈ q2
+    end
+
+    @testset "In-place match_output! matches allocating version" begin
+        types = test_agent_types(d, 20, StableRNG(10))
+        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        xi, xj = types[3], types[9]
+        Ax = zeros(d)
+        Bx = zeros(d)
+        rng1 = StableRNG(909)
+        q1 = match_output(xi, xj, env, rng1)
+        rng2 = StableRNG(909)
+        q2 = match_output!(Ax, Bx, xi, xj, env, rng2)
         @test q1 ≈ q2
     end
 

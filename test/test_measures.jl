@@ -1,3 +1,6 @@
+using Test
+using TransientBrokerage
+
 @testset "Measures" begin
     using Graphs: SimpleGraph, add_edge!, nv, path_graph, star_graph, cycle_graph
 
@@ -7,6 +10,7 @@
         pred = [1.0, 2.0, 3.0, 4.0, 5.0]
         real = [1.0, 2.0, 3.0, 4.0, 5.0]
         pq = compute_prediction_quality(pred, real)
+        @test pq isa PredictionQuality
         @test pq.r_squared ≈ 1.0
         @test pq.bias ≈ 0.0
         @test pq.rank_corr ≈ 1.0

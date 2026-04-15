@@ -1,3 +1,6 @@
+using Test
+using TransientBrokerage
+
 @testset "Integration Tests" begin
     using DataFrames: nrow
 
@@ -43,8 +46,6 @@
         _, df = run_simulation(p)
         # Roster should not cover the entire population
         @test df.roster_size[end] < p.N
-        # Roster may shrink to 0 if the broker cannot compete with self-search
-        @test df.roster_size[end] >= 0
     end
 
     @testset "Principal mode simulation" begin
@@ -52,8 +53,6 @@
         _, df = run_simulation(p)
         @test nrow(df) == 20
         @test all(0.0 .<= df.principal_mode_share .<= 1.0)
-        # Principal matches may be zero at small N with familiarity requirement
-        @test sum(df.n_broker_principal) >= 0
     end
 
     @testset "High-K regime" begin

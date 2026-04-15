@@ -11,6 +11,8 @@ using Test
     include("test_entry_exit.jl")
     include("test_initialization.jl")
     include("test_measures.jl")
+    include("test_diagnostics.jl")
+    include("test_invariants.jl")
     include("test_step.jl")
     include("test_integration.jl")
     include("test_regression_baseline.jl")
