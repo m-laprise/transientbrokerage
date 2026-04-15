@@ -71,13 +71,8 @@ function verify_invariants(state::ModelState)
     # ── Broker roster consistency ──
     for rid in broker.roster
         @assert 1 <= rid <= N "Broker roster contains invalid id $rid"
-        @assert agents[rid].on_roster "Agent $rid in broker roster but on_roster=false"
+        @assert is_on_roster(agents[rid], state.period) "Agent $rid in broker roster but not on_roster"
         @assert has_edge(G, rid, broker.node_id) "Agent $rid on roster but no broker edge"
-    end
-    for i in 1:N
-        if agents[i].on_roster
-            @assert i in broker.roster "Agent $i has on_roster=true but not in broker.roster"
-        end
     end
 
     # ── Finite satisfaction and NN weights ──

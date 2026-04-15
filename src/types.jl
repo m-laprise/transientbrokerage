@@ -109,11 +109,19 @@ Base.@kwdef mutable struct Agent
     satisfaction_broker::Float64 = 0.0
     tried_broker::Bool = false
 
-    # Roster membership
-    on_roster::Bool = false
+    # Roster membership: period of last outsourcing decision (0 = never outsourced).
+    # Agent stays on roster for ROSTER_LAG periods after last outsourcing.
+    last_outsource_period::Int = 0
 
     # Tenure
     periods_alive::Int = 0
+
+    # Cumulative match counters for broker-dependency D_j (§12i).
+    # n_matches_any: every accepted match the agent has participated in, any role, any channel.
+    # n_principal_acquired: subset where the agent was the counterparty acquired in principal mode.
+    # Reset to zero on entry; not decremented on match expiration.
+    n_matches_any::Int = 0
+    n_principal_acquired::Int = 0
 end
 
 """Number of valid history entries for an agent."""
@@ -121,6 +129,10 @@ effective_history_size(agent::Agent) = agent.history_count
 
 """Available capacity: K minus active matches."""
 available_capacity(agent::Agent, K::Int) = K - length(agent.active_matches)
+
+"""Is the agent on the broker's roster? True if outsourced within ROSTER_LAG periods."""
+is_on_roster(agent::Agent, current_period::Int) = agent.last_outsource_period > 0 &&
+    (current_period - agent.last_outsource_period) <= ROSTER_LAG
 
 """Mean realized output with partner j, or NaN if no prior match."""
 function partner_mean(agent::Agent, j::Int)
@@ -161,13 +173,21 @@ end
 # Proposed match (for conflict resolution)
 # ─────────────────────────────────────────────────────────────────────────────
 
-"""A proposed match before acceptance/rejection in the sequential formation step."""
+"""A proposed match before acceptance/rejection in the sequential formation step.
+
+`ask_j` caches the counterparty's acquisition reservation q̄_j at the time of
+mode selection (§12c). It is NaN for non-principal proposals and for principal proposals
+where no reservation was computed (e.g., enable_principal=false). Caching at
+mode-selection time keeps capture-surplus recording consistent with the broker's
+ex-ante decision, even if the counterparty's history grows within the same period
+through unrelated matches."""
 struct ProposedMatch
     demander_id::Int
     counterparty_id::Int
     channel::Symbol         # :self or :broker
     evaluation::Float64     # q_hat (stranger) or q_bar (known neighbor) used for demander selection
     is_principal::Bool      # Model 1: broker takes one side
+    ask_j::Float64          # acquisition reservation cached at mode selection; NaN if unused
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -199,8 +219,9 @@ Base.@kwdef mutable struct Broker
     last_reputation::Float64 = 0.0
     has_had_clients::Bool = false
 
-    # Revenue
-    cumulative_revenue::Float64 = 0.0
+    # Familiarity: pairs the broker has previously matched via standard placement.
+    # Capture (principal mode) is only available for pairs in this set.
+    familiar_pairs::Set{Tuple{Int,Int}} = Set{Tuple{Int,Int}}()
 end
 
 """Number of valid history entries for the broker."""
@@ -257,8 +278,8 @@ end
 
 """Output-scale constants derived from Monte Carlo calibration."""
 struct CalibrationConstants
-    q_pub::Float64     # public benchmark E[q]
-    r::Float64         # outside option (0.60 * q_pub)
+    q_cal::Float64     # calibration reference E[q] (scales r, phi, c_s; not used for initialization)
+    r::Float64         # outside option (0.60 * q_cal)
     phi::Float64       # broker fee
     c_s::Float64       # self-search cost (gamma_c * phi)
 end
@@ -287,7 +308,7 @@ end
 # Period accumulators
 # ─────────────────────────────────────────────────────────────────────────────
 
-"""Per-period counters and output vectors. All fields reset each tick except cumulative revenue."""
+"""Per-period counters and output vectors. All fields reset each tick."""
 Base.@kwdef mutable struct PeriodAccumulators
     # Match counts by channel
     n_self_matches::Int = 0
@@ -299,13 +320,25 @@ Base.@kwdef mutable struct PeriodAccumulators
     q_broker_standard::Vector{Float64} = Float64[]
     q_broker_principal::Vector{Float64} = Float64[]
 
+    # Parallel series for principal-mode matches (aligned with q_broker_principal):
+    # - q_bar_j_principal: acquisition reservation q̄_j used at mode selection (§12c)
+    # - q_hat_b_principal: broker's ex-ante predicted match output q̂_b
+    # Together with q_broker_principal these feed the capture outcome and decision
+    # quality metrics (§12i).
+    q_bar_j_principal::Vector{Float64} = Float64[]
+    q_hat_b_principal::Vector{Float64} = Float64[]
+
+    # Distinct counterparties acquired in principal mode this period (for supply scarcity)
+    principal_acquired_ids::Set{Int} = Set{Int}()
+
     # Access vs assessment decomposition
     access_count::Int = 0       # counterparty was NOT a neighbor of demander
     assessment_count::Int = 0   # counterparty WAS a neighbor
 
-    # Outsourcing rate
+    # Outsourcing rate and demand
     n_demanders::Int = 0
     n_outsourced::Int = 0
+    total_demand::Int = 0           # total demand slots across all demanders
 
     # Prediction/outcome pairs from actual matches (subject to selection bias)
     agent_predicted::Vector{Float64} = Float64[]
@@ -313,17 +346,16 @@ Base.@kwdef mutable struct PeriodAccumulators
     broker_predicted::Vector{Float64} = Float64[]
     broker_realized::Vector{Float64} = Float64[]
 
-    # Holdout prediction/outcome pairs (random pairs, noiseless truth)
-    agent_holdout_pred::Vector{Float64} = Float64[]
-    agent_holdout_real::Vector{Float64} = Float64[]
-    broker_holdout_pred::Vector{Float64} = Float64[]
-    broker_holdout_real::Vector{Float64} = Float64[]
-
-    # Revenue
-    broker_standard_revenue::Float64 = 0.0      # placement fees this period
-    broker_principal_revenue::Float64 = 0.0      # principal-mode profit this period
-    cumulative_standard_revenue::Float64 = 0.0   # NOT reset
-    cumulative_principal_revenue::Float64 = 0.0  # NOT reset
+    # Holdout: per-agent averaged over sampled agents (both agent and broker
+    # evaluated on the same per-agent partner sets for comparability)
+    agent_holdout_r2::Float64 = NaN
+    agent_holdout_bias::Float64 = NaN
+    agent_holdout_rank::Float64 = NaN
+    agent_holdout_rmse::Float64 = NaN
+    broker_holdout_r2::Float64 = NaN
+    broker_holdout_bias::Float64 = NaN
+    broker_holdout_rank::Float64 = NaN
+    broker_holdout_rmse::Float64 = NaN
 
     # Roster
     roster_size::Int = 0
@@ -337,21 +369,26 @@ function reset_accumulators!(a::PeriodAccumulators)
     empty!(a.q_self)
     empty!(a.q_broker_standard)
     empty!(a.q_broker_principal)
+    empty!(a.q_bar_j_principal)
+    empty!(a.q_hat_b_principal)
+    empty!(a.principal_acquired_ids)
     a.access_count = 0
     a.assessment_count = 0
     a.n_demanders = 0
     a.n_outsourced = 0
+    a.total_demand = 0
     empty!(a.agent_predicted)
     empty!(a.agent_realized)
     empty!(a.broker_predicted)
     empty!(a.broker_realized)
-    empty!(a.agent_holdout_pred)
-    empty!(a.agent_holdout_real)
-    empty!(a.broker_holdout_pred)
-    empty!(a.broker_holdout_real)
-    a.broker_standard_revenue = 0.0
-    a.broker_principal_revenue = 0.0
-    # cumulative fields are NOT reset
+    a.agent_holdout_r2 = NaN
+    a.agent_holdout_bias = NaN
+    a.agent_holdout_rank = NaN
+    a.agent_holdout_rmse = NaN
+    a.broker_holdout_r2 = NaN
+    a.broker_holdout_bias = NaN
+    a.broker_holdout_rank = NaN
+    a.broker_holdout_rmse = NaN
     a.roster_size = 0
     return nothing
 end
@@ -397,7 +434,7 @@ struct ModelParams
 
     # Economics
     omega::Float64               # satisfaction recency weight (default 0.3)
-    alpha_phi::Float64           # broker fee rate: phi = alpha_phi * (q_pub - r) (default 0.20)
+    alpha_phi::Float64           # broker fee rate: phi = alpha_phi * (q_cal - r) (default 0.20)
     gamma_c::Float64             # self-search cost ratio: c_s = gamma_c * phi (default 0.5)
 
     # Neural network

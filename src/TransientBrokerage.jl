@@ -65,7 +65,7 @@ export sequential_match_formation!, update_satisfaction!
 export outsourcing_decision, broker_reputation, update_broker_reputation!
 
 # Capture
-export broker_mode_decision, apply_mode_selection!, compute_principal_profit, counterparty_ask
+export broker_mode_decision, apply_mode_selection!, capture_surplus, counterparty_ask
 
 # Entry/exit
 export exit_agent!, enter_agent!, process_entry_exit!

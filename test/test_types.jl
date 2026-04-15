@@ -78,9 +78,9 @@ using LinearAlgebra: norm
         accum.n_broker_standard = 5
         accum.n_broker_principal = 3
         push!(accum.q_self, 1.0, 2.0)
-        accum.broker_standard_revenue = 100.0
-        accum.cumulative_standard_revenue = 500.0
-        accum.cumulative_principal_revenue = 200.0
+        accum.n_demanders = 7
+        accum.n_outsourced = 2
+        accum.roster_size = 42
 
         reset_accumulators!(accum)
 
@@ -88,10 +88,9 @@ using LinearAlgebra: norm
         @test accum.n_broker_standard == 0
         @test accum.n_broker_principal == 0
         @test isempty(accum.q_self)
-        @test accum.broker_standard_revenue == 0.0
-        # Cumulative fields preserved
-        @test accum.cumulative_standard_revenue == 500.0
-        @test accum.cumulative_principal_revenue == 200.0
+        @test accum.n_demanders == 0
+        @test accum.n_outsourced == 0
+        @test accum.roster_size == 0
     end
 
     @testset "Agent history recording and growth" begin

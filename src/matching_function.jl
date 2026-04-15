@@ -128,7 +128,7 @@ end
     calibrate(env, agent_types, params, rng; n_samples=10_000) -> CalibrationConstants
 
 Monte Carlo calibration of E[q] from random agent pairs.
-Returns calibration constants: q_pub, r, phi, c_s.
+Returns calibration constants: q_cal, r, phi, c_s.
 """
 function calibrate(env::MatchingEnv,
                    agent_types::Vector{Vector{Float64}},
@@ -145,9 +145,9 @@ function calibrate(env::MatchingEnv,
         j = rand(rng, 1:n_agents)
         total += Q_OFFSET + match_signal!(Ax_buf, Bx_buf, agent_types[i], agent_types[j], env)
     end
-    q_pub = total / n_samples
-    r = R_BASE_FRAC * q_pub
-    phi = params.alpha_phi * (q_pub - r)
+    q_cal = total / n_samples
+    r = R_BASE_FRAC * q_cal
+    phi = params.alpha_phi * (q_cal - r)
     c_s = params.gamma_c * phi
-    return CalibrationConstants(q_pub, r, phi, c_s)
+    return CalibrationConstants(q_cal, r, phi, c_s)
 end

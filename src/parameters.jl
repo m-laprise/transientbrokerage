@@ -7,8 +7,11 @@ Default parameter construction and validation for the Transient Brokerage ABM (v
 # Constant offset shifting q positive for downstream economics
 const Q_OFFSET = 1.0
 
-# Calibration fraction: r = R_BASE_FRAC * q_pub
+# Calibration fraction: r = R_BASE_FRAC * q_cal
 const R_BASE_FRAC = 0.60
+
+# Roster lag: agents stay on roster this many periods after last outsourcing
+const ROSTER_LAG = 4
 
 """
     default_params(; seed=42, kwargs...)::ModelParams

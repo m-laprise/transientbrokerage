@@ -3,11 +3,12 @@
 
 Run the base model (no capture) across parameter configurations that control
 matching difficulty (rho, delta, s, eta) with multiple seeds per config.
-Produces per-config dynamics panels and DGP visualization (matrix, SVD).
+Produces per-config 5x3 dynamics panels and DGP visualization (matrix, SVD).
 
 Data is cached as JLD2; pass --rerun to force re-simulation.
 
 Usage: julia --project --threads=auto scripts/explore_base_model.jl
+       julia --project --threads=auto scripts/explore_base_model.jl --baseline
        julia --project --threads=auto scripts/explore_base_model.jl --rerun
 """
 
@@ -16,13 +17,12 @@ Threads.nthreads() == 1 && @warn "Running single-threaded; start Julia with --th
 using TransientBrokerage
 using TransientBrokerage: generate_matching_env, generate_curve_geometry,
                           generate_agent_types, match_signal, Q_OFFSET, regime_gain
-using CairoMakie
-using DataFrames
-using Statistics: mean
 using LinearAlgebra: svdvals
 using MultivariateStats: fit, predict, PCA
 using StableRNGs: StableRNG
 using JLD2
+
+include(joinpath(@__DIR__, "figure_style.jl"))
 
 const OUTDIR = joinpath(@__DIR__, "..", "data", "figures", "exploration")
 const DATADIR = joinpath(@__DIR__, "..", "data", "sims", "exploration")
@@ -34,10 +34,10 @@ mkpath(DATADIR)
 # ─────────────────────────────────────────────────────────────────────────────
 
 """Run n_seeds simulations, return vector of DataFrames."""
-function run_ensemble(; base_kwargs, T::Int, n_seeds::Int)
+function run_ensemble(; base_kwargs, T::Int, N::Int, n_seeds::Int)
     mdfs = Vector{DataFrame}(undef, n_seeds)
     for s in 1:n_seeds
-        p = default_params(; N=N_SIM, T=T, seed=s, base_kwargs...)
+        p = default_params(; N=N, T=T, seed=s, base_kwargs...)
         _, mdf = run_simulation(p)
         mdf[!, :seed] .= s
         mdfs[s] = mdf
@@ -45,130 +45,173 @@ function run_ensemble(; base_kwargs, T::Int, n_seeds::Int)
     return mdfs
 end
 
-"""Rolling mean with window. NaN-safe: skips NaN values in window."""
-function rolling_mean(v::AbstractVector, window::Int)
-    n = length(v)
-    out = fill(NaN, n)
-    for i in 1:n
-        isnan(v[i]) && continue
-        lo = max(1, i - window + 1)
-        vals = filter(!isnan, @view v[lo:i])
-        !isempty(vals) && (out[i] = mean(vals))
-    end
-    return out
-end
-
-"""Access fraction: access / (access + assessment), or NaN."""
-function access_fraction(mdf::DataFrame)
-    total = mdf.access_count .+ mdf.assessment_count
-    return [t > 0 ? mdf.access_count[i] / t : NaN for (i, t) in enumerate(total)]
-end
-
-const COL_BROKER = :crimson
-const COL_AGENT = :steelblue
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Dynamics figure (5x3 panel)
+# Dynamics figure (5×3 panel, matching v0.1 quality)
 # ─────────────────────────────────────────────────────────────────────────────
 
 function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::String;
-                       window::Int=20)
+                       T_burn::Int=30, window::Int=20)
     n_seeds = length(mdfs)
     periods = mdfs[1].period
+    T = last(periods)
+    xlims = (first(periods), T)
+    akw = ax_kw(T)
+    pm!(ax, fn; kw...) = plot_metric!(ax, periods, mdfs, fn; window=window, kw...)
 
-    function plot_metric!(ax, metric_fn; label="", color=COL_AGENT)
-        seed_vals = [rolling_mean(metric_fn(mdf), window) for mdf in mdfs]
-        for sv in seed_vals
-            lines!(ax, periods, sv; color=(color, 0.4), linewidth=0.8)
-        end
-        ensemble = [let vs = [sv[t] for sv in seed_vals]
-            nv = count(!isnan, vs)
-            nv > n_seeds / 2 ? mean(v for v in vs if !isnan(v)) : NaN
-        end for t in eachindex(periods)]
-        lines!(ax, periods, ensemble; color=color, linewidth=2.5, label=label)
-    end
+    fig = Figure(; size=(1500, 1100), figure_padding=(5, 15, 5, 5))
+    all_axes = Axis[]
+    newax(pos; kw...) = (a = Axis(pos; kw...); push!(all_axes, a); a)
 
-    leg_kw = (; labelsize=9, patchsize=(10, 10), padding=(3, 3, 2, 2),
-                rowgap=0, patchlabelgap=3, framewidth=0.5)
+    Label(fig[0, 1:4], suptitle; fontsize=SUPTITLE_FS, font=:bold,
+          halign=:center, tellwidth=false)
 
-    fig = Figure(; size=(1400, 1800), figure_padding=(10, 15, 5, 5))
-    Label(fig[0, 1:3], suptitle; fontsize=14, font=:bold, halign=:center, tellwidth=false)
+    # Labels for selected (pooled) vs holdout (per-agent mean)
+    AGT_SEL = "Agents (pooled)"
+    BRK_SEL = "Broker (pooled)"
+    AGT_HLD = "Agents (mean)"
+    BRK_HLD = "Broker (mean)"
 
-    # Row labels
-    row_labels = ["Outsourcing &\nMatches", "Prediction\nQuality", "Match\nOutput",
-                  "Network\nStructure", "Satisfaction"]
-    for (r, lbl) in enumerate(row_labels)
-        Label(fig[r, 0], lbl; fontsize=11, rotation=pi/2, tellheight=false, halign=:center)
-    end
+    # ── Row 1: Market ──
+    Label(fig[1, 0], "Market"; fontsize=ROW_LABEL_FS, font=:bold,
+          rotation=π/2, tellheight=false)
 
-    # Row 1: Outsourcing rate, matches by channel, total matches
-    ax = Axis(fig[1, 1]; title="Outsourcing Rate", ylabel="Rate")
-    plot_metric!(ax, mdf -> mdf.outsourcing_rate; color=COL_AGENT)
+    ax = newax(fig[1, 1]; title="Outsourcing rate", ylabel="Rate",
+              limits=(xlims, (-0.02, 1.02)), akw...)
+    pm!(ax, mdf -> mdf.outsourcing_rate; color=COL_BROKER)
 
-    ax = Axis(fig[1, 2]; title="Matches by Channel")
-    plot_metric!(ax, mdf -> Float64.(mdf.n_self_matches); label="Self", color=COL_AGENT)
-    plot_metric!(ax, mdf -> Float64.(mdf.n_broker_standard); label="Broker", color=COL_BROKER)
-    axislegend(ax; leg_kw..., position=:rt)
+    ax = newax(fig[1, 2]; title="Matches by channel", ylabel="Count",
+              limits=(xlims, (0, nothing)), akw...)
+    pm!(ax, mdf -> Float64.(mdf.n_self_matches); label="Self", color=COL_AGENT)
+    pm!(ax, mdf -> Float64.(mdf.n_broker_standard); label="Broker", color=COL_BROKER)
+    axislegend(ax; position=:rt, LEG_KW...)
 
-    ax = Axis(fig[1, 3]; title="Total Matches / Period")
-    plot_metric!(ax, mdf -> Float64.(mdf.n_total_matches); color=COL_AGENT)
+    ax = newax(fig[1, 3]; title="Total demand & matches", ylabel="Count",
+              limits=(xlims, (0, nothing)), akw...)
+    pm!(ax, mdf -> Float64.(mdf.total_demand); label="Demand (slots)", color=COL_DIAG)
+    pm!(ax, mdf -> Float64.(mdf.n_total_matches); label="Matches", color=COL_AGENT)
+    axislegend(ax; position=:rt, LEG_KW...)
 
-    # Row 2: Holdout R2, rank correlation, R2 gap
-    ax = Axis(fig[2, 1]; title="Holdout R\u00b2", ylabel="R\u00b2")
-    plot_metric!(ax, mdf -> mdf.broker_holdout_r2; label="Broker", color=COL_BROKER)
-    plot_metric!(ax, mdf -> mdf.agent_holdout_r2; label="Agent", color=COL_AGENT)
-    hlines!(ax, [0.0]; color=:gray, linestyle=:dash)
-    axislegend(ax; leg_kw..., position=:rb)
+    ax = newax(fig[1, 4]; title="Available agents", ylabel="Count",
+              limits=(xlims, (0, nothing)), akw...)
+    pm!(ax, mdf -> Float64.(mdf.n_available); color=COL_DIAG)
 
-    ax = Axis(fig[2, 2]; title="Holdout Rank Correlation")
-    plot_metric!(ax, mdf -> mdf.broker_holdout_rank; label="Broker", color=COL_BROKER)
-    plot_metric!(ax, mdf -> mdf.agent_holdout_rank; label="Agent", color=COL_AGENT)
-    axislegend(ax; leg_kw..., position=:rb)
+    # ── Row 2: Selected ──
+    Label(fig[2, 0], "Selected"; fontsize=ROW_LABEL_FS, font=:bold,
+          rotation=π/2, tellheight=false)
 
-    ax = Axis(fig[2, 3]; title="R\u00b2 Gap (Broker - Agent)")
-    plot_metric!(ax, mdf -> mdf.r2_gap; color=:purple)
-    hlines!(ax, [0.0]; color=:gray, linestyle=:dash)
+    ax = newax(fig[2, 1]; title="Selected rank corr.", ylabel="Spearman ρ",
+              limits=(xlims, (0, 1.02)), akw...)
+    pm!(ax, mdf -> mdf.agent_selected_rank; label=AGT_SEL, color=COL_AGENT)
+    pm!(ax, mdf -> mdf.broker_selected_rank; label=BRK_SEL, color=COL_BROKER)
+    axislegend(ax; position=:rb, LEG_KW...)
 
-    # Row 3: Mean output by channel, broker reputation, access fraction
-    ax = Axis(fig[3, 1]; title="Mean Output by Channel", ylabel="q")
-    plot_metric!(ax, mdf -> mdf.q_self_mean; label="Self", color=COL_AGENT)
-    plot_metric!(ax, mdf -> mdf.q_broker_standard_mean; label="Broker", color=COL_BROKER)
-    axislegend(ax; leg_kw..., position=:rb)
+    ax = newax(fig[2, 2]; title="Selected R²", ylabel="R²",
+              limits=(xlims, (nothing, 1.02)), akw...)
+    pm!(ax, mdf -> mdf.agent_selected_r2; label=AGT_SEL, color=COL_AGENT)
+    pm!(ax, mdf -> mdf.broker_selected_r2; label=BRK_SEL, color=COL_BROKER)
+    hlines!(ax, [0.0]; color=:gray50, linewidth=0.8)
+    axislegend(ax; position=:rb, LEG_KW...)
 
-    ax = Axis(fig[3, 2]; title="Broker Reputation")
-    plot_metric!(ax, mdf -> mdf.broker_reputation; color=COL_BROKER)
+    ax = newax(fig[2, 3]; title="Selected RMSE", ylabel="RMSE",
+              limits=(xlims, (0, 1.02)), akw...)
+    pm!(ax, mdf -> mdf.agent_selected_rmse; label=AGT_SEL, color=COL_AGENT)
+    pm!(ax, mdf -> mdf.broker_selected_rmse; label=BRK_SEL, color=COL_BROKER)
+    axislegend(ax; position=:rt, LEG_KW...)
 
-    ax = Axis(fig[3, 3]; title="Access Fraction (Brokered)")
-    plot_metric!(ax, mdf -> access_fraction(mdf); color=:darkorange)
+    ax = newax(fig[2, 4]; title="Selected bias", ylabel="Bias",
+              limits=(xlims, nothing), akw...)
+    pm!(ax, mdf -> mdf.agent_selected_bias; label=AGT_SEL, color=COL_AGENT)
+    pm!(ax, mdf -> mdf.broker_selected_bias; label=BRK_SEL, color=COL_BROKER)
+    hlines!(ax, [0.0]; color=:gray50, linewidth=0.8)
+    axislegend(ax; position=:rt, LEG_KW...)
 
-    # Row 4: Betweenness, effective size, roster size
-    ax = Axis(fig[4, 1]; title="Broker Betweenness", ylabel="C_B")
-    plot_metric!(ax, mdf -> mdf.betweenness; color=COL_AGENT)
+    # ── Row 3: Holdout ──
+    Label(fig[3, 0], "Holdout"; fontsize=ROW_LABEL_FS, font=:bold,
+          rotation=π/2, tellheight=false)
 
-    ax = Axis(fig[4, 2]; title="Effective Size")
-    plot_metric!(ax, mdf -> mdf.effective_size; color=COL_AGENT)
+    ax = newax(fig[3, 1]; title="Holdout rank corr.", ylabel="Spearman ρ",
+              limits=(xlims, (0, 1.02)), akw...)
+    pm!(ax, mdf -> mdf.agent_holdout_rank; label=AGT_HLD, color=COL_AGENT)
+    pm!(ax, mdf -> mdf.broker_holdout_rank; label=BRK_HLD, color=COL_BROKER)
+    axislegend(ax; position=:rb, LEG_KW...)
 
-    ax = Axis(fig[4, 3]; title="Roster Size & History")
-    plot_metric!(ax, mdf -> Float64.(mdf.roster_size); label="Roster", color=COL_AGENT)
-    plot_metric!(ax, mdf -> Float64.(mdf.broker_history_size) ./ 100; label="History/100", color=COL_BROKER)
-    axislegend(ax; leg_kw..., position=:rb)
+    ax = newax(fig[3, 2]; title="Holdout R²", ylabel="R²",
+              limits=(xlims, (nothing, 1.02)), akw...)
+    pm!(ax, mdf -> mdf.agent_holdout_r2; label=AGT_HLD, color=COL_AGENT)
+    pm!(ax, mdf -> mdf.broker_holdout_r2; label=BRK_HLD, color=COL_BROKER)
+    hlines!(ax, [0.0]; color=:gray50, linewidth=0.8)
+    axislegend(ax; position=:rb, LEG_KW...)
 
-    # Row 5: Satisfaction self, satisfaction broker, n_available
-    ax = Axis(fig[5, 1]; title="Satisfaction (Self-Search)", ylabel="S", xlabel="Period")
-    plot_metric!(ax, mdf -> mdf.mean_satisfaction_self; color=COL_AGENT)
+    ax = newax(fig[3, 3]; title="Holdout RMSE", ylabel="RMSE",
+              limits=(xlims, (0, 1.02)), akw...)
+    pm!(ax, mdf -> mdf.agent_holdout_rmse; label=AGT_HLD, color=COL_AGENT)
+    pm!(ax, mdf -> mdf.broker_holdout_rmse; label=BRK_HLD, color=COL_BROKER)
+    axislegend(ax; position=:rt, LEG_KW...)
 
-    ax = Axis(fig[5, 2]; title="Satisfaction (Broker)", xlabel="Period")
-    plot_metric!(ax, mdf -> mdf.mean_satisfaction_broker; color=COL_BROKER)
+    ax = newax(fig[3, 4]; title="Holdout bias", ylabel="Bias",
+              limits=(xlims, nothing), akw...)
+    pm!(ax, mdf -> mdf.agent_holdout_bias; label=AGT_HLD, color=COL_AGENT)
+    pm!(ax, mdf -> mdf.broker_holdout_bias; label=BRK_HLD, color=COL_BROKER)
+    hlines!(ax, [0.0]; color=:gray50, linewidth=0.8)
+    axislegend(ax; position=:rt, LEG_KW...)
 
-    ax = Axis(fig[5, 3]; title="Available Agents", xlabel="Period")
-    plot_metric!(ax, mdf -> Float64.(mdf.n_available); color=COL_AGENT)
+    # ── Row 4: Advantage ──
+    Label(fig[4, 0], "Advantage"; fontsize=ROW_LABEL_FS, font=:bold,
+          rotation=π/2, tellheight=false)
 
-    # Layout
-    rowsize!(fig.layout, 0, Fixed(22))
-    colsize!(fig.layout, 0, Fixed(30))
-    for r in 1:5; rowsize!(fig.layout, r, Auto(1)); end
-    rowgap!(fig.layout, 5)
-    colgap!(fig.layout, 10)
+    ax = newax(fig[4, 1]; title="Holdout rank gap", ylabel="Δ ρ",
+              limits=(xlims, nothing), akw...)
+    pm!(ax, mdf -> mdf.rank_gap; color=COL_GAP)
+    hlines!(ax, [0.0]; color=:gray50, linewidth=0.8)
+
+    ax = newax(fig[4, 2]; title="Holdout R² gap", ylabel="Δ R²",
+              limits=(xlims, nothing), akw...)
+    pm!(ax, mdf -> mdf.r2_gap; color=COL_GAP)
+    hlines!(ax, [0.0]; color=:gray50, linewidth=0.8)
+
+    ax = newax(fig[4, 3]; title="Holdout RMSE gap", ylabel="Δ RMSE",
+              limits=(xlims, nothing), akw...)
+    pm!(ax, mdf -> mdf.rmse_gap; color=COL_GAP)
+    hlines!(ax, [0.0]; color=:gray50, linewidth=0.8)
+
+    ax = newax(fig[4, 4]; title="Access fraction", ylabel="Fraction",
+              limits=(xlims, (-0.02, 1.02)), akw...)
+    pm!(ax, mdf -> access_fraction(mdf); color=COL_ACCESS)
+
+    # ── Row 5: Dynamics ──
+    Label(fig[5, 0], "Dynamics"; fontsize=ROW_LABEL_FS, font=:bold,
+          rotation=π/2, tellheight=false)
+
+    ax = newax(fig[5, 1]; title="Broker betweenness", xlabel="Period",
+              ylabel="Betweenness centrality", limits=(xlims, (0, 1.02)), akw...,
+              xlabelsize=LABEL_FS)
+    pm!(ax, mdf -> mdf.betweenness; color=COL_BROKER)
+
+    ax = newax(fig[5, 2]; title="Mean output by channel", xlabel="Period",
+              ylabel="Output", limits=(xlims, (0, nothing)), akw...,
+              xlabelsize=LABEL_FS)
+    pm!(ax, mdf -> mdf.q_self_mean; label="Self", color=COL_AGENT)
+    pm!(ax, mdf -> mdf.q_broker_standard_mean; label="Broker", color=COL_BROKER)
+    axislegend(ax; position=:rb, LEG_KW...)
+
+    ax = newax(fig[5, 3]; title="Satisfaction + reputation", xlabel="Period",
+              ylabel="Satisfaction", limits=(xlims, (0, nothing)), akw...,
+              xlabelsize=LABEL_FS)
+    pm!(ax, mdf -> mdf.mean_satisfaction_self; label="Self", color=COL_AGENT)
+    pm!(ax, mdf -> mdf.mean_satisfaction_broker; label="Broker", color=COL_BROKER)
+    pm!(ax, mdf -> mdf.broker_reputation; label="Reputation", color=COL_REPUTATION)
+    axislegend(ax; position=:rb, LEG_KW...)
+
+    # Row 5, col 4: empty in base model
+
+    # ── Burn-in lines ──
+    for a in all_axes; add_burnin!(a, T_burn); end
+
+    # ── Footer ──
+    add_footer!(fig, 6, 1:4; n_seeds=n_seeds, window=window, T_burn=T_burn)
+
+    # ── Layout ──
+    apply_layout!(fig; n_panel_rows=5, n_panel_cols=4, suptitle_row=0, footer_row=6)
 
     save(joinpath(OUTDIR, filename), fig)
     println("  Saved dynamics: $filename")
@@ -198,17 +241,19 @@ end
 function plot_dgp_matrix(F; tag, rho, delta, s, N)
     crange = let m = maximum(abs, F .- mean(F)); (mean(F) - m, mean(F) + m) end
     fig = Figure(; size=(800, 650))
-    Label(fig[0, 1:2], "Output matrix (N=$N, rho=$rho, delta=$delta, s=$s)";
-          fontsize=13, font=:bold, halign=:center, tellwidth=false)
+    Label(fig[0, 1:2], "Output matrix (N=$N, ρ=$rho, δ=$delta, s=$s)";
+          fontsize=SUPTITLE_FS-2, font=:bold, halign=:center, tellwidth=false)
 
-    ax1 = Axis(fig[1, 1]; xlabel="Agent j (PC1)", ylabel="Agent i (PC1)", aspect=1)
+    ax1 = Axis(fig[1, 1]; xlabel="Agent j (PC1)", ylabel="Agent i (PC1)",
+               aspect=1, xlabelsize=LABEL_FS, ylabelsize=LABEL_FS)
     hm = heatmap!(ax1, 1:N, 1:N, F; colormap=:RdBu, colorrange=crange)
-    Colorbar(fig[1, 2], hm; label="q")
+    Colorbar(fig[1, 2], hm; label="q", labelsize=LABEL_FS, ticklabelsize=TICK_FS)
 
     vals = [F[i, j] for j in 2:N for i in 1:(j-1)]
-    ax2 = Axis(fig[2, 1]; xlabel="q", ylabel="Count")
-    hist!(ax2, vals; bins=80, color=(:steelblue, 0.7), strokewidth=0.5, strokecolor=:gray40)
-    vlines!(ax2, [mean(vals)]; color=:crimson, linestyle=:dash)
+    ax2 = Axis(fig[2, 1]; xlabel="q", ylabel="Count",
+               xlabelsize=LABEL_FS, ylabelsize=LABEL_FS)
+    hist!(ax2, vals; bins=80, color=(COL_AGENT, 0.7), strokewidth=0.5, strokecolor=:gray40)
+    vlines!(ax2, [mean(vals)]; color=COL_BROKER, linestyle=:dash)
 
     rowsize!(fig.layout, 0, Fixed(22))
     rowsize!(fig.layout, 1, Relative(0.65))
@@ -223,17 +268,25 @@ function plot_dgp_svd(F; tag, rho, delta, s, N)
     n_show = min(50, length(svals))
 
     fig = Figure(; size=(700, 280))
-    Label(fig[0, 1:2], "SVD of output matrix (rho=$rho, delta=$delta, s=$s)";
-          fontsize=13, font=:bold, halign=:center, tellwidth=false)
+    Label(fig[0, 1:2], "SVD of output matrix (ρ=$rho, δ=$delta, s=$s)";
+          fontsize=SUPTITLE_FS-2, font=:bold, halign=:center, tellwidth=false)
 
-    ax1 = Axis(fig[1, 1]; title="Singular values (normalized)", xlabel="Component", ylabel="sigma/sigma_1")
+    ax1 = Axis(fig[1, 1]; title="Singular values (normalized)",
+               xlabel="Component", ylabel="σ/σ₁",
+               titlesize=TITLE_FS, xlabelsize=LABEL_FS, ylabelsize=LABEL_FS)
     sn = svals ./ svals[1]
-    scatterlines!(ax1, 1:n_show, sn[1:n_show]; markersize=4, color=:steelblue)
+    scatterlines!(ax1, 1:n_show, sn[1:n_show]; markersize=4, color=COL_AGENT)
 
-    ax2 = Axis(fig[1, 2]; title="Cumulative variance explained", xlabel="Components", ylabel="Fraction",
+    ax2 = Axis(fig[1, 2]; title="Cumulative variance explained",
+               xlabel="Components", ylabel="Fraction",
+               titlesize=TITLE_FS, xlabelsize=LABEL_FS, ylabelsize=LABEL_FS,
                limits=(nothing, (0, 1.05)))
-    scatterlines!(ax2, 0:n_show, vcat(0.0, cumvar[1:n_show]); markersize=4, color=:steelblue)
+    scatterlines!(ax2, 0:n_show, vcat(0.0, cumvar[1:n_show]); markersize=4, color=COL_AGENT)
     hlines!(ax2, [0.90, 0.95]; color=:gray60, linestyle=:dash, linewidth=0.8)
+    text!(ax2, n_show * 0.75, 0.90; text="90%", fontsize=TICK_FS, color=:gray40,
+          align=(:left, :bottom))
+    text!(ax2, n_show * 0.75, 0.95; text="95%", fontsize=TICK_FS, color=:gray40,
+          align=(:left, :bottom))
 
     rowsize!(fig.layout, 0, Fixed(22))
     save(joinpath(OUTDIR, "$(tag)_svd.png"), fig)
@@ -245,38 +298,37 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 configs = [
-    # Baseline
     (tag="baseline",
-     label="Baseline (rho=0.50, delta=0.50, s=8, eta=0.02)",
+     label="Baseline (ρ=0.50, δ=0.50, s=8, η=0.02)",
      kwargs=(;)),
     # rho sweep
     (tag="rho00_pureinteraction",
-     label="Pure interaction (rho=0.0)",
+     label="Pure interaction (ρ=0.0)",
      kwargs=(rho=0.0,)),
     (tag="rho10_weakquality",
-     label="Weak quality (rho=0.10)",
+     label="Weak quality (ρ=0.10)",
      kwargs=(rho=0.10,)),
     (tag="rho30_mildinteraction",
-     label="Mild interaction (rho=0.30)",
+     label="Mild interaction (ρ=0.30)",
      kwargs=(rho=0.30,)),
     (tag="rho70_mildquality",
-     label="Mild quality (rho=0.70)",
+     label="Mild quality (ρ=0.70)",
      kwargs=(rho=0.70,)),
     (tag="rho90_strongquality",
-     label="Strong quality (rho=0.90)",
+     label="Strong quality (ρ=0.90)",
      kwargs=(rho=0.90,)),
     (tag="rho100_purequality",
-     label="Pure quality (rho=1.0)",
+     label="Pure quality (ρ=1.0)",
      kwargs=(rho=1.0,)),
     # delta sweep
     (tag="delta00_noregime",
-     label="No regime effect (delta=0.0)",
+     label="No regime effect (δ=0.0)",
      kwargs=(delta=0.0,)),
     (tag="delta25_weakregime",
-     label="Weak regime (delta=0.25)",
+     label="Weak regime (δ=0.25)",
      kwargs=(delta=0.25,)),
     (tag="delta75_strongregime",
-     label="Strong regime (delta=0.75)",
+     label="Strong regime (δ=0.75)",
      kwargs=(delta=0.75,)),
     # s sweep
     (tag="s2_lowdim",
@@ -287,10 +339,10 @@ configs = [
      kwargs=(s=4,)),
     # eta sweep
     (tag="eta01_stable",
-     label="Stable market (eta=0.01)",
+     label="Stable market (η=0.01)",
      kwargs=(eta=0.01,)),
     (tag="eta05_volatile",
-     label="Volatile market (eta=0.05)",
+     label="Volatile market (η=0.05)",
      kwargs=(eta=0.05,)),
 ]
 
@@ -302,9 +354,15 @@ T = 200
 N_SIM = 1000
 N_SEEDS = 5
 RERUN = "--rerun" in ARGS
+BASELINE_ONLY = "--baseline" in ARGS
+
+if BASELINE_ONLY
+    configs = filter(c -> c.tag == "baseline", configs)
+end
 
 println("Base model exploration: $(length(configs)) configs, $N_SEEDS seeds, N=$N_SIM, T=$T")
 RERUN && println("  --rerun: forcing re-simulation")
+BASELINE_ONLY && println("  --baseline: running baseline only")
 println()
 
 for (idx, c) in enumerate(configs)
@@ -316,15 +374,15 @@ for (idx, c) in enumerate(configs)
         saved = JLD2.load(datafile)
         mdfs = saved["mdfs"]
     else
-        mdfs = run_ensemble(; base_kwargs=c.kwargs, T=T, n_seeds=N_SEEDS)
+        mdfs = run_ensemble(; base_kwargs=c.kwargs, T=T, N=N_SIM, n_seeds=N_SEEDS)
         jldsave(datafile; mdfs=mdfs)
         println("  Saved data: $datafile")
     end
 
     # Dynamics panel
-    plot_ensemble(mdfs, c.label, "$(c.tag)_dynamics.png")
+    plot_ensemble(mdfs, "$(c.label) [N=$N_SIM, T=$T]", "$(c.tag)_dynamics.png")
 
-    # DGP figures (matrix + SVD) for configs that vary rho, delta, or s
+    # DGP figures
     p = default_params(; N=N_SIM, seed=42, c.kwargs...)
     rng = StableRNG(p.seed)
     geo = generate_curve_geometry(p.d, p.s, rng)
@@ -339,9 +397,9 @@ for (idx, c) in enumerate(configs)
     combined = vcat(tail_dfs...)
     println("  Summary (last 50 periods, pooled):")
     println("    Outsourcing: $(round(mean(combined.outsourcing_rate), digits=3))")
-    println("    Broker R2: $(round(mean(filter(!isnan, combined.broker_holdout_r2)), digits=3))")
-    println("    Agent R2: $(round(mean(filter(!isnan, combined.agent_holdout_r2)), digits=3))")
-    println("    R2 gap: $(round(mean(filter(!isnan, combined.r2_gap)), digits=3))")
+    println("    Broker R²: $(round(mean(filter(!isnan, combined.broker_holdout_r2)), digits=3))")
+    println("    Agent R²: $(round(mean(filter(!isnan, combined.agent_holdout_r2)), digits=3))")
+    println("    R² gap: $(round(mean(filter(!isnan, combined.r2_gap)), digits=3))")
     println("    Betweenness: $(round(mean(combined.betweenness), digits=4))")
     println()
 end

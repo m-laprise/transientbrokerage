@@ -7,7 +7,7 @@ Under principal mode (Model 1), the broker's compensation is the spread q_ij - a
 """
 
 using Random: AbstractRNG, shuffle!
-using Graphs: has_edge
+using Graphs: has_edge, neighbors, SimpleGraph
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Sequential match formation (§9 Step 3)
@@ -32,8 +32,8 @@ function sequential_match_formation!(proposals::Vector{ProposedMatch},
                                       params::ModelParams,
                                       cal::CalibrationConstants,
                                       rng::AbstractRNG)
-    accepted = NamedTuple{(:demander_id, :counterparty_id, :channel, :is_principal, :q_realized, :q_predicted),
-                          Tuple{Int, Int, Symbol, Bool, Float64, Float64}}[]
+    accepted = NamedTuple{(:demander_id, :counterparty_id, :channel, :is_principal, :q_realized, :q_predicted, :ask_j),
+                          Tuple{Int, Int, Symbol, Bool, Float64, Float64, Float64}}[]
     isempty(proposals) && return accepted
 
     N = length(agents)
@@ -91,6 +91,8 @@ function sequential_match_formation!(proposals::Vector{ProposedMatch},
             # Active match entries (both sides)
             push!(agents[i].active_matches, ActiveMatch(j, 0, true, :broker))  # period filled in step.jl
             push!(agents[j].active_matches, ActiveMatch(i, 0, true, :broker))
+            # §12h Step 4.1: counterparty j was the acquired counterparty
+            agents[j].n_principal_acquired += 1
         else
             # Standard match: both parties learn, edge forms
             record_agent_history!(agents[i], agents[j].type, q_realized)
@@ -99,15 +101,22 @@ function sequential_match_formation!(proposals::Vector{ProposedMatch},
             update_partner_mean!(agents[j], i, q_realized)
             if pm.channel == :broker
                 record_broker_history!(broker, agents[i].type, agents[j].type, q_realized)
+                # Record pair for familiarity-gated capture (principal mode)
+                push!(broker.familiar_pairs, (min(i, j), max(i, j)))
             end
             add_match_edge!(G, i, j)
             push!(agents[i].active_matches, ActiveMatch(j, 0, false, pm.channel))
             push!(agents[j].active_matches, ActiveMatch(i, 0, false, pm.channel))
         end
 
+        # §12h Step 4.1: cumulative match counter (any role, any channel).
+        # Feeds D_j = n_principal_acquired / n_matches_any in collect_period_metrics (§12i).
+        agents[i].n_matches_any += 1
+        agents[j].n_matches_any += 1
+
         push!(accepted, (demander_id=i, counterparty_id=j, channel=pm.channel,
                          is_principal=pm.is_principal, q_realized=q_realized,
-                         q_predicted=pm.evaluation))
+                         q_predicted=pm.evaluation, ask_j=pm.ask_j))
     end
 
     return accepted
@@ -182,19 +191,50 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    outsourcing_decision(agent, broker_rep, rng) -> Symbol
+    outsourcing_decision(agent, agents, G, broker_node, broker_rep, d_i, c_s, K, rng) -> Symbol
 
-Agent chooses :self or :broker based on satisfaction scores.
-If agent has never tried the broker, substitutes broker reputation.
+Agent chooses :self or :broker. Compares three scores:
+- score_self: EWMA satisfaction from past self-search outcomes
+- score_known: average of the best d_i known partners' quality minus c_s
+  (opportunity cost: "I already know good partners from prior matches")
+- score_broker: EWMA broker satisfaction, or broker reputation if untried
+
+The agent outsources only if the broker beats both historical self-search
+satisfaction and the value of directly reaching known good partners.
 """
-function outsourcing_decision(agent::Agent, broker_rep::Float64,
-                              rng::AbstractRNG)::Symbol
+function outsourcing_decision(agent::Agent, agents::Vector{Agent},
+                              G::SimpleGraph, broker_node::Int,
+                              broker_rep::Float64, d_i::Int, c_s::Float64,
+                              K::Int, rng::AbstractRNG)::Symbol
     score_self = agent.satisfaction_self
     score_broker = agent.tried_broker ? agent.satisfaction_broker : broker_rep
 
-    if score_self > score_broker
+    # Opportunity cost: best known partners the agent could reach directly.
+    # Collect partner_means for neighbors with capacity, take top d_i, average.
+    nbr_vals = Float64[]
+    for nbr in neighbors(G, agent.id)
+        nbr == broker_node && continue
+        (nbr < 1 || nbr > length(agents)) && continue
+        available_capacity(agents[nbr], K) <= 0 && continue
+        m = partner_mean(agent, nbr)
+        isnan(m) || push!(nbr_vals, m)
+    end
+
+    score_known = if isempty(nbr_vals)
+        -Inf  # no known partners with capacity
+    else
+        sort!(nbr_vals; rev=true)
+        n_use = min(d_i, length(nbr_vals))
+        sum(nbr_vals[k] for k in 1:n_use) / d_i - c_s
+        # Dividing by d_i (not n_use): if agent needs 3 slots but only knows 1
+        # good partner, the average is diluted by zeros for unfilled slots.
+    end
+
+    score_floor = max(score_self, score_known)
+
+    if score_floor > score_broker
         return :self
-    elseif score_broker > score_self
+    elseif score_broker > score_floor
         return :broker
     else
         return rand(rng) < 0.5 ? :self : :broker
@@ -206,12 +246,13 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    broker_reputation(broker, q_pub) -> Float64
+    broker_reputation(broker) -> Float64
 
 Return the broker's current reputation for untried agents.
+Returns 0 if the broker has never had clients (should not occur after initialization).
 """
-function broker_reputation(broker::Broker, q_pub::Float64)::Float64
-    return broker.has_had_clients ? broker.last_reputation : q_pub
+function broker_reputation(broker::Broker)::Float64
+    return broker.last_reputation  # 0.0 if never had clients, else mean client satisfaction
 end
 
 """

@@ -17,12 +17,12 @@
     end
 
     @testset "calibration constants are positive and consistent" begin
-        @test state.cal.q_pub > 0
+        @test state.cal.q_cal > 0
         @test state.cal.r > 0
         @test state.cal.phi > 0
         @test state.cal.c_s >= 0
-        @test state.cal.r < state.cal.q_pub
-        @test state.cal.r ≈ R_BASE_FRAC * state.cal.q_pub
+        @test state.cal.r < state.cal.q_cal
+        @test state.cal.r ≈ R_BASE_FRAC * state.cal.q_cal
     end
 
     @testset "agent types are unit vectors in R^d" begin
@@ -65,7 +65,7 @@
         @test length(roster) == expected_size
         @test all(1 <= rid <= N for rid in roster)
         # Roster members have on_roster flag
-        @test all(state.agents[rid].on_roster for rid in roster)
+        @test all(state.agents[rid].last_outsource_period > 0 for rid in roster)
         # Roster members have broker edge
         @test all(has_edge(state.G, rid, state.broker.node_id) for rid in roster)
     end
@@ -98,11 +98,17 @@
         @test isfinite(state.broker.nn.b2)
     end
 
-    @testset "satisfaction initialized to q_pub" begin
-        @test all(a.satisfaction_self == state.cal.q_pub for a in state.agents)
-        @test all(a.satisfaction_broker == state.cal.q_pub for a in state.agents)
+    @testset "satisfaction initialized from seed data" begin
+        # Self-satisfaction set from mean of seed match outcomes
+        @test all(a.satisfaction_self != 0.0 for a in state.agents if a.history_count > 0)
+        @test all(isfinite(a.satisfaction_self) for a in state.agents)
+        # Broker satisfaction set to broker reputation (market prior)
+        @test all(a.satisfaction_broker == state.broker.last_reputation for a in state.agents)
         @test all(!a.tried_broker for a in state.agents)
         @test all(a.periods_alive == 0 for a in state.agents)
+        # Broker reputation set from seed data
+        @test state.broker.has_had_clients == true
+        @test state.broker.last_reputation > 0.0
     end
 
     @testset "curve_point returns unit vectors" begin
@@ -148,7 +154,7 @@
         @test s1.env.A == s2.env.A
         @test s1.env.B == s2.env.B
         @test s1.env.c == s2.env.c
-        @test s1.cal.q_pub == s2.cal.q_pub
+        @test s1.cal.q_cal == s2.cal.q_cal
         @test s1.broker.history_count == s2.broker.history_count
     end
 

@@ -5,10 +5,31 @@ Simulation runner and per-period metric collection.
 """
 
 using DataFrames: DataFrame
-using Statistics: mean
+using Statistics: mean, quantile
+using StatsBase: corspearman
 
 """Safe mean that returns NaN on empty vectors."""
 safe_mean(v) = isempty(v) ? NaN : mean(v)
+
+"""Gini coefficient of a non-empty, non-negative vector. Returns 0 for empty or
+constant-zero input. Uses the sorted-order definition:
+    G = (2 Σ_{i=1}^n i · y_(i)) / (n · Σ y) − (n + 1) / n
+(Dorfman 1979; matches standard inequality-measurement conventions.)"""
+function gini(v::AbstractVector{<:Real})
+    isempty(v) && return 0.0
+    s = sum(v)
+    s <= 0.0 && return 0.0
+    sorted = sort(collect(v))
+    n = length(sorted)
+    acc = 0.0
+    @inbounds for i in 1:n
+        acc += i * sorted[i]
+    end
+    return (2.0 * acc) / (n * s) - (n + 1) / n
+end
+
+"""90th percentile of a non-empty vector; NaN if empty."""
+p90(v::AbstractVector{<:Real}) = isempty(v) ? NaN : quantile(v, 0.9)
 
 """
     collect_period_metrics(state) -> NamedTuple
@@ -22,10 +43,62 @@ function collect_period_metrics(state::ModelState)
     broker = state.broker
     N = p.N
 
-    # Prediction quality
+    # Prediction quality: holdout is per-agent averaged, computed in step.jl.
+    # Selected-sample metrics are pooled over actual matches by channel.
     se = state.env.sigma_eps
-    agent_holdout = compute_prediction_quality(a.agent_holdout_pred, a.agent_holdout_real; sigma_eps=se)
-    broker_holdout = compute_prediction_quality(a.broker_holdout_pred, a.broker_holdout_real; sigma_eps=se)
+    agent_sel = compute_prediction_quality(a.agent_predicted, a.agent_realized; sigma_eps=se)
+    broker_sel = compute_prediction_quality(a.broker_predicted, a.broker_realized; sigma_eps=se)
+    agent_sel_rmse = isempty(a.agent_predicted) ? NaN :
+        sqrt(mean((a.agent_predicted .- a.agent_realized).^2))
+    broker_sel_rmse = isempty(a.broker_predicted) ? NaN :
+        sqrt(mean((a.broker_predicted .- a.broker_realized).^2))
+
+    # ── Capture outcome and decision quality (§12i) ──
+    # Δq_ij = q_ij - q̄_j for principal-mode matches in this period.
+    n_principal = length(a.q_broker_principal)
+    capture_delta = n_principal == 0 ? Float64[] :
+        a.q_broker_principal .- a.q_bar_j_principal
+    capture_surplus_mean = isempty(capture_delta) ? NaN : mean(capture_delta)
+    n_loss = count(<(0.0), capture_delta)
+    capture_loss_rate = n_principal == 0 ? NaN : n_loss / n_principal
+    capture_loss_magnitude = n_loss == 0 ? NaN :
+        mean(abs(d) for d in capture_delta if d < 0.0)
+
+    # Capture decision quality: Spearman ρ and RMSE on the principal-mode subset.
+    # NaN when fewer than 5 matches to keep the metric comparable to selected_r2.
+    if n_principal >= 5
+        expected_delta = a.q_hat_b_principal .- a.q_bar_j_principal
+        capture_decision_rank = corspearman(expected_delta, capture_delta)
+        capture_decision_rmse = sqrt(mean((a.q_hat_b_principal .- a.q_broker_principal) .^ 2))
+    else
+        capture_decision_rank = NaN
+        capture_decision_rmse = NaN
+    end
+
+    # Supply scarcity: distinct counterparties acquired in principal mode this period.
+    supply_scarcity = length(a.principal_acquired_ids) / N
+
+    # ── Broker dependency D_j (§12i) ──
+    # Cumulative: D_j = n_principal_acquired / n_matches_any for agents with ≥ 1 match.
+    # Recomputed per-period from current agent state.
+    dep = Float64[]
+    sizehint!(dep, N)
+    @inbounds for ag in agents
+        if ag.n_matches_any > 0
+            push!(dep, ag.n_principal_acquired / ag.n_matches_any)
+        end
+    end
+    if isempty(dep)
+        dep_mean = NaN
+        dep_p90 = NaN
+        dep_frac_above_half = NaN
+        dep_gini = NaN
+    else
+        dep_mean = mean(dep)
+        dep_p90 = p90(dep)
+        dep_frac_above_half = count(>(0.5), dep) / length(dep)
+        dep_gini = gini(dep)
+    end
 
     # Agent-level stats
     n_available = count(ag -> isempty(ag.active_matches), agents)
@@ -46,30 +119,54 @@ function collect_period_metrics(state::ModelState)
         # Outsourcing
         n_demanders = a.n_demanders,
         n_outsourced = a.n_outsourced,
+        total_demand = a.total_demand,
         outsourcing_rate = a.n_demanders > 0 ? a.n_outsourced / a.n_demanders : 0.0,
         # Access vs assessment
         access_count = a.access_count,
         assessment_count = a.assessment_count,
         # Prediction quality (holdout)
-        agent_holdout_r2 = agent_holdout.r_squared,
-        agent_holdout_bias = agent_holdout.bias,
-        agent_holdout_rank = agent_holdout.rank_corr,
-        broker_holdout_r2 = broker_holdout.r_squared,
-        broker_holdout_bias = broker_holdout.bias,
-        broker_holdout_rank = broker_holdout.rank_corr,
-        # R2 gap
-        r2_gap = broker_holdout.r_squared - agent_holdout.r_squared,
+        # Holdout prediction quality (per-agent averaged)
+        agent_holdout_r2 = a.agent_holdout_r2,
+        agent_holdout_bias = a.agent_holdout_bias,
+        agent_holdout_rank = a.agent_holdout_rank,
+        agent_holdout_rmse = a.agent_holdout_rmse,
+        broker_holdout_r2 = a.broker_holdout_r2,
+        broker_holdout_bias = a.broker_holdout_bias,
+        broker_holdout_rank = a.broker_holdout_rank,
+        broker_holdout_rmse = a.broker_holdout_rmse,
+        r2_gap = a.broker_holdout_r2 - a.agent_holdout_r2,
+        rank_gap = a.broker_holdout_rank - a.agent_holdout_rank,
+        rmse_gap = a.agent_holdout_rmse - a.broker_holdout_rmse,  # positive = broker more accurate
+        # Selected-sample prediction quality (pooled over actual matches)
+        agent_selected_rank = agent_sel.rank_corr,
+        agent_selected_r2 = agent_sel.r_squared,
+        agent_selected_rmse = agent_sel_rmse,
+        agent_selected_bias = agent_sel.bias,
+        broker_selected_rank = broker_sel.rank_corr,
+        broker_selected_r2 = broker_sel.r_squared,
+        broker_selected_rmse = broker_sel_rmse,
+        broker_selected_bias = broker_sel.bias,
         # Broker state
         broker_reputation = broker.last_reputation,
         roster_size = a.roster_size,
         broker_history_size = broker.history_count,
-        broker_cumulative_revenue = broker.cumulative_revenue,
-        # Revenue
-        broker_standard_revenue = a.broker_standard_revenue,
-        broker_principal_revenue = a.broker_principal_revenue,
         # Capture metrics (Model 1)
         principal_mode_share = (a.n_broker_standard + a.n_broker_principal) > 0 ?
             a.n_broker_principal / (a.n_broker_standard + a.n_broker_principal) : 0.0,
+        # Capture outcome (§12i)
+        capture_surplus_mean = capture_surplus_mean,
+        capture_loss_rate = capture_loss_rate,
+        capture_loss_magnitude = capture_loss_magnitude,
+        # Capture decision quality (§12i)
+        capture_decision_rank = capture_decision_rank,
+        capture_decision_rmse = capture_decision_rmse,
+        # Supply scarcity (§12i)
+        supply_scarcity = supply_scarcity,
+        # Broker dependency (§12i): cumulative D_j summary stats
+        broker_dependency_mean = dep_mean,
+        broker_dependency_p90 = dep_p90,
+        broker_dependency_frac_above_half = dep_frac_above_half,
+        broker_dependency_gini = dep_gini,
         # Satisfaction
         mean_satisfaction_self = mean_sat_self,
         mean_satisfaction_broker = mean_sat_broker,

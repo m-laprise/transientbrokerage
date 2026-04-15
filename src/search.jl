@@ -142,7 +142,7 @@ function self_search(agent::Agent, agents::Vector{Agent}, G::SimpleGraph,
         if best_id == 0 || best_eval <= r
             break
         end
-        push!(out, ProposedMatch(agent_id, best_id, :self, best_eval, false))
+        push!(out, ProposedMatch(agent_id, best_id, :self, best_eval, false, NaN))
     end
 
     return out
@@ -325,7 +325,7 @@ function broker_allocate(broker::Broker, client_demands::Vector{Tuple{Int, Int}}
         push!(out, ProposedMatch(
             unique_demanders[di],
             roster_members[ri],
-            :broker, val, false
+            :broker, val, false, NaN
         ))
 
         demander_remaining[di] -= 1

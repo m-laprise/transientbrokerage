@@ -11,22 +11,21 @@
     tail = df[df.period .> 5, :]
 
     # Match counts
-    @test mean(tail.n_total_matches) ≈ 78.133 atol=0.01
+    @test mean(tail.n_total_matches) ≈ 72.0 atol=0.01
 
     # Outsourcing rate
-    @test mean(tail.outsourcing_rate) ≈ 0.53558 atol=1e-4
+    @test mean(tail.outsourcing_rate) ≈ 0.009695 atol=1e-4
 
-    # Prediction quality (holdout)
+    # Prediction quality (per-agent averaged, hc>0 only)
     broker_r2 = mean(filter(!isnan, tail.broker_holdout_r2))
     agent_r2 = mean(filter(!isnan, tail.agent_holdout_r2))
-    @test broker_r2 ≈ 0.45744 atol=1e-4
-    @test agent_r2 ≈ 0.23893 atol=1e-4
+    @test broker_r2 ≈ -0.036027 atol=1e-4
+    @test agent_r2 ≈ -0.002159 atol=1e-4
 
     # Match output
-    @test mean(filter(!isnan, tail.q_self_mean)) ≈ 1.68748 atol=1e-4
+    @test mean(filter(!isnan, tail.q_self_mean)) ≈ 1.5638 atol=1e-4
 
     # Broker state at end
-    @test df.betweenness[end] ≈ 0.27691 atol=1e-4
-    @test df.broker_cumulative_revenue[end] ≈ 69.705 atol=1e-2
-    @test df.roster_size[end] == 48
+    @test df.betweenness[end] ≈ 0.0 atol=1e-4
+    @test df.roster_size[end] == 1
 end

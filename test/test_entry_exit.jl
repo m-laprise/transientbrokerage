@@ -7,20 +7,19 @@
     broker_node = state.broker.node_id
 
     @testset "exit_agent! clears edges, matches, and roster" begin
-        # Pick an agent on the roster with at least one active match
-        target = findfirst(i -> state.agents[i].on_roster &&
+        # Pick an agent in the roster with at least one active match
+        target = findfirst(i -> (i in state.broker.roster) &&
                                 !isempty(state.agents[i].active_matches), 1:N)
         if target !== nothing
             partners_before = [am.partner_id for am in state.agents[target].active_matches]
             @test degree(state.G, target) > 0
-            @test target in state.broker.roster
 
             exit_agent!(state, target)
 
             @test degree(state.G, target) == 0
             @test isempty(state.agents[target].active_matches)
             @test !(target in state.broker.roster)
-            @test !state.agents[target].on_roster
+            @test state.agents[target].last_outsource_period == 0
 
             # Partners no longer list the exited agent
             for pid in partners_before
@@ -41,7 +40,7 @@
         a.satisfaction_self = 999.0
         a.satisfaction_broker = 999.0
         a.tried_broker = true
-        a.on_roster = true
+        a.last_outsource_period = 1
         a.periods_alive = 100
         push!(a.active_matches, ActiveMatch(2, 1, false, :self))
 
@@ -50,10 +49,10 @@
 
         @test a.history_count == 0
         @test a.n_new_obs == 0
-        @test a.satisfaction_self == state2.cal.q_pub
-        @test a.satisfaction_broker == state2.cal.q_pub
+        @test isfinite(a.satisfaction_self)     # set from neighbors' satisfaction
+        @test isfinite(a.satisfaction_broker)  # set to broker reputation (market prior)
         @test a.tried_broker == false
-        @test a.on_roster == false
+        @test a.last_outsource_period == 0
         @test a.periods_alive == 0
         @test isempty(a.active_matches)
         @test all(==(0), a.partner_count)

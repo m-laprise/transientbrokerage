@@ -114,9 +114,9 @@ using LinearAlgebra: dot, norm, normalize, eigvals
         env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
         p = default_params()
         cal = calibrate(env, types, p, StableRNG(55))
-        @test cal.q_pub > 0.0
+        @test cal.q_cal > 0.0
         @test cal.r > 0.0
-        @test cal.r ≈ R_BASE_FRAC * cal.q_pub
+        @test cal.r ≈ R_BASE_FRAC * cal.q_cal
         @test cal.phi > 0.0
         @test cal.c_s ≈ p.gamma_c * cal.phi
         @test cal.c_s < cal.phi  # self-search cheaper than broker fee

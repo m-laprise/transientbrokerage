@@ -19,8 +19,8 @@ using StableRNGs: StableRNG
             add_match_edge!(G, i, j)
         end
         proposals = [
-            ProposedMatch(1, 15, :self, 2.0, false),
-            ProposedMatch(2, 16, :broker, 2.0, false),
+            ProposedMatch(1, 15, :self, 2.0, false, NaN),
+            ProposedMatch(2, 16, :broker, 2.0, false, NaN),
         ]
         rng = StableRNG(77)
         accepted = sequential_match_formation!(proposals, agents, broker, env, G, p, cal, rng)
@@ -38,7 +38,7 @@ using StableRNGs: StableRNG
         for _ in 1:p.K
             push!(state2.agents[5].active_matches, ActiveMatch(10, 0, false, :self))
         end
-        proposals = [ProposedMatch(1, 5, :self, 10.0, false)]
+        proposals = [ProposedMatch(1, 5, :self, 10.0, false, NaN)]
         for j in 1:30
             update_partner_mean!(state2.agents[5], 1, 2.0)
             update_partner_mean!(state2.agents[1], 5, 2.0)
@@ -61,7 +61,7 @@ using StableRNGs: StableRNG
         update_partner_mean!(a2, 1, 5.0)
         add_match_edge!(state3.G, 1, 2)
 
-        proposals = [ProposedMatch(1, 2, :self, 5.0, false)]
+        proposals = [ProposedMatch(1, 2, :self, 5.0, false, NaN)]
         rng = StableRNG(55)
         accepted = sequential_match_formation!(proposals, state3.agents, state3.broker,
                                                 state3.env, state3.G, p, cal, rng)
@@ -82,7 +82,7 @@ using StableRNGs: StableRNG
         # Remove edge if exists so we can check it's not added
         TransientBrokerage.remove_agent_edges!(state4.G, 1)
 
-        proposals = [ProposedMatch(1, 2, :broker, 5.0, true)]
+        proposals = [ProposedMatch(1, 2, :broker, 5.0, true, 1.0)]
         rng = StableRNG(44)
         accepted = sequential_match_formation!(proposals, state4.agents, state4.broker,
                                                 state4.env, state4.G,
@@ -98,7 +98,7 @@ using StableRNGs: StableRNG
     @testset "Satisfaction EWMA update" begin
         state5 = initialize_model(p)
         omega = p.omega
-        q_pub = state5.cal.q_pub
+        q_cal = state5.cal.q_cal
         phi = state5.cal.phi
         c_s = state5.cal.c_s
 
@@ -138,26 +138,30 @@ using StableRNGs: StableRNG
 
     @testset "Outsourcing decision follows satisfaction" begin
         state8 = initialize_model(p)
+        G8 = state8.G; bn8 = state8.broker.node_id; K8 = p.K
         agent = state8.agents[1]
         # High self-satisfaction, low broker satisfaction
         agent.satisfaction_self = 5.0
         agent.satisfaction_broker = 1.0
         agent.tried_broker = true
-        @test outsourcing_decision(agent, 0.0, StableRNG(1)) == :self
+        @test outsourcing_decision(agent, state8.agents, G8, bn8, 0.0, 1, state8.cal.c_s, K8, StableRNG(1)) == :self
 
-        # Reverse
+        # Reverse: broker satisfaction much higher than self AND known partners
         agent.satisfaction_self = 1.0
-        agent.satisfaction_broker = 5.0
-        @test outsourcing_decision(agent, 0.0, StableRNG(1)) == :broker
+        agent.satisfaction_broker = 50.0  # much higher than any known partner
+        @test outsourcing_decision(agent, state8.agents, G8, bn8, 0.0, 1, state8.cal.c_s, K8, StableRNG(1)) == :broker
     end
 
     @testset "Untried broker uses reputation" begin
         state9 = initialize_model(p)
+        G9 = state9.G; bn9 = state9.broker.node_id; K9 = p.K
         agent = state9.agents[1]
         agent.tried_broker = false
-        agent.satisfaction_self = 1.0
+        agent.satisfaction_self = 0.0
+        # Clear all partner means so score_known = -Inf
+        fill!(agent.partner_count, 0)
         # High broker reputation should make agent outsource
-        @test outsourcing_decision(agent, 10.0, StableRNG(1)) == :broker
+        @test outsourcing_decision(agent, state9.agents, G9, bn9, 10.0, 1, state9.cal.c_s, K9, StableRNG(1)) == :broker
     end
 
     @testset "Broker reputation update" begin

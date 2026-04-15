@@ -90,7 +90,7 @@ end
 Complete model initialization following the pseudocode (§9, Steps I.1-I.13):
 1. Agent types on sinusoidal curve
 2. Matching function (c, A, B)
-3. Calibration (q_pub, r, phi, c_s)
+3. Calibration (q_cal, r, phi, c_s)
 4. Network (Watts-Strogatz + broker node)
 5. Agent history seeding (5 neighbor pairings)
 6. Broker roster and history seeding (20 existing edges)
@@ -141,9 +141,8 @@ function initialize_model(params::ModelParams; sort_by_pc1::Bool = false)::Model
         n_new_obs = 0,
         train_X = Matrix{Float64}(undef, 2 * d, 128),
         train_q = Vector{Float64}(undef, 128),
-        last_reputation = cal.q_pub,
+        last_reputation = 0.0,     # set from seed data in step I.11 below
         has_had_clients = false,
-        cumulative_revenue = 0.0,
     )
 
     # Seed roster with random agents
@@ -173,10 +172,10 @@ function initialize_model(params::ModelParams; sort_by_pc1::Bool = false)::Model
             n_new_obs = 0,
             partner_sum = zeros(N),
             partner_count = zeros(Int, N),
-            satisfaction_self = cal.q_pub,
-            satisfaction_broker = cal.q_pub,
+            satisfaction_self = 0.0,   # set from seed data in step I.11 below
+            satisfaction_broker = 0.0, # no broker experience at init
             tried_broker = false,
-            on_roster = i in broker.roster,
+            last_outsource_period = i in broker.roster ? 1 : -1000,  # seed roster active; others never outsourced
             periods_alive = 0,
         )
     end
@@ -215,8 +214,21 @@ function initialize_model(params::ModelParams; sort_by_pc1::Bool = false)::Model
         end
     end
 
-    # ── I.11: State variables ──
-    # (satisfaction and reputation already initialized above)
+    # ── I.11: State variables (from seed data, not q_cal) ──
+    # Broker reputation: mean of seed broker match outcomes
+    if broker.history_count > 0
+        broker.last_reputation = sum(broker.history_q[k] for k in 1:broker.history_count) / broker.history_count
+        broker.has_had_clients = true
+    end
+    # Agent self-satisfaction: mean of seed match outcomes
+    # Agent broker-satisfaction: broker reputation (market prior, not personal experience)
+    for i in 1:N
+        n = agents[i].history_count
+        if n > 0
+            agents[i].satisfaction_self = sum(agents[i].history_q[k] for k in 1:n) / n
+        end
+        agents[i].satisfaction_broker = broker.last_reputation
+    end
 
     # Build model state
     state = ModelState(
