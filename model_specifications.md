@@ -423,7 +423,7 @@ The agent outsources if $\text{score}_{\text{broker}} > \max(\text{score}_{\text
 
 The $\text{score}_{\text{known}}$ term ensures that agents who have discovered good partners (including through prior broker introductions) recognize they can reach those partners directly at lower cost ($c_s < \phi$). The broker must offer value beyond what the agent's known partners provide: either finding better counterparties or filling demand slots that known partners cannot.
 
-**Initial conditions.** Self-satisfaction is initialized from each agent's seed match outcomes (mean of 5 neighbor pairings). Broker-satisfaction is initialized to the broker's seed-data reputation (mean of 20 seed broker match outcomes). Both values are grounded in actual data, not an arbitrary constant. Since the broker's seed reputation and the typical agent's seed self-satisfaction are close but not identical, the first period's outsourcing decisions reflect genuine (if noisy) differences in local match quality rather than a symmetric coin flip. Agents with above-average self-satisfaction prefer self-search; those with below-average self-satisfaction are more open to outsourcing. The broker's early client base is thus self-selected rather than random.
+**Initial conditions.** Self-satisfaction is initialized from each agent's seed match outcomes (mean of 5 neighbor pairings). Broker-satisfaction is initialized to the broker's seed-data reputation (mean of 100 seed broker match outcomes). Both values are grounded in actual data, not an arbitrary constant. Since the broker's seed reputation and the typical agent's seed self-satisfaction are close but not identical, the first period's outsourcing decisions reflect genuine (if noisy) differences in local match quality rather than a symmetric coin flip. Agents with above-average self-satisfaction prefer self-search; those with below-average self-satisfaction are more open to outsourcing. The broker's early client base is thus self-selected rather than random.
 
 #### 6c. Broker reputation
 
@@ -480,7 +480,7 @@ At the start of the simulation, the state of the world must be initialized.
 >
 > *Broker.*
 > I.8. &emsp;Seed broker roster with $\lceil 0.20 \cdot N \rceil$ randomly chosen agents. Set $t_i^{\text{out}} \leftarrow 1$ for each seed roster member so they are eligible for the lag-based rebuild during the first few periods (§7). Non-roster agents are initialized with a non-positive sentinel (the roster test $t_i^{\text{out}} > 0$ treats any such value as "never outsourced"; the implementation uses $-1000$ at initialization and resets to $0$ on exit). Add broker-agent edges to $G$ for each roster member.
-> I.9. &emsp;Seed broker history $\mathcal{H}_b$ with 20 observations drawn from random pairs of distinct roster members (sampling from the roster directly, not from pre-existing edges in $G$). For each sampled pair $(i, j)$, realize $q_{ij}$, append $(\mathbf{x}_i, \mathbf{x}_j, q_{ij})$ to $\mathcal{H}_b$, and add the edge $(i, j)$ to $G$ (the broker's seed placement creates the tie, mirroring the regular match flow in §4b).
+> I.9. &emsp;Seed broker history $\mathcal{H}_b$ with 100 observations drawn from random pairs of distinct roster members (sampling from the roster directly, not from pre-existing edges in $G$). For each sampled pair $(i, j)$, realize $q_{ij}$, append $(\mathbf{x}_i, \mathbf{x}_j, q_{ij})$ to $\mathcal{H}_b$, and add the edge $(i, j)$ to $G$ (the broker's seed placement creates the tie, mirroring the regular match flow in §4b).
 >
 > *State variables.*
 > I.10. &emsp;For each agent $i$: seed $\mathcal{H}_{i}$ with 5 pairings sampled from $i$'s neighbors in $G$. For each sampled neighbor $j$, realize $q_{ij}$ and record $(\mathbf{x}_j, q_{ij})$ in $\mathcal{H}_i$ along with the corresponding `partner_mean` update for $j$. Seed observations are recorded only in the sampling agent's history (so the counterparty $j$ is not credited with this draw in $\mathcal{H}_j$); agents independently seed their own histories from their own neighborhoods. $M_i^0 \leftarrow \emptyset$.
@@ -726,7 +726,7 @@ The initialization procedure is specified in the pseudocode (§9, steps I.1–I.
 - The matching function parameters ($\mathbf{c}$, $\mathbf{A}$, $\mathbf{B}$) are drawn once and held fixed (§1).
 - Calibration quantities ($\bar{q}_{\text{cal}}$, $r$, $\phi$) are computed from 10,000 random agent pairs (§11b).
 - Each agent's history is seeded with 5 pairings from its neighbors in $G$, ensuring initial predictions reflect the local network.
-- The broker's roster is seeded at $\lceil 0.20 \cdot N \rceil$ agents, and its history is seeded from 20 random roster member pairs.
+- The broker's roster is seeded at $\lceil 0.20 \cdot N \rceil$ agents, and its history is seeded from 100 random roster member pairs.
 - All neural networks are trained from random weights for $E_{\text{init}}$ steps on their seed histories before the first period (§2a).
 
 #### 11d. Reproducibility

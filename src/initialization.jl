@@ -180,9 +180,9 @@ function initialize_model(params::ModelParams; sort_by_pc1::Bool = false)::Model
         )
     end
 
-    # ── I.9: Broker history seeding (20 observations from random roster member pairs) ──
+    # ── I.9: Broker history seeding (100 observations from random roster member pairs) ──
     roster_list = collect(broker.roster)
-    n_broker_seed = min(20, length(roster_list) * (length(roster_list) - 1) ÷ 2)
+    n_broker_seed = min(100, length(roster_list) * (length(roster_list) - 1) ÷ 2)
     broker_seed_count = 0
     for _ in 1:n_broker_seed * 3  # oversample to avoid i==j collisions
         broker_seed_count >= n_broker_seed && break
