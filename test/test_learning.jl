@@ -1,5 +1,6 @@
 using Test
 using TransientBrokerage
+using Enzyme
 using StableRNGs: StableRNG
 using LinearAlgebra: normalize
 
@@ -81,6 +82,36 @@ using LinearAlgebra: normalize
         @test nn_step.b1 == nn_loop.b1
         @test nn_step.w2 == nn_loop.w2
         @test nn_step.b2 == nn_loop.b2
+    end
+
+    @testset "Hand-coded gradient matches Enzyme" begin
+        rng = StableRNG(404)
+        nn = init_neural_net(8, 16, rng)
+        grad = NNGradBuffers(nn)
+        X = randn(rng, 8, 20)
+        q = randn(rng, 20)
+
+        # Compute the hand-coded gradient without changing parameters.
+        train_step!(nn, grad, X, q, 0.0)
+
+        b2_vec = [nn.b2]
+        enzyme_res = Enzyme.gradient(
+            Enzyme.ReverseWithPrimal,
+            (W1, b1, w2, b2, Xc, qc) -> nn_loss(W1, b1, w2, Ref(b2[1]), Xc, qc),
+            copy(nn.W1),
+            copy(nn.b1),
+            copy(nn.w2),
+            b2_vec,
+            Enzyme.Const(X),
+            Enzyme.Const(q),
+        )
+        dW1_e, db1_e, dw2_e, db2_e, _, _ = enzyme_res.derivs
+
+        @test enzyme_res.val ≈ nn_loss(nn.W1, nn.b1, nn.w2, Ref(nn.b2), X, q) atol=1e-12
+        @test grad.dW1 ≈ dW1_e atol=1e-10 rtol=1e-10
+        @test grad.db1 ≈ db1_e atol=1e-10 rtol=1e-10
+        @test grad.dw2 ≈ dw2_e atol=1e-10 rtol=1e-10
+        @test grad.db2[] ≈ db2_e[1] atol=1e-10 rtol=1e-10
     end
 
     @testset "NN can learn a linear function" begin

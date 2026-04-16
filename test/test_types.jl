@@ -84,6 +84,7 @@ using LinearAlgebra: norm
         push!(accum.q_self, 1.0, 2.0)
         accum.n_demanders = 7
         accum.n_outsourced = 2
+        accum.outsourced_slots = 9
         accum.roster_size = 42
         accum.broker_error_abs_sum = 4.0
         accum.broker_error_count = 3
@@ -97,6 +98,7 @@ using LinearAlgebra: norm
         @test isempty(accum.q_self)
         @test accum.n_demanders == 0
         @test accum.n_outsourced == 0
+        @test accum.outsourced_slots == 0
         @test accum.roster_size == 0
         @test accum.broker_error_abs_sum == 0.0
         @test accum.broker_error_count == 0

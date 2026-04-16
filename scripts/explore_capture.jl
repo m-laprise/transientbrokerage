@@ -82,7 +82,7 @@ function plot_capture_ensemble(m1_mdfs::Vector{DataFrame},
     Label(fig[1, 0], "Market"; fontsize=ROW_LABEL_FS, font=:bold,
           rotation=π/2, tellheight=false)
 
-    ax = newax(fig[1, 1]; title="Outsourcing rate", ylabel="Rate",
+    ax = newax(fig[1, 1]; title="Outsourcing rate (slots)", ylabel="Rate",
               limits=(xlims, (-0.02, 1.02)), akw...)
     pm!(ax, mdf -> mdf.outsourcing_rate; label="M1", color=COL_BROKER)
     base_ref!(ax, mdf -> mdf.outsourcing_rate)
@@ -466,7 +466,7 @@ for (idx, c) in enumerate(configs)
     combined = vcat(tails...)
     println("  Summary (last 50 periods):")
     println("    Principal share: $(round(mean(combined.principal_mode_share), digits=3))")
-    println("    Outsourcing: $(round(mean(combined.outsourcing_rate), digits=3))")
+    println("    Outsourcing (slot share): $(round(mean(combined.outsourcing_rate), digits=3))")
     println("    R² gap: $(round(mean(filter(!isnan, combined.r2_gap)), digits=3))")
     println("    Mean capture surplus: $(round(mean(filter(!isnan, combined.capture_surplus_mean)), digits=3))")
     println("    Mean broker dependency: $(round(mean(filter(!isnan, combined.broker_dependency_mean)), digits=3))")

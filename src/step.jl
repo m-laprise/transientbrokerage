@@ -86,6 +86,7 @@ function step_period!(state::ModelState)
             push!(client_demands, (i, d_i))
             push!(broker_clients, i)
             state.accum.n_outsourced += 1
+            state.accum.outsourced_slots += d_i
             agents[i].last_outsource_period = state.period
         end
     end
@@ -164,7 +165,7 @@ function step_period!(state::ModelState)
     # 4.1: Histories already recorded in sequential_match_formation!
 
     # 4.2: Satisfaction update
-    update_satisfaction!(agents, accepted, demand_agent_ids, demand_channels, cal, p)
+    update_satisfaction!(agents, accepted, demand_agent_ids, demand_channels, demand_counts, cal, p)
 
     # 4.3: Broker reputation
     update_broker_reputation!(broker, agents, broker_clients)

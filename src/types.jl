@@ -285,8 +285,8 @@ end
 struct CalibrationConstants
     q_cal::Float64     # calibration reference E[q] (scales r, phi, c_s; not used for initialization)
     r::Float64         # outside option (0.60 * q_cal)
-    phi::Float64       # broker fee
-    c_s::Float64       # self-search cost
+    phi::Float64       # successful standard-placement fee
+    c_s::Float64       # self-search cost per demanded slot
 end
 
 """Prediction quality metrics: R-squared, bias, and rank correlation."""
@@ -342,7 +342,8 @@ Base.@kwdef mutable struct PeriodAccumulators
 
     # Outsourcing rate and demand
     n_demanders::Int = 0
-    n_outsourced::Int = 0
+    n_outsourced::Int = 0           # demanders who chose the broker channel
+    outsourced_slots::Int = 0       # demand slots routed through the broker channel
     total_demand::Int = 0           # total demand slots across all demanders
 
     # Prediction/outcome pairs from actual matches (subject to selection bias)
@@ -384,6 +385,7 @@ function reset_accumulators!(a::PeriodAccumulators)
     a.assessment_count = 0
     a.n_demanders = 0
     a.n_outsourced = 0
+    a.outsourced_slots = 0
     a.total_demand = 0
     empty!(a.agent_predicted)
     empty!(a.agent_realized)
@@ -478,8 +480,10 @@ Base.@kwdef mutable struct SimWorkspace
     # self_search scratch
     neighbor_ids::Vector{Int} = Int[]
     neighbor_evals::Vector{Float64} = Float64[]
+    neighbor_caps::Vector{Int} = Int[]
     stranger_ids::Vector{Int} = Int[]
     stranger_evals::Vector{Float64} = Float64[]
+    stranger_caps::Vector{Int} = Int[]
     eligible::Vector{Int} = Int[]
     stranger_sample::Vector{Int} = Int[]
     # Neighbor bitset: nbr_mask[j] = true iff j is a neighbor of the current agent.

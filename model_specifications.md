@@ -327,16 +327,18 @@ When the broker proposes a match, it applies the constraint using its own predic
 
 #### 3c. Search costs
 
-Both search channels incur fixed per-match costs. Rather than calibrating the broker fee and self-search cost separately, the model uses a single **cost wedge** parameter $\Delta_c$ on the surplus scale $(\bar{q}_{\text{cal}} - r)$ and derives both channel costs from it:
+The model includes two channel frictions with an intentional asymmetry. **Self-search** incurs a per-demand-slot search-effort cost $c_s$: each slot the agent attempts to fill through self-search bears that cost whether or not it is successfully matched. **Standard brokerage** instead incurs a contingent placement fee $\phi$: the fee is paid only on brokered matches that actually clear. Rather than calibrating the broker fee and self-search cost separately, the model uses a single **cost wedge** parameter $\Delta_c$ on the surplus scale $(\bar{q}_{\text{cal}} - r)$ and derives both channel costs from it:
 
 $$
 \phi = (0.15 + \Delta_c / 2)\cdot(\bar{q}_{\text{cal}} - r), \qquad
 c_s = (0.15 - \Delta_c / 2)\cdot(\bar{q}_{\text{cal}} - r).
 $$
 
-The midpoint `0.15` is fixed, so the average channel cost is held constant while $\Delta_c$ controls the economically relevant difference $\phi - c_s$. At $\Delta_c = 0$, both channels have the same cost. At the baseline $\Delta_c = 0.10$, the model reproduces the previous baseline calibration: $\phi = 0.20\cdot(\bar{q}_{\text{cal}} - r)$ and $c_s = 0.10\cdot(\bar{q}_{\text{cal}} - r)$. Larger $\Delta_c$ makes brokerage more expensive relative to self-search; at the upper bound $\Delta_c = 0.30$, self-search is free and the broker fee is $0.30\cdot(\bar{q}_{\text{cal}} - r)$.
+The midpoint `0.15` is fixed, so the average channel cost is held constant while $\Delta_c$ controls the economically relevant difference $\phi - c_s$. At $\Delta_c = 0$, both frictions have the same scale. At the baseline $\Delta_c = 0.10$, the model uses $\phi = 0.20\cdot(\bar{q}_{\text{cal}} - r)$ and $c_s = 0.10\cdot(\bar{q}_{\text{cal}} - r)$. Larger $\Delta_c$ makes brokerage more expensive relative to self-search; at the upper bound $\Delta_c = 0.30$, self-search is free and the broker fee is $0.30\cdot(\bar{q}_{\text{cal}} - r)$.
 
-Both costs are fixed per match and independent of match quality. The broker fee $\phi$ is calibrated at initialization (§11b).
+The two frictions are independent of realized match quality. The self-search cost $c_s$ is charged on each demanded slot routed through self-search, whether or not that slot is filled. The broker fee $\phi$ is charged on each successful **standard** brokered placement. Under principal mode (§12), no $\phi$ is charged to the demander because the broker is no longer acting as a pure intermediary.
+
+An economically important asymmetry in the illustrative markets is **search-risk transfer**. Self-search typically requires the agent to incur time, attention, or internal business-development costs for each sought transaction slot whether or not the search succeeds: calling dealers, screening counterparties, traveling to trade events, preparing offers, or canvassing foreign buyers. By contrast, broker compensation is often at least partly contingent on success: a broker or intermediary is usually paid when a transaction clears, not merely for having searched. In that sense, outsourcing shifts part of the risk of failed search from the agent to the intermediary. This creates a motive for brokerage that is distinct from pure informational superiority. Even when the broker and the agent were equally good at ranking counterparties, the broker could still be valuable by absorbing failed-search risk.
 
 ### 4. Network Structure and Turnover
 
@@ -362,7 +364,7 @@ The entrant is added to $G$ with $\lfloor k/2 \rfloor$ edges to agents sampled f
 
 ### 5. Search
 
-At the start of each period, all $K$ slots are open. Each slot independently generates demand with probability $p_{\text{demand}}$ (default 0.50), so agent $i$ draws demand $d_i \sim \text{Binomial}(K,\; p_{\text{demand}})$. Each demand is resolved independently: the agent chooses self-search or broker (§6) and evaluates candidates separately for each slot. The same counterparty may be selected for multiple slots in the same period if it has the highest evaluated quality and both parties have remaining capacity.
+At the start of each period, all $K$ slots are open. Each slot independently generates demand with probability $p_{\text{demand}}$ (default 0.50), so agent $i$ draws demand $d_i \sim \text{Binomial}(K,\; p_{\text{demand}})$. If $d_i > 0$, the agent chooses **one channel for the batch** of current-period demand (§6): self-search or broker. Conditional on that batch decision, the chosen channel attempts to fill up to $d_i$ slots. The same counterparty may be selected for multiple slots in the same period if it remains the highest-valued feasible candidate and both parties retain capacity.
 
 #### 5a. Self-search
 
@@ -372,7 +374,7 @@ Agent $i$'s candidate pool has two components:
 
 **Strangers.** $\min(n_s, |\text{eligible}|)$ agents sampled uniformly from the population (excluding current neighbors, current matches, and the broker node), where $n_s = 5$ (default) and eligible agents are those with available capacity. The agent has no prior history with these candidates and evaluates them using its **prediction model**: $\hat{q}_i(\mathbf{x}_j)$ (§2b). Strangers represent cold outreach: attending trade events, browsing listings, or following up on indirect referrals.
 
-The agent selects the candidate with the highest evaluated quality (whether from history or prediction), provided the participation constraint is satisfied: the evaluation exceeds $r$ (§3b). If no candidate clears the threshold, no match is proposed and the no-match penalty applies (§6a).
+The candidate pool is built once per agent-period and then reused across that agent's requested slots. Within the batch, self-search tracks temporary remaining capacities for candidate counterparties: after a candidate is selected for one slot, its available capacity for that agent's remaining slots falls by one. The agent selects the feasible candidate with the highest evaluated quality (whether from history or prediction), provided the participation constraint is satisfied: the evaluation exceeds $r$ (§3b). If no feasible candidate clears the threshold, no proposal is recorded for that slot. Because this temporary capacity accounting is local to agent $i$'s batch, the agent does **not** internalize competing proposals from other agents until the global match-formation step.
 
 The proposal enters the match formation step (§9, Step 3), where all proposals from both channels are processed sequentially in random order. The counterparty evaluates the proposal using its own model (for strangers) or historical average (for known neighbors), accepting if the evaluation exceeds $r$ (§3b) and it has not already been matched this period.
 
@@ -380,7 +382,7 @@ The proposal enters the match formation step (§9, Step 3), where all proposals 
 
 When agent $i$ outsources to the broker, the broker includes agent $i$ in its allocation for the current period. Agent $i$ is also added to the broker's roster if not already a member (§7).
 
-At the end of Step 1 (after all outsourcing decisions), the broker observes its full client list $D^t$ (the set of demanders who outsourced this period) and the available roster members $\text{Roster}^t \cap \{\text{agents with available capacity}\}$. The broker computes predicted match quality $\hat{q}_b([\mathbf{x}_i; \mathbf{x}_j])$ for every (demander, available roster member) pair and assigns matches using a greedy best-pair heuristic (§9, Step 2.3): iteratively select the highest-quality pair, propose that match, and remove both demander and counterparty from consideration. This continues until all demanders are matched, the roster is exhausted, or no remaining pair has positive predicted surplus ($\hat{q}_b > r$). The broker applies the same participation constraint as self-search: it does not propose matches with non-positive predicted surplus.
+At the end of Step 1 (after all outsourcing decisions), the broker observes its full client list $D^t$ (the set of demanders who outsourced this period) and the available roster members $\text{Roster}^t \cap \{\text{agents with available capacity}\}$. The broker computes predicted match quality $\hat{q}_b([\mathbf{x}_i; \mathbf{x}_j])$ for every (demander, available roster member) pair and assigns matches using a greedy best-pair heuristic (§9, Step 2.3): iteratively select the highest-quality feasible pair, propose that match, and decrement the remaining demand of $i$ and the remaining capacity of $j$. If both remain positive, the same pair can be selected again on a later iteration. This continues until all outsourced demand is exhausted, the roster is exhausted, or no remaining pair has positive predicted surplus ($\hat{q}_b > r$). The broker applies the same participation constraint as self-search: it does not propose matches with non-positive predicted surplus.
 
 Proposals enter the match formation step (§9, Step 3) alongside self-search proposals. The counterparty evaluates using its own model (§3b).
 
@@ -398,37 +400,35 @@ The index is an exponentially weighted moving average (recency weight $\omega = 
 
 $$s_{i,c}^{t+1} = (1 - \omega)\,s_{i,c}^t + \omega \cdot \tilde{q}$$
 
-where $\tilde{q}$ is the satisfaction input for the period. When an agent has multiple demand slots resolved through the same channel in one period, all realized outcomes are averaged into a single satisfaction input for that period:
+where $\tilde{q}$ is the satisfaction input for the period. The averaging unit is the agent's **requested slot demand** $d_i$: realized outcomes from accepted matches are summed, unfilled slots contribute zero output, and the total is divided by $d_i$. This makes partial fill mechanically lower satisfaction relative to full fill.
 
 | Channel | Satisfaction input $\tilde{q}$ |
 |---------|-------------------------------|
-| Self-search | $\frac{1}{n_{\text{matched}}} \sum (q_{ij} - c_s)$, averaged over matched slots |
-| Standard brokered | $\frac{1}{n_{\text{matched}}} \sum (q_{ij} - \phi)$, averaged over matched slots |
-| Principal mode (M1, §12) | $\frac{1}{n_{\text{matched}}} \sum q_{ij}$, averaged (no fee; broker is counterparty) |
+| Self-search | $\dfrac{\sum q_{ij} - c_s \cdot d_i}{d_i} = \dfrac{\sum q_{ij}}{d_i} - c_s$, summing over accepted self-search slots |
+| Standard brokered (base model) | $\dfrac{\sum (q_{ij} - \phi)}{d_i}$, summing over accepted brokered slots |
+| Broker channel under principal mode (M1, §12) | $\dfrac{\sum_{\text{standard}} (q_{ij} - \phi) + \sum_{\text{principal}} q_{ij}}{d_i}$ |
 
-If some slots matched and some failed in the same period, the satisfaction input reflects only the matched slots (partial success). If *all* slots through a channel failed (no match on any slot), the **no-match penalty** applies: the satisfaction index decays toward zero:
-
-$$s_{i,c}^{t+1} = (1 - \omega)\, s_{i,c}^t$$
-
-Satisfaction indices are not floored: they can go negative. The EWMA's recency weighting ensures recovery from negative values within a few good observations.
+This implies an intentional asymmetry in total-failure episodes. If a brokered batch fails completely, then $\tilde{q}=0$ and broker satisfaction decays toward zero. If a self-search batch fails completely, then $\tilde{q}=-c_s$ because the per-slot search effort was paid despite filling no slot. Satisfaction indices are not floored: they can go negative. The EWMA's recency weighting ensures recovery from negative values within a few good observations.
 
 **Initialization from seed data.** At initialization, each agent's self-satisfaction is set to the mean of its seed match outcomes (§11c, step I.10), not to an arbitrary constant. Each agent's broker-satisfaction is set to the broker's seed-data reputation (§6c). This grounds the initial outsourcing decision in actual data: agents with good neighbors start with high self-satisfaction and are harder for the broker to recruit, while agents with poor neighbors are more open to outsourcing.
 
 **Fresh entrants.** New agents entering via turnover (§4) initialize self-satisfaction as the mean of their new neighbors' self-satisfaction (word-of-mouth: the entrant inherits the local opinion about self-search quality). Broker-satisfaction is set to the current broker reputation (the market's current opinion). The `tried_broker` flag is false, so the entrant uses broker reputation for its first outsourcing decision.
 
-**`tried_broker` flag semantics.** The flag flips from false to true the first time the agent chooses the broker channel for any demand in a period, regardless of whether the broker's proposal led to a match or triggered the no-match penalty. Once true, the agent uses its own $s_{i,\text{broker}}^t$ rather than the broker's reputation for subsequent decisions (§6b). The rationale is that after selecting the broker once, the agent's personal EWMA has started to absorb information about that channel (including from failures), so reputation stops being the better signal.
+**`tried_broker` flag semantics.** The flag flips from false to true the first time the agent chooses the broker channel for any demand in a period, regardless of whether the broker's proposal led to a successful placement. Once true, the agent uses its own $s_{i,\text{broker}}^t$ rather than the broker's reputation for subsequent decisions (§6b). The rationale is that after selecting the broker once, the agent's personal EWMA has started to absorb information about that channel, including failed broker episodes that update satisfaction through a zero realized input, so reputation stops being the better signal.
 
 #### 6b. Decision rule
 
 Each period, an agent with $d_i$ demand slots compares three scores:
 
 - **$\text{score}_{\text{self}}$** $= s_{i,\text{self}}^t$: the EWMA satisfaction from past self-search outcomes.
-- **$\text{score}_{\text{known}}$**: the average quality of the agent's best $d_i$ known partners with available capacity, minus the self-search cost $c_s$. Computed as: sort all neighbors $j$ in $G$ that have capacity and a known `partner_mean`, take the top $d_i$ values, average them (dividing by $d_i$, not by the number of known partners, so unfilled slots dilute the score), and subtract $c_s$. If no known partner has capacity, $\text{score}_{\text{known}} = -\infty$.
+- **$\text{score}_{\text{known}}$**: the net value of directly using the agent's best known partners under the self-search channel. Computed as: sort all neighbors $j$ in $G$ that have capacity and a known `partner_mean`, take the top $d_i$ values, average them using denominator $d_i$ (so missing slots dilute the score), and subtract the per-slot self-search cost $c_s$. This preserves the same slot-weighted scale as §6a: if the agent needs 3 slots but only knows 1 good partner, the missing slots dilute the average.
 - **$\text{score}_{\text{broker}}$** $= s_{i,\text{broker}}^t$ if the agent has tried the broker, otherwise the broker's reputation $\text{rep}_b^t$.
 
 The agent outsources if $\text{score}_{\text{broker}} > \max(\text{score}_{\text{self}}, \text{score}_{\text{known}})$; it self-searches if $\text{score}_{\text{broker}} < \max(\text{score}_{\text{self}}, \text{score}_{\text{known}})$. At the boundary $\text{score}_{\text{broker}} = \max(\text{score}_{\text{self}}, \text{score}_{\text{known}})$, the channel is chosen by a uniform coin flip between self-search and broker (a tie between $\text{score}_{\text{self}}$ and $\text{score}_{\text{known}}$ alone does not require resolution, as both map to the self-search channel).
 
-The $\text{score}_{\text{known}}$ term ensures that agents who have discovered good partners (including through prior broker introductions) recognize they can reach those partners directly at lower cost ($c_s < \phi$). The broker must offer value beyond what the agent's known partners provide: either finding better counterparties or filling demand slots that known partners cannot.
+The $\text{score}_{\text{known}}$ term ensures that agents who have discovered good partners (including through prior broker introductions) recognize they can reach those partners directly, but must still bear the per-slot cost of doing so. The broker must offer value beyond what the agent's known partners provide: either finding better counterparties, filling demand slots that known partners cannot, or absorbing failed-search risk that self-search leaves with the agent.
+
+The search-risk-transfer asymmetry sharpens this comparison. Self-search exposes the agent to the risk of paying for effort on requested slots that yield no placement, whereas standard brokerage shifts more of that downside onto the intermediary because compensation is tied more closely to successful matching. As a result, outsourcing can be attractive not only because the broker has better information or broader access, but also because it converts some search cost from a non-contingent expenditure into a contingent payment. This mechanism is especially relevant for agents facing uncertain fill rates, sparse networks, or highly lumpy demand.
 
 **Initial conditions.** Self-satisfaction is initialized from each agent's seed match outcomes (mean of 5 neighbor pairings). Broker-satisfaction is initialized to the broker's seed-data reputation (mean of 100 seed broker match outcomes). Both values are grounded in actual data, not an arbitrary constant. Since the broker's seed reputation and the typical agent's seed self-satisfaction are close but not identical, the first period's outsourcing decisions reflect genuine (if noisy) differences in local match quality rather than a symmetric coin flip. Agents with above-average self-satisfaction prefer self-search; those with below-average self-satisfaction are more open to outsourcing. The broker's early client base is thus self-selected rather than random.
 
@@ -522,7 +522,8 @@ Each period proceeds through six steps (plus recording).
 > &emsp;&emsp;Build candidate pool (once per agent, shared across all $d_i$ slots):
 > &emsp;&emsp;&emsp;**Known neighbors:** direct neighbors of $i$ in $G$ with available capacity. Evaluate each using average of realized outcomes: $\bar{q}_{ij}$.
 > &emsp;&emsp;&emsp;**Strangers:** sample $\min(n_s, |\text{eligible}|)$ agents uniformly from non-neighbors with available capacity (excluding broker node). Evaluate each using prediction model: $\hat{q}_i(\mathbf{x}_j)$.
-> &emsp;&emsp;For each of $i$'s $d_i$ demand slots: select $j^* = \arg\max$ over the candidate pool (ties broken randomly); if best evaluation $\leq r$, skip this slot; else record proposed match $(i, j^*)$. The same $j^*$ may be selected for multiple slots if it remains the best candidate.
+> &emsp;&emsp;Initialize temporary remaining capacity for each candidate from its current-period free slots.
+> &emsp;&emsp;For each of $i$'s $d_i$ demand slots: select the feasible $j^* = \arg\max$ over the candidate pool (ties broken randomly); if best evaluation $\leq r$, skip this slot; else record proposed match $(i, j^*)$ and decrement $j^*$'s temporary remaining capacity by one. The same $j^*$ may be selected for multiple slots if it remains feasible and best-valued.
 >
 > &emsp;**2.3. Broker proposals:**
 > 2.3.1. &emsp;Collect client list: $D^t = \{i : \text{decision}_i = \text{broker}\}$.
@@ -532,7 +533,7 @@ Each period proceeds through six steps (plus recording).
 > &emsp;&emsp;$(i^*, j^*) = \arg\max \hat{Q}[i,j]$ &ensp;(implementation sorts $(-\hat{Q}[i,j], \text{flat index})$ once and iterates in that order; ties in $\hat{Q}$ are broken deterministically by flat index to keep runs reproducible under seed)
 > &emsp;&emsp;If $\hat{Q}[i^*, j^*] \leq r$: break (no remaining pair has positive surplus)
 > &emsp;&emsp;Record proposed match $(i^*, j^*)$
-> &emsp;&emsp;Decrement $i^*$'s demand count; if zero, remove $i^*$ from $D^t$. Decrement $j^*$'s available capacity; if zero, remove $j^*$ from available\_roster.
+> &emsp;&emsp;Decrement $i^*$'s remaining demand by one. Decrement $j^*$'s available capacity by one. If both remain positive, the pair may be selected again on a later iteration.
 > 2.3.5. &emsp;If $D^t$ non-empty (roster exhausted or no surplus-positive pair): for each remaining $i \in D^t$, mark as no-proposal.
 >
 > **3. MATCH FORMATION**
@@ -560,9 +561,10 @@ Each period proceeds through six steps (plus recording).
 >
 > 4.2. &emsp;Update satisfaction indices (§6a):
 > &emsp;&emsp;For each agent $i$ with $d_i > 0$, let $c$ be $i$'s chosen channel:
-> &emsp;&emsp;&emsp;Let $n_{\text{matched}}$ = number of $i$'s demand slots that resulted in an accepted match via $c$.
-> &emsp;&emsp;&emsp;If $n_{\text{matched}} > 0$: compute $\tilde{q} = \frac{1}{n_{\text{matched}}} \sum (q_{ij} - \text{cost}_c)$, where $\text{cost}_c = c_s$ for self-search or $\phi$ for broker. Update: $s_{i,c}^{t+1} = (1 - \omega)\, s_{i,c}^t + \omega \cdot \tilde{q}$.
-> &emsp;&emsp;&emsp;If $n_{\text{matched}} = 0$ (all slots failed): $s_{i,c}^{t+1} = (1 - \omega) \cdot s_{i,c}^t$ &ensp;(no-match penalty; §6a).
+> &emsp;&emsp;&emsp;Sum realized outputs over $i$'s accepted matches through $c$; unfilled slots contribute zero.
+> &emsp;&emsp;&emsp;If $c = \text{self}$: compute $\tilde{q} = (\sum q_{ij} - c_s \cdot d_i) / d_i = \sum q_{ij}/d_i - c_s$.
+> &emsp;&emsp;&emsp;If $c = \text{broker}$ in the base model: compute $\tilde{q} = \sum (q_{ij} - \phi) / d_i$ over accepted brokered slots.
+> &emsp;&emsp;&emsp;Update: $s_{i,c}^{t+1} = (1 - \omega)\, s_{i,c}^t + \omega \cdot \tilde{q}$.
 >
 > 4.3. &emsp;Update broker reputation (§6c):
 > &emsp;&emsp;If $|D^t| > 0$: $\text{rep}^{t+1} \leftarrow \text{mean of } s_{i,\text{broker}}^{t+1} \text{ over } i \in D^t$.
@@ -577,7 +579,7 @@ Each period proceeds through six steps (plus recording).
 > &emsp;&emsp;&emsp;Replace with entrant $i'$: fresh type from curve + noise; empty histories; added to $G$ with $\lfloor k/2 \rfloor$ edges to type-similar agents ($\propto \exp(-\|\mathbf{x}_{i'} - \mathbf{x}_j\|^2)$). Self-satisfaction $\leftarrow$ mean of new neighbors' self-satisfaction; broker-satisfaction $\leftarrow$ current broker reputation (§6a).
 >
 > **6. RECORDING AND MEASUREMENT**
-> 6.1. &emsp;Record period aggregates: match quality by channel; outsourcing rate ($|D^t| / |\text{demanders}|$); roster size.
+> 6.1. &emsp;Record period aggregates: match quality by channel; outsourcing rate (outsourced slots / total demand slots); roster size.
 > 6.2. &emsp;Record broker state: reputation $\text{rep}^t$; roster size; $|\mathcal{H}_b^t|$.
 > 6.3. &emsp;Compute per-agent averaged holdout prediction quality ($R^2$, bias, rank correlation) for broker and agents (§10), excluding fresh entrants with no match history. This runs every period because the cost is small (≈4,000 NN forward passes) and finer time resolution benefits the headline figures that track the informational gap over time.
 > 6.4. &emsp;Every $M$ periods (default $M = 20$): compute network measures on $G$ (§10): betweenness centrality $C_B(b)$; Burt's constraint (broker's ego network); effective size (broker's ego network). The $M$-period cadence reflects the cost of Brandes BFS on the full graph, not a conceptual alignment with holdout measurement.
@@ -639,7 +641,7 @@ The broker-agent gap in holdout $R^2$ is the purest measure of the informational
 
 **Match quality by channel.** Average realized match output $\bar{q}_c^t$ per period, where $c \in \{\text{self}, \text{brokered}\}$.
 
-**Outsourcing rate.** Fraction of demand that is outsourced to the broker: $|D^t| / |\text{demanders}^t|$.
+**Outsourcing rate.** Fraction of demand slots that are outsourced to the broker: outsourced slots / total demand slots. A demander-level outsourcing share (fraction of demanders choosing the broker channel) is retained as a secondary diagnostic in the code, but the slot share is the primary quantity because the model's demand object is the slot.
 
 **Roster size.** Number of agents currently on the broker's roster (§7). Reflects the flow of recent broker clients: it rises with outsourcing activity and decays as agents age out after $L$ periods without outsourcing.
 
@@ -677,7 +679,7 @@ Parameters are organized into four categories reflecting their role in the analy
 | $b_2^{(0)}$ | Initial output bias | $Q$ | Untrained networks predict population-mean quality rather than zero |
 | $\sigma_\varepsilon$ | Match output noise SD | 0.10 | |
 | $\delta$ | Regime gain strength (§1c) | 0.5 | $\delta = 0$: no regime effect; $\delta = 1$: maximum gain contrast |
-| $\Delta_c$ | Broker-minus-self cost wedge | 0.10 | $\phi = (0.15 + \Delta_c/2)\cdot(\bar{q}_{\text{cal}} - r)$, $c_s = (0.15 - \Delta_c/2)\cdot(\bar{q}_{\text{cal}} - r)$; §11b |
+| $\Delta_c$ | Broker-minus-self cost wedge | 0.10 | $\phi = (0.15 + \Delta_c/2)\cdot(\bar{q}_{\text{cal}} - r)$, $c_s = (0.15 - \Delta_c/2)\cdot(\bar{q}_{\text{cal}} - r)$; $c_s$ is a self-search cost per demanded slot, $\phi$ a successful standard-placement fee; §11b |
 
 **Phase diagram axes.** Primary parameters of interest.
 
@@ -727,7 +729,7 @@ $$
 c_s = (0.15 - \Delta_c / 2)\cdot(\bar{q}_{\text{cal}} - r).
 $$
 
-This keeps the average channel cost fixed at $0.15\cdot(\bar{q}_{\text{cal}} - r)$ while letting the model vary the difference $\phi - c_s$ that matters directly for the outsourcing decision. In the default $\Delta_c = 0.10$, brokered search is more expensive than self-search but not prohibitively so. The two costs are computed once at initialization and held constant thereafter.
+This keeps the average friction scale fixed at $0.15\cdot(\bar{q}_{\text{cal}} - r)$ while letting the model vary the difference $\phi - c_s$ that matters directly for the outsourcing decision. In the default $\Delta_c = 0.10$, brokered search is more expensive than self-search but not prohibitively so. The two quantities are computed once at initialization and held constant thereafter, but they enter realized payoffs asymmetrically: $c_s$ is charged on each self-search demand slot regardless of fill, whereas $\phi$ is charged only on successful standard brokered placements.
 
 #### 11c. Initial conditions
 
@@ -885,7 +887,7 @@ Under resource capture, the broker transitions from connecting agents to taking 
 | Structural erosion? | Continues | Suspended | Continues |
 | Supply scarcity? | No | Yes (broker acquires positions) | No |
 | Broker bears capture risk? | No | Yes ($\Delta q_{ij}$ can be negative) | No |
-| Quantity associated with placement | Friction $\phi$ on demander; broker has no output-level stake | Capture surplus $\Delta q_{ij} = q_{ij} - \bar{q}_j$ accrues to broker's ledger of realized outcomes; no $\phi$ on demander | Friction $\mu$ on subscriber; broker has no output-level stake |
+| Quantity associated with placement | Successful standard-placement fee $\phi$ on demander; broker has no output-level stake | Capture surplus $\Delta q_{ij} = q_{ij} - \bar{q}_j$ accrues to broker's ledger of realized outcomes; no $\phi$ on demander | Friction $\mu$ on subscriber; broker has no output-level stake |
 | Broker learns from match? | Yes | Yes | No (agent matched directly) |
 | Predicted trajectory | Self-liquidating | Abrupt capture (Prop 3a) | Gradual capture (Prop 3b) |
 
@@ -946,9 +948,9 @@ Steps not listed are identical to the base model pseudocode (§9).
 >
 > 4.2. &emsp;Update satisfaction indices (as in base §9 Step 4.2, with principal-mode addition):
 > &emsp;&emsp;For each agent $i$ with $d_i > 0$, let $c$ be $i$'s chosen channel:
-> &emsp;&emsp;&emsp;Let $n_{\text{matched}}$ = number of $i$'s demand slots that resulted in an accepted match via $c$.
-> &emsp;&emsp;&emsp;If $n_{\text{matched}} > 0$: compute $\tilde{q} = \frac{1}{n_{\text{matched}}} \sum (q_{ij} - \text{cost}_c)$, where $\text{cost}_c = c_s$ for self-search, $\phi$ for standard brokered, or $0$ for principal mode (no friction charged; broker is counterparty). Update: $s_{i,c}^{t+1} = (1 - \omega)\, s_{i,c}^t + \omega \cdot \tilde{q}$.
-> &emsp;&emsp;&emsp;If $n_{\text{matched}} = 0$: no-match penalty (§6a).
+> &emsp;&emsp;&emsp;Sum realized outputs across $i$'s accepted broker-channel slots; unfilled slots contribute zero.
+> &emsp;&emsp;&emsp;Compute $\tilde{q} = \big[\sum_{\text{standard}} (q_{ij} - \phi) + \sum_{\text{principal}} q_{ij}\big] / d_i$.
+> &emsp;&emsp;&emsp;Update: $s_{i,\text{broker}}^{t+1} = (1 - \omega)\, s_{i,\text{broker}}^t + \omega \cdot \tilde{q}$.
 >
 > 4.3. &emsp;Capture surplus recording (principal-mode matches):
 > &emsp;&emsp;for each accepted principal-mode match $(i, j)$, record the triple $(q_{ij}, \bar{q}_j, \hat{q}_b)$ in the period's principal-mode ledger, where $\bar{q}_j$ is the acquisition reservation used at mode-selection time (§2.4) and $\hat{q}_b$ is the broker's ex-ante predicted match output. The capture surplus is $\Delta q_{ij} = q_{ij} - \bar{q}_j$; the broker's ex-ante expected surplus was $\hat{q}_b - \bar{q}_j$. These per-match quantities feed the capture measures in §12i.
@@ -1052,7 +1054,7 @@ Deferred because the current reduced-form MAE-based confidence state is sufficie
 
 #### 13d. Pricing Alternatives
 
-The base model uses a fixed per-match fee $\phi$. Under Model 1 (principal mode), the broker's compensation is the spread $q_{ij} - \bar{q}_j$ with no additional fee. Two alternative pricing mechanisms are noted for future exploration.
+The base model uses a fixed successful-placement fee $\phi$ on standard brokered matches. Under Model 1 (principal mode), the broker's compensation is the spread $q_{ij} - \bar{q}_j$ with no additional fee. Two alternative pricing mechanisms are noted for future exploration.
 
 **Surplus-proportional fee.** $\phi = \alpha \cdot \hat{q}_b([\mathbf{x}_i; \mathbf{x}_j])$. The broker charges a fraction of its predicted match quality. This creates a recognition gap: the broker's revenue depends on its own prediction, while the agent's satisfaction depends on realized quality. Better predictions increase broker revenue, strengthening the incentive to invest in prediction accuracy.
 

@@ -16,8 +16,10 @@ using StatsBase: sample
     self_search(agent, agents, G, broker_node, params, rng, d_i, r; ws, proposals)
 
 Self-search for agent with d_i demand slots. Builds a candidate pool from
-known neighbors (historical average) and strangers (NN prediction).
-Appends up to d_i proposals to `proposals` (or a fresh vector if not provided).
+known neighbors (historical average) and strangers (NN prediction), then
+fills slots greedily subject to each candidate's current-period remaining
+capacity. Appends up to d_i proposals to `proposals` (or a fresh vector if not
+provided).
 """
 function self_search(agent::Agent, agents::Vector{Agent}, G::SimpleGraph,
                      broker_node::Int, params::ModelParams, rng::AbstractRNG,
@@ -34,16 +36,18 @@ function self_search(agent::Agent, agents::Vector{Agent}, G::SimpleGraph,
     # Workspace buffers (allocated locally if none provided; preferred path
     # passes a ws reused across agents within a single period).
     if ws === nothing
-        neighbor_ids = Int[]; neighbor_evals = Float64[]
-        stranger_ids = Int[]; stranger_evals = Float64[]
+        neighbor_ids = Int[]; neighbor_evals = Float64[]; neighbor_caps = Int[]
+        stranger_ids = Int[]; stranger_evals = Float64[]; stranger_caps = Int[]
         eligible = Int[]; nbr_mask = fill(false, N + 1)
         stranger_sample = Int[]
         local_marked = Int[]
     else
         neighbor_ids = ws.neighbor_ids; empty!(neighbor_ids)
         neighbor_evals = ws.neighbor_evals; empty!(neighbor_evals)
+        neighbor_caps = ws.neighbor_caps; empty!(neighbor_caps)
         stranger_ids = ws.stranger_ids; empty!(stranger_ids)
         stranger_evals = ws.stranger_evals; empty!(stranger_evals)
+        stranger_caps = ws.stranger_caps; empty!(stranger_caps)
         eligible = ws.eligible; empty!(eligible)
         stranger_sample = ws.stranger_sample; empty!(stranger_sample)
         if length(ws.nbr_mask) < N + 1
@@ -68,11 +72,13 @@ function self_search(agent::Agent, agents::Vector{Agent}, G::SimpleGraph,
         (nbr < 1 || nbr > N) && continue
         nbr_mask[nbr] = true
         push!(local_marked, nbr)
-        available_capacity(agents[nbr], K) <= 0 && continue
+        cap = available_capacity(agents[nbr], K)
+        cap <= 0 && continue
         mean_q = partner_mean(agent, nbr)
         if !isnan(mean_q)
             push!(neighbor_ids, nbr)
             push!(neighbor_evals, mean_q)
+            push!(neighbor_caps, cap)
         end
     end
 
@@ -94,6 +100,7 @@ function self_search(agent::Agent, agents::Vector{Agent}, G::SimpleGraph,
                 q_hat = predict_nn!(agent.nn, agent.predict_buf, agents[j].type)
                 push!(stranger_ids, j)
                 push!(stranger_evals, q_hat)
+                push!(stranger_caps, available_capacity(agents[j], K))
             end
         end
     end
@@ -115,6 +122,7 @@ function self_search(agent::Agent, agents::Vector{Agent}, G::SimpleGraph,
         n_tied = 0
 
         @inbounds for idx in eachindex(neighbor_ids)
+            neighbor_caps[idx] > 0 || continue
             v = neighbor_evals[idx]
             id = neighbor_ids[idx]
             if v > best_eval
@@ -127,6 +135,7 @@ function self_search(agent::Agent, agents::Vector{Agent}, G::SimpleGraph,
             end
         end
         @inbounds for idx in eachindex(stranger_ids)
+            stranger_caps[idx] > 0 || continue
             v = stranger_evals[idx]
             id = stranger_ids[idx]
             if v > best_eval
@@ -143,6 +152,19 @@ function self_search(agent::Agent, agents::Vector{Agent}, G::SimpleGraph,
             break
         end
         push!(out, ProposedMatch(agent_id, best_id, :self, best_eval, false, NaN))
+        @inbounds for idx in eachindex(neighbor_ids)
+            if neighbor_ids[idx] == best_id
+                neighbor_caps[idx] -= 1
+                @goto next_slot
+            end
+        end
+        @inbounds for idx in eachindex(stranger_ids)
+            if stranger_ids[idx] == best_id
+                stranger_caps[idx] -= 1
+                break
+            end
+        end
+        @label next_slot
     end
 
     return out
@@ -157,7 +179,9 @@ end
 
 Greedy best-pair allocation from the broker's quality matrix. Builds a batched
 NN prediction over unique (demander, roster_member) pairs, then iterates in
-descending quality order. Appends matches to `proposals` (or a fresh vector).
+descending quality order, allowing the same demander-counterparty pair to fill
+multiple slots if it remains the best feasible pair. Appends matches to
+`proposals` (or a fresh vector).
 """
 function broker_allocate(broker::Broker, client_demands::Vector{Tuple{Int, Int}},
                          agents::Vector{Agent}, params::ModelParams,
@@ -309,7 +333,9 @@ function broker_allocate(broker::Broker, client_demands::Vector{Tuple{Int, Int}}
         roster_capacity[ri] = available_capacity(agents[roster_members[ri]], K)
     end
 
-    # Iterate sorted entries
+    # Iterate sorted entries. A selected pair can fill multiple slots because the
+    # broker's within-period ranking is static and repeated same-counterparty
+    # placements are allowed while both sides retain capacity.
     @inbounds for k in 1:n_entries
         neg_val, flat = sort_pairs[k]
         val = -neg_val
@@ -319,17 +345,19 @@ function broker_allocate(broker::Broker, client_demands::Vector{Tuple{Int, Int}}
         di = (flat - 1) % n_unique + 1
         ri = (flat - 1) ÷ n_unique + 1
 
-        demander_remaining[di] <= 0 && continue
-        roster_capacity[ri] <= 0 && continue
+        n_alloc = min(demander_remaining[di], roster_capacity[ri])
+        n_alloc <= 0 && continue
 
-        push!(out, ProposedMatch(
-            unique_demanders[di],
-            roster_members[ri],
-            :broker, val, false, NaN
-        ))
+        for _ in 1:n_alloc
+            push!(out, ProposedMatch(
+                unique_demanders[di],
+                roster_members[ri],
+                :broker, val, false, NaN
+            ))
+        end
 
-        demander_remaining[di] -= 1
-        roster_capacity[ri] -= 1
+        demander_remaining[di] -= n_alloc
+        roster_capacity[ri] -= n_alloc
     end
 
     @label cleanup

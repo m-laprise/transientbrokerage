@@ -75,7 +75,7 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
     Label(fig[1, 0], "Market"; fontsize=ROW_LABEL_FS, font=:bold,
           rotation=π/2, tellheight=false)
 
-    ax = newax(fig[1, 1]; title="Outsourcing rate", ylabel="Rate",
+    ax = newax(fig[1, 1]; title="Outsourcing rate (slots)", ylabel="Rate",
               limits=(xlims, (-0.02, 1.02)), akw...)
     pm!(ax, mdf -> mdf.outsourcing_rate; color=COL_BROKER)
 
@@ -396,7 +396,7 @@ for (idx, c) in enumerate(configs)
     tail_dfs = [mdf[max(1, end-49):end, :] for mdf in mdfs]
     combined = vcat(tail_dfs...)
     println("  Summary (last 50 periods, pooled):")
-    println("    Outsourcing: $(round(mean(combined.outsourcing_rate), digits=3))")
+    println("    Outsourcing (slot share): $(round(mean(combined.outsourcing_rate), digits=3))")
     println("    Broker R²: $(round(mean(filter(!isnan, combined.broker_holdout_r2)), digits=3))")
     println("    Agent R²: $(round(mean(filter(!isnan, combined.agent_holdout_r2)), digits=3))")
     println("    R² gap: $(round(mean(filter(!isnan, combined.r2_gap)), digits=3))")

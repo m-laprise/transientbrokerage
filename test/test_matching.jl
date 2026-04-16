@@ -96,41 +96,65 @@ using StableRNGs: StableRNG
     @testset "Satisfaction EWMA update" begin
         state5 = initialize_model(p)
         omega = p.omega
-        q_cal = state5.cal.q_cal
         phi = state5.cal.phi
         c_s = state5.cal.c_s
 
-        # Agent 1 self-searches, gets one match
-        d_ids = [1]; d_chs = [:self]; d_cnts = [1]
+        # Agent 1 self-searches for two slots, gets one match. Self-search cost
+        # is charged per demanded slot, regardless of fill.
+        d_ids = [1]; d_chs = [:self]; d_cnts = [2]
         accepted = [(demander_id=1, counterparty_id=5, channel=:self,
                       is_principal=false, q_realized=2.0, q_predicted=1.5)]
         sat_before = state5.agents[1].satisfaction_self
-        update_satisfaction!(state5.agents, accepted, d_ids, d_chs, state5.cal, p)
-        expected = (1 - omega) * sat_before + omega * (2.0 - c_s)
+        update_satisfaction!(state5.agents, accepted, d_ids, d_chs, d_cnts, state5.cal, p)
+        expected = (1 - omega) * sat_before + omega * (2.0 / 2 - c_s)
         @test state5.agents[1].satisfaction_self ≈ expected
     end
 
-    @testset "No-match penalty decays satisfaction" begin
+    @testset "Broker no-match decays satisfaction" begin
         state6 = initialize_model(p)
         omega = p.omega
         sat_before = state6.agents[1].satisfaction_broker
-        d_ids = [1]; d_chs = [:broker]
+        d_ids = [1]; d_chs = [:broker]; d_cnts = [2]
         accepted = NamedTuple{(:demander_id, :counterparty_id, :channel, :is_principal, :q_realized, :q_predicted),
                               Tuple{Int, Int, Symbol, Bool, Float64, Float64}}[]
-        update_satisfaction!(state6.agents, accepted, d_ids, d_chs, state6.cal, p)
+        update_satisfaction!(state6.agents, accepted, d_ids, d_chs, d_cnts, state6.cal, p)
         @test state6.agents[1].satisfaction_broker ≈ (1 - omega) * sat_before
+    end
+
+    @testset "Self-search failure pays per-slot search cost" begin
+        state6b = initialize_model(p)
+        omega = p.omega
+        sat_before = state6b.agents[1].satisfaction_self
+        d_ids = [1]; d_chs = [:self]; d_cnts = [2]
+        accepted = NamedTuple{(:demander_id, :counterparty_id, :channel, :is_principal, :q_realized, :q_predicted),
+                              Tuple{Int, Int, Symbol, Bool, Float64, Float64}}[]
+        update_satisfaction!(state6b.agents, accepted, d_ids, d_chs, d_cnts, state6b.cal, p)
+        expected = (1 - omega) * sat_before - omega * state6b.cal.c_s
+        @test state6b.agents[1].satisfaction_self ≈ expected
+    end
+
+    @testset "Standard broker fee is charged only on successful placements" begin
+        state6c = initialize_model(p)
+        omega = p.omega
+        sat_before = state6c.agents[1].satisfaction_broker
+        d_ids = [1]; d_chs = [:broker]; d_cnts = [2]
+        accepted = [(demander_id=1, counterparty_id=5, channel=:broker,
+                      is_principal=false, q_realized=3.0, q_predicted=2.5)]
+        update_satisfaction!(state6c.agents, accepted, d_ids, d_chs, d_cnts, state6c.cal, p)
+        expected = (1 - omega) * sat_before + omega * ((3.0 - state6c.cal.phi) / 2)
+        @test state6c.agents[1].satisfaction_broker ≈ expected
     end
 
     @testset "Principal-mode satisfaction: no fee deducted" begin
         state7 = initialize_model(default_params(N=30, T=5, T_burn=1, K=3, seed=77, enable_principal=true))
         omega = p.omega
         sat_before = state7.agents[1].satisfaction_broker
-        d_ids = [1]; d_chs = [:broker]
+        d_ids = [1]; d_chs = [:broker]; d_cnts = [2]
         accepted = [(demander_id=1, counterparty_id=5, channel=:broker,
                       is_principal=true, q_realized=3.0, q_predicted=2.5)]
-        update_satisfaction!(state7.agents, accepted, d_ids, d_chs, state7.cal, state7.params)
+        update_satisfaction!(state7.agents, accepted, d_ids, d_chs, d_cnts, state7.cal, state7.params)
         # No fee for principal mode: cost = 0
-        expected = (1 - omega) * sat_before + omega * 3.0
+        expected = (1 - omega) * sat_before + omega * (3.0 / 2)
         @test state7.agents[1].satisfaction_broker ≈ expected
     end
 

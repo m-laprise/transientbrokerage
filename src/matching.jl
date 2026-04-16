@@ -128,59 +128,54 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    update_satisfaction!(agents, accepted_matches, demand_agent_ids, demand_channels, cal, params)
+    update_satisfaction!(agents, accepted_matches, demand_agent_ids, demand_channels,
+                         demand_counts, cal, params)
 
 Update satisfaction indices for all agents that had demand this period.
-Multiple same-channel outcomes are averaged into a single EWMA update.
-No-match penalty (decay toward zero) if all slots through a channel failed.
+Requested slots are the averaging unit: realized outcomes are summed over
+accepted matches, unfilled slots contribute zero output, and the total is
+divided by requested demand d_i. Self-search pays c_s per requested slot,
+regardless of whether that slot is filled; standard broker fees are charged
+only on successful standard brokered matches; principal-mode matches carry no
+demander fee.
 """
 function update_satisfaction!(agents::Vector{Agent},
                               accepted_matches::Vector{<:NamedTuple},
                               demand_agent_ids::Vector{Int},
                               demand_channels::Vector{Symbol},
+                              demand_counts::Vector{Int},
                               cal::CalibrationConstants,
                               params::ModelParams)
     omega = params.omega
 
-    # Group accepted matches by demander: accumulate sum and count per agent
+    # Group accepted matches by demander: accumulate realized output and the
+    # number of successful standard brokered placements.
     demander_sum = Dict{Int, Float64}()
-    demander_count = Dict{Int, Int}()
+    broker_standard_count = Dict{Int, Int}()
     for m in accepted_matches
         i = m.demander_id
-        cost = if m.channel == :self
-            cal.c_s
-        elseif m.is_principal
-            0.0
-        else
-            cal.phi
+        demander_sum[i] = get(demander_sum, i, 0.0) + m.q_realized
+        if m.channel == :broker && !m.is_principal
+            broker_standard_count[i] = get(broker_standard_count, i, 0) + 1
         end
-        tilde_q = m.q_realized - cost
-        demander_sum[i] = get(demander_sum, i, 0.0) + tilde_q
-        demander_count[i] = get(demander_count, i, 0) + 1
     end
 
     # Update each agent that had demand
     for idx in eachindex(demand_agent_ids)
         agent_id = demand_agent_ids[idx]
         channel = demand_channels[idx]
+        d_i = demand_counts[idx]
         agent = agents[agent_id]
-        n_matched = get(demander_count, agent_id, 0)
 
-        if n_matched > 0
-            tilde_q = demander_sum[agent_id] / n_matched
-            if channel == :self
-                agent.satisfaction_self = (1.0 - omega) * agent.satisfaction_self + omega * tilde_q
-            else
-                agent.satisfaction_broker = (1.0 - omega) * agent.satisfaction_broker + omega * tilde_q
-                agent.tried_broker = true
-            end
+        total_q = get(demander_sum, agent_id, 0.0)
+        if channel == :self
+            tilde_q = total_q / d_i - cal.c_s
+            agent.satisfaction_self = (1.0 - omega) * agent.satisfaction_self + omega * tilde_q
         else
-            if channel == :self
-                agent.satisfaction_self *= (1.0 - omega)
-            else
-                agent.satisfaction_broker *= (1.0 - omega)
-                agent.tried_broker = true
-            end
+            broker_fee = cal.phi * get(broker_standard_count, agent_id, 0)
+            tilde_q = (total_q - broker_fee) / d_i
+            agent.satisfaction_broker = (1.0 - omega) * agent.satisfaction_broker + omega * tilde_q
+            agent.tried_broker = true
         end
     end
 
@@ -196,8 +191,8 @@ end
 
 Agent chooses :self or :broker. Compares three scores:
 - score_self: EWMA satisfaction from past self-search outcomes
-- score_known: average of the best d_i known partners' quality minus c_s
-  (opportunity cost: "I already know good partners from prior matches")
+- score_known: average of the best d_i known partners' quality, net of the
+  per-slot self-search cost c_s
 - score_broker: EWMA broker satisfaction, or broker reputation if untried
 
 The agent outsources only if the broker beats both historical self-search
@@ -211,7 +206,8 @@ function outsourcing_decision(agent::Agent, agents::Vector{Agent},
     score_broker = agent.tried_broker ? agent.satisfaction_broker : broker_rep
 
     # Opportunity cost: best known partners the agent could reach directly.
-    # Collect partner_means for neighbors with capacity, take top d_i, average.
+    # Collect partner_means for neighbors with capacity, take top d_i, average,
+    # and deduct the per-slot self-search cost.
     nbr_vals = Float64[]
     for nbr in neighbors(G, agent.id)
         nbr == broker_node && continue

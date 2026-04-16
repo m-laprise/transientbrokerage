@@ -114,6 +114,8 @@ using Graphs: nv, degree
         @test metrics.period == 1
         @test metrics.n_total_matches >= 0
         @test 0.0 <= metrics.outsourcing_rate <= 1.0
+        @test 0.0 <= metrics.outsourcing_rate_demanders <= 1.0
+        @test 0 <= metrics.outsourced_slots <= metrics.total_demand
         @test isfinite(metrics.mean_satisfaction_self)
         @test isfinite(metrics.mean_satisfaction_broker)
     end

@@ -120,8 +120,10 @@ function collect_period_metrics(state::ModelState)
         # Outsourcing
         n_demanders = a.n_demanders,
         n_outsourced = a.n_outsourced,
+        outsourced_slots = a.outsourced_slots,
         total_demand = a.total_demand,
-        outsourcing_rate = a.n_demanders > 0 ? a.n_outsourced / a.n_demanders : 0.0,
+        outsourcing_rate = a.total_demand > 0 ? a.outsourced_slots / a.total_demand : 0.0,
+        outsourcing_rate_demanders = a.n_demanders > 0 ? a.n_outsourced / a.n_demanders : 0.0,
         # Access vs assessment
         access_count = a.access_count,
         assessment_count = a.assessment_count,
