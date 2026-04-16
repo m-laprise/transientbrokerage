@@ -84,6 +84,39 @@ using LinearAlgebra: normalize
         @test nn_step.b2 == nn_loop.b2
     end
 
+    @testset "train_nn_prefix! matches copied train_nn!" begin
+        rng = StableRNG(304)
+        nn0 = init_neural_net(8, 16, rng)
+        nn_prefix = NeuralNet(copy(nn0.W1), copy(nn0.b1), copy(nn0.w2), nn0.b2)
+        nn_copied = NeuralNet(copy(nn0.W1), copy(nn0.b1), copy(nn0.w2), nn0.b2)
+        grad_prefix = NNGradBuffers(nn_prefix)
+        grad_copied = NNGradBuffers(nn_copied)
+        X_full = randn(rng, 8, 32)
+        q_full = randn(rng, 32)
+        n_active = 20
+        lr = 0.01
+
+        TransientBrokerage.train_nn_prefix!(nn_prefix, grad_prefix, X_full, q_full, n_active, 5, lr)
+        train_nn!(nn_copied, grad_copied, Matrix(X_full[:, 1:n_active]), Vector(q_full[1:n_active]), 5, lr)
+
+        @test nn_prefix.W1 == nn_copied.W1
+        @test nn_prefix.b1 == nn_copied.b1
+        @test nn_prefix.w2 == nn_copied.w2
+        @test nn_prefix.b2 == nn_copied.b2
+    end
+
+    @testset "train_nn_prefix! is allocation-free after warmup" begin
+        rng = StableRNG(305)
+        nn = init_neural_net(8, 16, rng)
+        grad = NNGradBuffers(nn)
+        X_full = randn(rng, 8, 32)
+        q_full = randn(rng, 32)
+        n_active = 20
+
+        TransientBrokerage.train_nn_prefix!(nn, grad, X_full, q_full, n_active, 1, 0.01)
+        @test @allocated(TransientBrokerage.train_nn_prefix!(nn, grad, X_full, q_full, n_active, 1, 0.01)) == 0
+    end
+
     @testset "Hand-coded gradient matches Enzyme" begin
         rng = StableRNG(404)
         nn = init_neural_net(8, 16, rng)

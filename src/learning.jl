@@ -68,7 +68,7 @@ Buffers must be pre-allocated: Z_buf (d_in x cap), H_buf (h x cap), Y_out (cap).
 """
 function predict_nn_batch!(nn::NeuralNet, H_buf::Matrix{Float64},
                            Y_out::Vector{Float64}, Z_buf::Matrix{Float64}, n::Int)
-    h, d_in = size(nn.W1)
+    h = size(nn.W1, 1)
     b1 = nn.b1; w2 = nn.w2; b2 = nn.b2
 
     # H[:,1:n] = W1 * Z[:,1:n]  — use gemm on contiguous column block
@@ -157,21 +157,34 @@ Backward (MSE on full batch, no regularization):
 function train_step!(nn::NeuralNet, grad::NNGradBuffers,
                      X::Matrix{Float64}, q::Vector{Float64},
                      lr::Float64)
-    h, d_in = size(nn.W1)
-    n = length(q)
+    train_step_prefix!(nn, grad, X, q, length(q), lr)
+    return nothing
+end
+
+"""
+    train_step_prefix!(nn, grad, X, q, n, lr)
+
+One vanilla-GD step on the first `n` columns/elements of contiguous training
+buffers `X` and `q`. This supports broker training directly on the active prefix
+of the preallocated symmetry-augmented buffer without recopying it.
+"""
+function train_step_prefix!(nn::NeuralNet, grad::NNGradBuffers,
+                            X::Matrix{Float64}, q::Vector{Float64},
+                            n::Int, lr::Float64)
+    h = size(nn.W1, 1)
     ensure_nn_buffers!(grad, h, n)
 
     Z1 = grad.Z1; A = grad.A; dZ1 = grad.dZ1; Y = grad.Y
     b1 = nn.b1; w2 = nn.w2; b2 = nn.b2
 
-    # ── Forward: Z1 = W1 * X  (h x n) ────────────────────────────────────────
-    # Use views clipped to the current batch size so BLAS sees tight dims.
+    Xv   = view(X, :, 1:n)
+    qv   = view(q, 1:n)
     Z1v  = view(Z1,  :, 1:n)
     Av   = view(A,   :, 1:n)
     dZ1v = view(dZ1, :, 1:n)
     Yv   = view(Y, 1:n)
 
-    mul!(Z1v, nn.W1, X)
+    BLAS.gemm!('N', 'N', 1.0, nn.W1, Xv, 0.0, Z1v)
 
     # Z1 += b1 (broadcast along columns), A = relu(Z1)
     @inbounds for j in 1:n, i in 1:h
@@ -181,7 +194,7 @@ function train_step!(nn::NeuralNet, grad::NNGradBuffers,
     end
 
     # Y = A' * w2 + b2
-    mul!(Yv, transpose(Av), w2)
+    BLAS.gemv!('T', 1.0, Av, w2, 0.0, Yv)
     @inbounds for j in 1:n
         Yv[j] += b2
     end
@@ -193,13 +206,13 @@ function train_step!(nn::NeuralNet, grad::NNGradBuffers,
     # r = Y - q   (store in Yv; reused below)
     sum_r = 0.0
     @inbounds for j in 1:n
-        rj = Yv[j] - q[j]
+        rj = Yv[j] - qv[j]
         Yv[j] = rj
         sum_r += rj
     end
 
     # dw2 = (2/n) * A * r
-    mul!(grad.dw2, Av, Yv, two_over_n, 0.0)
+    BLAS.gemv!('N', two_over_n, Av, Yv, 0.0, grad.dw2)
 
     # db2 = (2/n) * sum(r)
     grad.db2[] = two_over_n * sum_r
@@ -221,7 +234,7 @@ function train_step!(nn::NeuralNet, grad::NNGradBuffers,
     end
 
     # dW1 = dZ1 * X'   (h x d_in)
-    mul!(grad.dW1, dZ1v, transpose(X))
+    BLAS.gemm!('N', 'T', 1.0, dZ1v, Xv, 0.0, grad.dW1)
 
     # ── Weight update ────────────────────────────────────────────────────────
     @inbounds @simd for idx in eachindex(nn.W1)
@@ -240,7 +253,7 @@ end
     compute_adaptive_steps(E_init, n_new, n_total) -> Int
 
 Adaptive training schedule: more steps when data is new, fewer when history is large.
-Floor of 10 steps ensures meaningful updates even with large histories.
+Floor of 50 steps ensures meaningful updates even with large histories.
 """
 function compute_adaptive_steps(E_init::Int, n_new::Int, n_total::Int)::Int
     n_total <= 0 && return E_init
@@ -253,6 +266,15 @@ end
 Train the network for n_steps of vanilla GD on the full batch (X, q).
 """
 function train_nn!(nn::NeuralNet, grad::NNGradBuffers,
+                   X::Matrix{Float64}, q::Vector{Float64},
+                   n_steps::Int, lr::Float64)
+    for _ in 1:n_steps
+        train_step!(nn, grad, X, q, lr)
+    end
+    return nothing
+end
+
+function train_nn!(nn::NeuralNet, grad::NNGradBuffers,
                    X::AbstractMatrix{Float64}, q::AbstractVector{Float64},
                    n_steps::Int, lr::Float64)
     # BLAS mul! on SubArray hits a slow dispatch path (~5 MB allocs/call).
@@ -260,8 +282,25 @@ function train_nn!(nn::NeuralNet, grad::NNGradBuffers,
     # then run the tight train_step! loop on those (zero-alloc per step).
     Xc = Matrix{Float64}(X)
     qc = Vector{Float64}(q)
+    train_nn!(nn, grad, Xc, qc, n_steps, lr)
+    return nothing
+end
+
+"""
+    train_nn_prefix!(nn, grad, X, q, n_active, n_steps, lr)
+
+Train on the first `n_active` columns/elements of contiguous training buffers.
+Used by the broker to avoid recopying the active prefix of the symmetry-augmented
+training buffer on every retraining call.
+"""
+function train_nn_prefix!(nn::NeuralNet, grad::NNGradBuffers,
+                          X::Matrix{Float64}, q::Vector{Float64},
+                          n_active::Int, n_steps::Int, lr::Float64)
+    @assert 1 <= n_active <= size(X, 2) "train_nn_prefix! requires 1 <= n_active <= size(X, 2)"
+    @assert n_active <= length(q) "train_nn_prefix! requires n_active <= length(q)"
+
     for _ in 1:n_steps
-        train_step!(nn, grad, Xc, qc, lr)
+        train_step_prefix!(nn, grad, X, q, n_active, lr)
     end
     return nothing
 end
@@ -347,14 +386,11 @@ function train_broker_nn!(broker::Broker, params::ModelParams)
         broker.train_q[n_use + idx] = broker.history_q[j]
     end
 
-    # Train on views into the pre-allocated training buffers
-    X_view = view(broker.train_X, :, 1:n_aug)
-    q_view = view(broker.train_q, 1:n_aug)
-
     # Adaptive steps
     n_steps = compute_adaptive_steps(params.E_init, broker.n_new_obs, n)
     broker.n_new_obs = 0
 
-    train_nn!(broker.nn, broker.nn_grad, X_view, q_view, n_steps, params.eta_lr)
+    train_nn_prefix!(broker.nn, broker.nn_grad, broker.train_X, broker.train_q,
+                     n_aug, n_steps, params.eta_lr)
     return nothing
 end

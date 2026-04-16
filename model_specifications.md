@@ -493,7 +493,7 @@ At the start of the simulation, the state of the world must be initialized.
 >
 > *Initial model training.*
 > I.12. &emsp;For each agent $i$: train neural network on $\mathcal{H}_i$ for $E_{\text{init}}$ GD steps from random weights (§2a).
-> I.13. &emsp;Train broker's neural network on $\mathcal{H}_b$ (symmetry-augmented) for $E_{\text{init}}$ GD steps from random weights (§2c).
+> I.13. &emsp;Train broker's neural network on $\mathcal{H}_b$ (symmetry-augmented) for $E_{\text{init}}$ GD steps from random weights (§2c). In the implementation, the symmetry-augmented examples are written into a preallocated broker-side buffer and training uses the active prefix of that buffer directly.
 
 Each period proceeds through six steps (plus recording).
 
@@ -515,7 +515,7 @@ Each period proceeds through six steps (plus recording).
 >
 > &emsp;**2.1. Fit prediction models:**
 > 2.1.1. &emsp;For each agent $i$ whose parity matches the current period ($i \bmod 2 = t \bmod 2$): update neural network on $\mathcal{H}_{i}^t$ (§2b). Warm start; $E_t = \max(50, \lceil E_{\text{init}} \cdot n_{\text{new}} / n_i \rceil)$ GD steps on the sliding window of the most recent $W = 500$ observations. No regularization. Agents not selected in period $t$ keep accumulating $n_{\text{new}}$ observations and retrain the next period.
-> 2.1.2. &emsp;Update broker's neural network on $\mathcal{H}_b^t$ with symmetry-augmented data (§2c). Same adaptive schedule and window. No regularization.
+> 2.1.2. &emsp;Update broker's neural network on $\mathcal{H}_b^t$ with symmetry-augmented data (§2c). Same adaptive schedule and window. No regularization. In the implementation, the broker reuses a preallocated symmetry-augmented training buffer and trains on its active prefix directly.
 >
 > &emsp;**2.2. Self-searches:**
 > 2.2.1. &emsp;For each agent $i$ with $\text{decision}_i = \text{self}$:
