@@ -22,6 +22,21 @@ using LinearAlgebra: dot, norm, normalize, eigvals
         @test size(env.B) == (d, d)
     end
 
+    @testset "curve_geo path decouples c from realized agent draws" begin
+        rng_geo = StableRNG(12)
+        geo = TransientBrokerage.generate_curve_geometry(d, d, rng_geo)
+        rng_types = StableRNG(13)
+        types_1, _ = TransientBrokerage.generate_agent_types(50, geo, 0.5, rng_types)
+        types_2 = test_agent_types(d, 50, StableRNG(14))
+
+        env_1 = generate_matching_env(d, rho, 0.5, 0.25, types_1, StableRNG(99); curve_geo=geo)
+        env_2 = generate_matching_env(d, rho, 0.5, 0.25, types_2, StableRNG(99); curve_geo=geo)
+
+        @test env_1.c == env_2.c
+        @test env_1.A == env_2.A
+        @test env_1.B == env_2.B
+    end
+
     @testset "A and B are SPD" begin
         types = test_agent_types(d, 50, StableRNG(10))
         env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))

@@ -118,6 +118,7 @@ function validate_params(p::ModelParams)
     # Network
     @assert p.k >= 2 "k must be >= 2, got $(p.k)"
     @assert iseven(p.k) "k must be even for Watts-Strogatz, got $(p.k)"
+    @assert p.k < p.N "k must be < N for Watts-Strogatz, got k=$(p.k), N=$(p.N)"
     @assert 0.0 <= p.p_rewire <= 1.0 "p_rewire must be in [0, 1], got $(p.p_rewire)"
 
     # Economics

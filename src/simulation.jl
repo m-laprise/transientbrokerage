@@ -102,7 +102,7 @@ function collect_period_metrics(state::ModelState)
     end
 
     # Agent-level stats
-    n_available = count(ag -> isempty(ag.active_matches), agents)
+    n_available = count(ag -> available_capacity(ag, p.K) > 0, agents)
     mean_sat_self = mean(ag.satisfaction_self for ag in agents)
     mean_sat_broker = mean(ag.satisfaction_broker for ag in agents)
 

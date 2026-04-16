@@ -29,6 +29,10 @@ using StableRNGs: StableRNG
         @test state.cal.r ≈ R_BASE_FRAC * state.cal.q_cal
     end
 
+    @testset "parameter validation rejects invalid Watts-Strogatz degree" begin
+        @test_throws AssertionError default_params(N=10, k=10)
+    end
+
     @testset "agent types are unit vectors in R^d" begin
         @test all(length(a.type) == d for a in state.agents)
         @test all(isapprox(norm(a.type), 1.0; atol=1e-10) for a in state.agents)

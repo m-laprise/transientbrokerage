@@ -69,6 +69,18 @@ function rolling_mean(v::AbstractVector, window::Int)
     return out
 end
 
+"""Mean of the finite values in `v`, or NaN when no finite values are present."""
+function nanmean_or_nan(v)
+    total = 0.0
+    n = 0
+    for x in v
+        isnan(x) && continue
+        total += x
+        n += 1
+    end
+    return n == 0 ? NaN : total / n
+end
+
 """Access fraction = access / (access + assessment), or NaN."""
 function access_fraction(mdf::DataFrame)
     total = mdf.access_count .+ mdf.assessment_count

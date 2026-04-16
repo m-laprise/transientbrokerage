@@ -93,7 +93,7 @@ Complete model initialization following the pseudocode (§9, Steps I.1-I.13):
 3. Calibration (q_cal, r, phi, c_s)
 4. Network (Watts-Strogatz + broker node)
 5. Agent history seeding (5 neighbor pairings)
-6. Broker roster and history seeding (20 existing edges)
+6. Broker roster seeding and broker history seeding (up to 100 random roster-member observations)
 7. State variables (satisfaction, reputation)
 8. Neural network initial training (E_init steps)
 """
@@ -112,7 +112,7 @@ function initialize_model(params::ModelParams; sort_by_pc1::Bool = false)::Model
 
     # ── I.4: Matching environment (A, B, c) ──
     env = generate_matching_env(d, p.rho, p.delta, p.sigma_eps, sorted_types, rng;
-                                 sigma_x=p.sigma_x)
+                                 sigma_x=p.sigma_x, curve_geo=geo)
 
     # ── I.5-I.6: Calibration ──
     cal = calibrate(env, sorted_types, p, rng)

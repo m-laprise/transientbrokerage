@@ -170,7 +170,7 @@ for c in configs
     geo = generate_curve_geometry(p.d, p.s, rng)
     types, _ = generate_agent_types(p.N, geo, p.sigma_x, rng)
     env = generate_matching_env(p.d, p.rho, p.delta, p.sigma_eps, types, rng;
-                                sigma_x=p.sigma_x)
+                                sigma_x=p.sigma_x, curve_geo=geo)
 
     print("  $(c.tag) (rho=$(p.rho), delta=$(p.delta), s=$(p.s)) ... ")
     F, G, pc1, _ = build_ordered_output_matrix(types, env)

@@ -3,6 +3,8 @@
 
 Performance benchmarking and profiling for the v0.2 ABM.
 Reports median times per CLAUDE.md convention.
+Each benchmark sample uses fresh setup so mutating workloads do not decay into
+no-op timings across repetitions.
 
 Usage: julia --project --threads=auto scripts/benchmark.jl
 """
@@ -29,6 +31,26 @@ function summary_line(label::String, b::BenchmarkTools.Trial)
     flush(stdout)
 end
 
+function warmed_state(params::ModelParams; burnin::Int = 10)
+    state = initialize_model(params)
+    for _ in 1:burnin
+        step_period!(state)
+    end
+    return state
+end
+
+function state_with_pending_broker_training(params::ModelParams; burnin::Int = 10,
+                                            max_extra_steps::Int = 25)
+    state = warmed_state(params; burnin=burnin)
+    extra_steps = 0
+    while state.broker.n_new_obs == 0 && extra_steps < max_extra_steps
+        step_period!(state)
+        extra_steps += 1
+    end
+    state.broker.n_new_obs > 0 || error("Could not construct benchmark state with pending broker updates")
+    return state
+end
+
 println("=" ^ 80)
 println("BENCHMARK: v0.2 ABM (post-calibration)")
 println("=" ^ 80)
@@ -53,41 +75,35 @@ state = initialize_model(params)
 for _ in 1:10; step_period!(state); end  # burn-in to steady state
 
 println("\n── step_period! (after 10-period burn-in) ──")
-b_step = @benchmark step_period!($state) samples=10 evals=1
+b_step = @benchmark step_period!(state) setup=(state = warmed_state($params; burnin=10)) samples=10 evals=1
 summary_line("step_period!", b_step)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Per-step subsystems
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Re-initialize for isolated subsystem timing
-state = initialize_model(params)
-for _ in 1:10; step_period!(state); end
-
 println("\n── Subsystem timings (single call, median over repeats) ──")
 
 # Agent NN training (all agents)
 b_agent_train = @benchmark begin
-    for a in $state.agents
-        a.history_count > 0 && a.n_new_obs > 0 && train_agent_nn!(a, $state.params)
+    for a in state.agents
+        a.history_count > 0 && a.n_new_obs > 0 && train_agent_nn!(a, state.params)
     end
-end samples=10 evals=1
-summary_line("train all agents (N=1000)", b_agent_train)
+end setup=(state = warmed_state($params; burnin=10)) samples=10 evals=1
+summary_line("train all agents (N=500)", b_agent_train)
 
 # Broker NN training
-if state.broker.history_count > 0
-    b_broker_train = @benchmark train_broker_nn!($state.broker, $state.params) samples=10 evals=1
-    summary_line("train broker", b_broker_train)
-end
+b_broker_train = @benchmark train_broker_nn!(state.broker, state.params) setup=(state = state_with_pending_broker_training($params; burnin=10)) samples=10 evals=1
+summary_line("train broker", b_broker_train)
 
 # Entry/exit
 using Random: MersenneTwister
 rng_b = MersenneTwister(99)
-b_ee = @benchmark process_entry_exit!($state, $rng_b) samples=20 evals=1
-summary_line("process_entry_exit! (N=1000)", b_ee)
+b_ee = @benchmark process_entry_exit!(state, $rng_b) setup=(state = warmed_state($params; burnin=10)) samples=20 evals=1
+summary_line("process_entry_exit! (N=500)", b_ee)
 
 # Network measures
-b_net = @benchmark update_cached_network_measures!($state) samples=5 evals=1
+b_net = @benchmark update_cached_network_measures!(state) setup=(state = warmed_state($params; burnin=10)) samples=5 evals=1
 summary_line("update_cached_network_measures!", b_net)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -150,7 +166,7 @@ println("\n── Profile (5 full simulations) ──")
 Profile.clear()
 Profile.init(; n=10^7, delay=0.001)
 @profile begin
-    for _ in 1:3
+    for _ in 1:5
         run_simulation(params)
     end
 end

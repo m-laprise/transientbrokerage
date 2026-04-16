@@ -467,9 +467,9 @@ for (idx, c) in enumerate(configs)
     println("  Summary (last 50 periods):")
     println("    Principal share: $(round(mean(combined.principal_mode_share), digits=3))")
     println("    Outsourcing (slot share): $(round(mean(combined.outsourcing_rate), digits=3))")
-    println("    R² gap: $(round(mean(filter(!isnan, combined.r2_gap)), digits=3))")
-    println("    Mean capture surplus: $(round(mean(filter(!isnan, combined.capture_surplus_mean)), digits=3))")
-    println("    Mean broker dependency: $(round(mean(filter(!isnan, combined.broker_dependency_mean)), digits=3))")
+    println("    R² gap: $(round(nanmean_or_nan(combined.r2_gap), digits=3))")
+    println("    Mean capture surplus: $(round(nanmean_or_nan(combined.capture_surplus_mean), digits=3))")
+    println("    Mean broker dependency: $(round(nanmean_or_nan(combined.broker_dependency_mean), digits=3))")
     println()
 end
 

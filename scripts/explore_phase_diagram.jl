@@ -94,6 +94,28 @@ println("Phase diagram: $sweep_type ($n_total cells, $N_SEEDS seeds, N=$N_run, T
 RUN_M1 && println("  Including Model 1 (principal mode)")
 RERUN && println("  --rerun: forcing re-simulation")
 
+function nanmean_or_nan(v)
+    total = 0.0
+    n = 0
+    for x in v
+        isnan(x) && continue
+        total += x
+        n += 1
+    end
+    return n == 0 ? NaN : total / n
+end
+
+function maxabs_or_one(M)
+    max_abs = 0.0
+    found = false
+    for x in M
+        isnan(x) && continue
+        max_abs = max(max_abs, abs(x))
+        found = true
+    end
+    return found ? max_abs : 1.0
+end
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Run or load
 # ─────────────────────────────────────────────────────────────────────────────
@@ -102,15 +124,15 @@ function steady_state_metrics(dfs::Vector, T_burn)
     tails = [df[df.period .> T_burn, :] for df in dfs]
     combined = vcat(tails...)
     return (
-        r2_gap      = mean(filter(!isnan, combined.r2_gap)),
-        broker_r2   = mean(filter(!isnan, combined.broker_holdout_r2)),
-        agent_r2    = mean(filter(!isnan, combined.agent_holdout_r2)),
+        r2_gap      = nanmean_or_nan(combined.r2_gap),
+        broker_r2   = nanmean_or_nan(combined.broker_holdout_r2),
+        agent_r2    = nanmean_or_nan(combined.agent_holdout_r2),
         outsourcing = mean(combined.outsourcing_rate),
         betweenness = mean(combined.betweenness),
-        broker_rank = mean(filter(!isnan, combined.broker_holdout_rank)),
-        agent_rank  = mean(filter(!isnan, combined.agent_holdout_rank)),
-        q_self      = mean(filter(!isnan, combined.q_self_mean)),
-        q_broker    = mean(filter(!isnan, combined.q_broker_standard_mean)),
+        broker_rank = nanmean_or_nan(combined.broker_holdout_rank),
+        agent_rank  = nanmean_or_nan(combined.agent_holdout_rank),
+        q_self      = nanmean_or_nan(combined.q_self_mean),
+        q_broker    = nanmean_or_nan(combined.q_broker_standard_mean),
         principal_share = mean(combined.principal_mode_share),
     )
 end
@@ -176,7 +198,7 @@ end
 function plot_heatmap(M, title_str, filename;
                       colormap=:RdBu, colorrange=nothing, label="")
     fig = Figure(size=(700, 500))
-    cr = colorrange === nothing ? let m = maximum(abs, filter(!isnan, M)); (-m, m) end : colorrange
+    cr = colorrange === nothing ? let m = maxabs_or_one(M); (-m, m) end : colorrange
     ax = Axis(fig[1, 1]; title=title_str,
               xlabel="rho", ylabel=y_label,
               xticks=(1:n_rho, string.(rho_vals)),

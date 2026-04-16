@@ -19,21 +19,32 @@ using LinearAlgebra: dot, mul!, norm, normalize, eigvals, tr
 using Random: AbstractRNG
 
 """
-    generate_matching_env(d, rho, delta, sigma_eps, agent_types, rng; sigma_x) -> MatchingEnv
+    generate_matching_env(d, rho, delta, sigma_eps, agent_types, rng; sigma_x, curve_geo) -> MatchingEnv
 
 Build the matching environment:
-- Ideal type c drawn as perturbation of a random agent's curve position
+- Ideal type `c` drawn as a perturbation of a fresh random curve position when
+  `curve_geo` is provided (the model-specification path)
+- Otherwise, for callers that only have realized agent types, fall back to a
+  perturbation of a sampled realized type
 - A = M_A'M_A (SPD interaction matrix)
 - B = M_B'M_B (SPD regime matrix)
 """
 function generate_matching_env(d::Int, rho::Float64, delta::Float64, sigma_eps::Float64,
                                 agent_types::Vector{Vector{Float64}},
                                 rng::AbstractRNG;
-                                sigma_x::Float64 = 0.5)::MatchingEnv
+                                sigma_x::Float64 = 0.5,
+                                curve_geo::Union{CurveGeometry, Nothing} = nothing)::MatchingEnv
     sigma_per_dim = sigma_x / sqrt(d)
 
-    # Ideal type c: perturbation of a random agent type
-    ref = agent_types[rand(rng, 1:length(agent_types))]
+    # Ideal type c: perturbation of a fresh random curve position per spec when
+    # the generating geometry is available; otherwise fall back to a sampled
+    # realized type for callers using the lower-level API directly.
+    if curve_geo !== nothing
+        @assert curve_geo.d == d "curve_geo.d must equal d"
+    end
+    ref = curve_geo === nothing ?
+        agent_types[rand(rng, 1:length(agent_types))] :
+        curve_point(rand(rng), curve_geo)
     c = ref .+ sigma_per_dim .* randn(rng, d)
 
     # SPD interaction matrix: A = M_A'M_A, normalized so E[x'Ax] ≈ 1 for unit vectors

@@ -24,6 +24,24 @@ using TransientBrokerage
         @test isapprox(pq.bias, 3.0 - 5.5; atol=0.01)
     end
 
+    @testset "compute_prediction_quality: uses standard R² denominator" begin
+        pred = fill(3.0, 5)
+        real = collect(1.0:5.0)
+        pq = compute_prediction_quality(pred, real)
+        @test pq.r_squared ≈ 0.0
+        @test pq.bias ≈ 0.0
+        @test isnan(pq.rank_corr)
+    end
+
+    @testset "compute_prediction_quality: accepts views without copying" begin
+        pred = collect(0.0:6.0)
+        real = collect(1.0:7.0)
+        pq = compute_prediction_quality(@view(pred[2:6]), @view(real[2:6]))
+        @test pq.r_squared ≈ 0.5
+        @test pq.bias ≈ -1.0
+        @test pq.rank_corr ≈ 1.0
+    end
+
     @testset "compute_prediction_quality: perfect rank, wrong scale" begin
         pred = [10.0, 20.0, 30.0, 40.0, 50.0]
         real = [1.0, 2.0, 3.0, 4.0, 5.0]

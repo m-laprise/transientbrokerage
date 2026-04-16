@@ -22,22 +22,34 @@ using Base.Threads: @threads, nthreads
 """
     compute_prediction_quality(predicted, realized; sigma_eps=0.10) -> PredictionQuality
 
-Compute R², bias, and Spearman rank correlation between predicted and realized values.
-Returns NaN for all metrics if fewer than 5 observations or if the variance of realized
-values is below sigma_eps^2 / 6 (too little signal to meaningfully evaluate R²).
+Compute standard R², bias, and Spearman rank correlation between predicted and
+realized values. R² uses the usual `1 - SSE / SST` definition, equivalently
+`1 - MSE / var(realized; corrected=false)`.
+
+Returns NaN for all metrics if fewer than 5 observations or if the population
+variance of realized values is below `sigma_eps^2 / 6` (too little signal to
+meaningfully evaluate R²).
 """
-function compute_prediction_quality(predicted::Vector{Float64}, realized::Vector{Float64};
+function compute_prediction_quality(predicted::AbstractVector{<:Real},
+                                    realized::AbstractVector{<:Real};
                                     sigma_eps::Float64 = 0.10)::PredictionQuality
     n = length(predicted)
     n < 5 && return PredictionQuality(NaN, NaN, NaN)
     @assert n == length(realized)
 
-    var_realized = var(realized)
+    var_realized = var(realized; corrected=false)
     var_realized < sigma_eps^2 / 6 && return PredictionQuality(NaN, NaN, NaN)
 
-    mse = sum((predicted .- realized).^2) / n
+    err_sum = 0.0
+    sq_err_sum = 0.0
+    @inbounds for idx in eachindex(predicted, realized)
+        err = predicted[idx] - realized[idx]
+        err_sum += err
+        sq_err_sum += err * err
+    end
+    mse = sq_err_sum / n
     r_squared = 1.0 - mse / var_realized
-    bias = mean(predicted .- realized)
+    bias = err_sum / n
     rank_corr = corspearman(predicted, realized)
 
     return PredictionQuality(r_squared, bias, rank_corr)

@@ -60,8 +60,10 @@ end
     enter_agent!(state, agent_id, rng)
 
 Replace an exited agent with a fresh entrant at the same node index.
-New type from curve + noise, empty history, satisfaction at q_cal,
-floor(k/2) edges to type-similar neighbors.
+New type from curve + noise, empty history, `floor(k/2)` edges to
+type-similar neighbors, self-satisfaction initialized from new neighbors'
+mean self-satisfaction, and broker-satisfaction initialized from the current
+broker reputation.
 """
 function enter_agent!(state::ModelState, agent_id::Int, rng::AbstractRNG)
     p = state.params

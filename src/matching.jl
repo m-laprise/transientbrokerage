@@ -14,12 +14,16 @@ using Graphs: has_edge, neighbors, SimpleGraph
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    sequential_match_formation!(proposals, agents, broker, env, G, params, cal, rng)
-        -> Vector{NamedTuple}
+    sequential_match_formation!(proposals, agents, broker, env, G, params, cal, rng;
+                                remaining_cap=nothing, accepted_matches=nothing)
 
 Process all proposals in random order. Check both sides' capacity; counterparty
 evaluates independently (history average for known neighbors, NN prediction for
 strangers). Returns a vector of accepted match records.
+
+If `remaining_cap` is provided, it is reused as the mutable per-period capacity
+tracker instead of allocating a fresh vector.
+If `accepted_matches` is provided, it is emptied and reused as the output buffer.
 
 Each accepted match record is a NamedTuple with fields:
   demander_id, counterparty_id, channel, is_principal, q_realized, q_predicted
@@ -31,9 +35,14 @@ function sequential_match_formation!(proposals::Vector{ProposedMatch},
                                       G::SimpleGraph,
                                       params::ModelParams,
                                       cal::CalibrationConstants,
-                                      rng::AbstractRNG)
-    accepted = NamedTuple{(:demander_id, :counterparty_id, :channel, :is_principal, :q_realized, :q_predicted, :ask_j),
-                          Tuple{Int, Int, Symbol, Bool, Float64, Float64, Float64}}[]
+                                      rng::AbstractRNG;
+                                      remaining_cap::Union{Vector{Int}, Nothing} = nothing,
+                                      accepted_matches::Union{Vector{AcceptedMatch}, Nothing} = nothing)
+    accepted = if isnothing(accepted_matches)
+        AcceptedMatch[]
+    else
+        empty!(accepted_matches)
+    end
     isempty(proposals) && return accepted
 
     N = length(agents)
@@ -46,7 +55,14 @@ function sequential_match_formation!(proposals::Vector{ProposedMatch},
     Bx_buf = Vector{Float64}(undef, d)
 
     # Mutable capacity counters (decremented on acceptance)
-    remaining_cap = [available_capacity(agents[i], K) for i in 1:N]
+    if isnothing(remaining_cap)
+        remaining_cap = Vector{Int}(undef, N)
+    elseif length(remaining_cap) != N
+        resize!(remaining_cap, N)
+    end
+    @inbounds for i in 1:N
+        remaining_cap[i] = available_capacity(agents[i], K)
+    end
 
     # Shuffle proposals
     shuffle!(rng, proposals)
@@ -129,7 +145,8 @@ end
 
 """
     update_satisfaction!(agents, accepted_matches, demand_agent_ids, demand_channels,
-                         demand_counts, cal, params)
+                         demand_counts, cal, params; demander_sum=nothing,
+                         broker_standard_count=nothing)
 
 Update satisfaction indices for all agents that had demand this period.
 Requested slots are the averaging unit: realized outcomes are summed over
@@ -145,18 +162,36 @@ function update_satisfaction!(agents::Vector{Agent},
                               demand_channels::Vector{Symbol},
                               demand_counts::Vector{Int},
                               cal::CalibrationConstants,
-                              params::ModelParams)
+                              params::ModelParams;
+                              demander_sum::Union{Vector{Float64}, Nothing} = nothing,
+                              broker_standard_count::Union{Vector{Int}, Nothing} = nothing)
     omega = params.omega
+    n_agents = length(agents)
+
+    if isnothing(demander_sum)
+        demander_sum = zeros(Float64, n_agents)
+    elseif length(demander_sum) != n_agents
+        resize!(demander_sum, n_agents)
+    end
+    if isnothing(broker_standard_count)
+        broker_standard_count = zeros(Int, n_agents)
+    elseif length(broker_standard_count) != n_agents
+        resize!(broker_standard_count, n_agents)
+    end
+
+    # Reset only demanders that may be read below.
+    @inbounds for agent_id in demand_agent_ids
+        demander_sum[agent_id] = 0.0
+        broker_standard_count[agent_id] = 0
+    end
 
     # Group accepted matches by demander: accumulate realized output and the
     # number of successful standard brokered placements.
-    demander_sum = Dict{Int, Float64}()
-    broker_standard_count = Dict{Int, Int}()
     for m in accepted_matches
         i = m.demander_id
-        demander_sum[i] = get(demander_sum, i, 0.0) + m.q_realized
+        demander_sum[i] += m.q_realized
         if m.channel == :broker && !m.is_principal
-            broker_standard_count[i] = get(broker_standard_count, i, 0) + 1
+            broker_standard_count[i] += 1
         end
     end
 
@@ -167,12 +202,12 @@ function update_satisfaction!(agents::Vector{Agent},
         d_i = demand_counts[idx]
         agent = agents[agent_id]
 
-        total_q = get(demander_sum, agent_id, 0.0)
+        total_q = demander_sum[agent_id]
         if channel == :self
             tilde_q = total_q / d_i - cal.c_s
             agent.satisfaction_self = (1.0 - omega) * agent.satisfaction_self + omega * tilde_q
         else
-            broker_fee = cal.phi * get(broker_standard_count, agent_id, 0)
+            broker_fee = cal.phi * broker_standard_count[agent_id]
             tilde_q = (total_q - broker_fee) / d_i
             agent.satisfaction_broker = (1.0 - omega) * agent.satisfaction_broker + omega * tilde_q
             agent.tried_broker = true

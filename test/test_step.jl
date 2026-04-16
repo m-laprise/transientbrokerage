@@ -118,5 +118,6 @@ using Graphs: nv, degree
         @test 0 <= metrics.outsourced_slots <= metrics.total_demand
         @test isfinite(metrics.mean_satisfaction_self)
         @test isfinite(metrics.mean_satisfaction_broker)
+        @test metrics.n_available == count(a -> available_capacity(a, p.K) > 0, state.agents)
     end
 end

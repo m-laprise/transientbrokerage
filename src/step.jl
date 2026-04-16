@@ -27,6 +27,17 @@ Execute one complete period of the simulation.
 """
 agent_retrains_this_period(agent_id::Int, period::Int)::Bool = isodd(agent_id) == isodd(period)
 
+function prefix_rmse(predicted::AbstractVector{<:Real},
+                     realized::AbstractVector{<:Real},
+                     n::Int)::Float64
+    sq_err_sum = 0.0
+    @inbounds for idx in 1:n
+        err = predicted[idx] - realized[idx]
+        sq_err_sum += err * err
+    end
+    return sqrt(sq_err_sum / n)
+end
+
 function step_period!(state::ModelState)
     state.period += 1
     p = state.params
@@ -125,7 +136,7 @@ function step_period!(state::ModelState)
     end
 
     # 2.2: Self-searches (workspace reused across agents, appending into all_proposals)
-    all_proposals = ProposedMatch[]
+    all_proposals = ws.all_proposals; empty!(all_proposals)
     for idx in eachindex(demand_agent_ids)
         if demand_channels[idx] == :self
             self_search(agents[demand_agent_ids[idx]], agents, G, broker.node_id, p, rng,
@@ -156,7 +167,9 @@ function step_period!(state::ModelState)
     # ══════════════════════════════════════════════════════════════════════
     # Step 3: Match formation (sequential acceptance)
     # ══════════════════════════════════════════════════════════════════════
-    accepted = sequential_match_formation!(all_proposals, agents, broker, env, G, p, cal, rng)
+    accepted = sequential_match_formation!(all_proposals, agents, broker, env, G, p, cal, rng;
+                                           remaining_cap=ws.remaining_cap,
+                                           accepted_matches=ws.accepted_matches)
 
     # ══════════════════════════════════════════════════════════════════════
     # Step 4: Learning and state updates
@@ -165,7 +178,9 @@ function step_period!(state::ModelState)
     # 4.1: Histories already recorded in sequential_match_formation!
 
     # 4.2: Satisfaction update
-    update_satisfaction!(agents, accepted, demand_agent_ids, demand_channels, demand_counts, cal, p)
+    update_satisfaction!(agents, accepted, demand_agent_ids, demand_channels, demand_counts, cal, p;
+                         demander_sum=ws.demander_q_sum,
+                         broker_standard_count=ws.broker_standard_count)
 
     # 4.3: Broker reputation
     update_broker_reputation!(broker, agents, broker_clients)
@@ -233,11 +248,13 @@ function step_period!(state::ModelState)
         ws.Bx_buf = Vector{Float64}(undef, d)
         ws.holdout_z_buf = Vector{Float64}(undef, 2 * d)
     end
+    length(ws.holdout_agent_preds) == n_partners || resize!(ws.holdout_agent_preds, n_partners)
+    length(ws.holdout_agent_trues) == n_partners || resize!(ws.holdout_agent_trues, n_partners)
+    length(ws.holdout_broker_preds) == n_partners || resize!(ws.holdout_broker_preds, n_partners)
     Ax_buf = ws.Ax_buf; Bx_buf = ws.Bx_buf; z_buf = ws.holdout_z_buf
-
-    agent_preds = Vector{Float64}(undef, n_partners)
-    agent_trues = Vector{Float64}(undef, n_partners)
-    broker_preds = Vector{Float64}(undef, n_partners)
+    agent_preds = ws.holdout_agent_preds
+    agent_trues = ws.holdout_agent_trues
+    broker_preds = ws.holdout_broker_preds
 
     agent_r2_sum = 0.0; agent_bias_sum = 0.0; agent_rank_sum = 0.0; agent_rmse_sum = 0.0
     broker_r2_sum = 0.0; broker_bias_sum = 0.0; broker_rank_sum = 0.0; broker_rmse_sum = 0.0
@@ -265,9 +282,9 @@ function step_period!(state::ModelState)
         end
 
         if n_valid >= 5
-            preds_v = agent_preds[1:n_valid]
-            trues_v = agent_trues[1:n_valid]
-            broker_v = broker_preds[1:n_valid]
+            preds_v = @view agent_preds[1:n_valid]
+            trues_v = @view agent_trues[1:n_valid]
+            broker_v = @view broker_preds[1:n_valid]
             se = env.sigma_eps
 
             pq_agent = compute_prediction_quality(preds_v, trues_v; sigma_eps=se)
@@ -275,7 +292,7 @@ function step_period!(state::ModelState)
                 agent_r2_sum += pq_agent.r_squared
                 agent_bias_sum += pq_agent.bias
                 agent_rank_sum += pq_agent.rank_corr
-                agent_rmse_sum += sqrt(mean((preds_v .- trues_v).^2))
+                agent_rmse_sum += prefix_rmse(agent_preds, agent_trues, n_valid)
                 n_agents_evaluated += 1
             end
 
@@ -284,7 +301,7 @@ function step_period!(state::ModelState)
                 broker_r2_sum += pq_broker.r_squared
                 broker_bias_sum += pq_broker.bias
                 broker_rank_sum += pq_broker.rank_corr
-                broker_rmse_sum += sqrt(mean((broker_v .- trues_v).^2))
+                broker_rmse_sum += prefix_rmse(broker_preds, agent_trues, n_valid)
                 n_broker_evaluated += 1
             end
         end

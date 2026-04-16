@@ -14,6 +14,17 @@ using Statistics: mean
 const OUTDIR = joinpath(@__DIR__, "..", "data", "figures")
 mkpath(OUTDIR)
 
+function nanmean_or_nan(v)
+    total = 0.0
+    n = 0
+    for x in v
+        isnan(x) && continue
+        total += x
+        n += 1
+    end
+    return n == 0 ? NaN : total / n
+end
+
 println("Running quick diagnostic (T=200, default params)...")
 @time state, df = run_simulation(default_params())
 
@@ -64,12 +75,12 @@ println("Saved: $outpath")
 println("\n=== Summary (last 50 periods) ===")
 tail = df[max(1, end-49):end, :]
 println("  Outsourcing rate: $(round(mean(tail.outsourcing_rate), digits=3))")
-println("  Broker holdout R²: $(round(mean(filter(!isnan, tail.broker_holdout_r2)), digits=3))")
-println("  Agent holdout R²: $(round(mean(filter(!isnan, tail.agent_holdout_r2)), digits=3))")
-println("  R² gap: $(round(mean(filter(!isnan, tail.r2_gap)), digits=3))")
+println("  Broker holdout R²: $(round(nanmean_or_nan(tail.broker_holdout_r2), digits=3))")
+println("  Agent holdout R²: $(round(nanmean_or_nan(tail.agent_holdout_r2), digits=3))")
+println("  R² gap: $(round(nanmean_or_nan(tail.r2_gap), digits=3))")
 println("  Betweenness: $(round(mean(tail.betweenness), digits=4))")
-println("  Mean self output: $(round(mean(filter(!isnan, tail.q_self_mean)), digits=3))")
-println("  Mean broker output: $(round(mean(filter(!isnan, tail.q_broker_standard_mean)), digits=3))")
+println("  Mean self output: $(round(nanmean_or_nan(tail.q_self_mean), digits=3))")
+println("  Mean broker output: $(round(nanmean_or_nan(tail.q_broker_standard_mean), digits=3))")
 println("  Roster: $(round(mean(tail.roster_size), digits=0))")
 println("  Broker history: $(round(mean(tail.broker_history_size), digits=0))")
 println("  Total matches/period: $(round(mean(tail.n_total_matches), digits=0))")

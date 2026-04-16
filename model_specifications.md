@@ -613,11 +613,11 @@ where $p_{bj} = 1/d_b$ is the proportion of the broker's ties invested in node $
 
 **Winner's curse / selection bias.** Both agents and the broker select the counterparty with the highest *predicted* match quality from their candidate set ($\arg\max_j \hat{q}_{ij}$). When predictions are noisy, the selected counterparty's prediction $\hat{q}_{ij^*}$ is systematically inflated relative to the true match quality $f(\mathbf{x}_i, \mathbf{x}_{j^*})$, because the selection picks up positive noise realizations. This is the classic winner's curse.
 
-**Holdout $R^2$ (model quality).** Each period, 100 agents are sampled at random (excluding fresh entrants with no match history). For each sampled agent $i$, 40 random partners $j$ are drawn, and both agent $i$'s neural network and the broker's neural network predict the noiseless true match quality $f(\mathbf{x}_i, \mathbf{x}_j)$ for each partner. Per-agent $R^2$, bias, and rank correlation are computed for each model, then averaged across the sampled agents. Because both models are evaluated on the same agent-partner sets, the resulting metrics are directly comparable: any gap reflects the models' relative quality, not differences in evaluation samples.
+**Holdout $R^2$ (model quality).** Each period, 100 agents are sampled at random (excluding fresh entrants with no match history). For each sampled agent $i$, 40 random partners $j$ are drawn, and both agent $i$'s neural network and the broker's neural network predict the noiseless true match quality $f(\mathbf{x}_i, \mathbf{x}_j)$ for each partner. Per-agent $R^2$, bias, and rank correlation are computed for each model, then averaged across the sampled agents. The implementation uses the standard $R^2 = 1 - \text{SSE}/\text{SST}$ definition, equivalently $1 - \text{MSE}/\operatorname{Var}_{\text{pop}}(q)$ with the population variance denominator. Because both models are evaluated on the same agent-partner sets, the resulting metrics are directly comparable: any gap reflects the models' relative quality, not differences in evaluation samples.
 
 **Selected-sample metrics.** Three metrics are computed each period over all matches formed through each channel (self-search or brokered) that period:
 
-- *Selected $R^2$* $= 1 - \text{MSE}/\text{Var}(q)$. Because matched counterparties are those with the highest predictions, this sample is subject to the winner's curse: predictions are systematically inflated relative to outcomes, depressing $R^2$.
+- *Selected $R^2$* $= 1 - \text{SSE}/\text{SST} = 1 - \text{MSE}/\operatorname{Var}_{\text{pop}}(q)$. Because matched counterparties are those with the highest predictions, this sample is subject to the winner's curse: predictions are systematically inflated relative to outcomes, depressing $R^2$.
 
 - *Bias* $= \frac{1}{n}\sum(\hat{q} - q)$. Tracks systematic over- or underprediction. Positive bias is expected in the selected sample due to the winner's curse.
 
@@ -644,6 +644,8 @@ The broker-agent gap in holdout $R^2$ is the purest measure of the informational
 **Outsourcing rate.** Fraction of demand slots that are outsourced to the broker: outsourced slots / total demand slots. A demander-level outsourcing share (fraction of demanders choosing the broker channel) is retained as a secondary diagnostic in the code, but the slot share is the primary quantity because the model's demand object is the slot.
 
 **Roster size.** Number of agents currently on the broker's roster (§7). Reflects the flow of recent broker clients: it rises with outsourcing activity and decays as agents age out after $L$ periods without outsourcing.
+
+**Available agents.** Number of agents with spare capacity at the time metrics are recorded, equivalently those with $|M_i^t| < K$. This is a capacity-based availability count, not merely a count of fully idle agents.
 
 ## Part II. Parameters, Calibration, and Initialization
 

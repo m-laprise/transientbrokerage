@@ -189,6 +189,12 @@ struct ProposedMatch
     ask_j::Float64          # acquisition reservation cached at mode selection; NaN if unused
 end
 
+"""Accepted match record emitted by sequential formation and consumed later in the same step."""
+const AcceptedMatch = NamedTuple{
+    (:demander_id, :counterparty_id, :channel, :is_principal, :q_realized, :q_predicted, :ask_j),
+    Tuple{Int, Int, Symbol, Bool, Float64, Float64, Float64},
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Broker
 # ─────────────────────────────────────────────────────────────────────────────
@@ -370,7 +376,7 @@ Base.@kwdef mutable struct PeriodAccumulators
     roster_size::Int = 0
 end
 
-"""Zero all per-period fields, preserving cumulative revenue totals."""
+"""Zero all per-period fields while preserving vector capacity for reuse."""
 function reset_accumulators!(a::PeriodAccumulators)
     a.n_self_matches = 0
     a.n_broker_standard = 0
@@ -462,7 +468,7 @@ struct ModelParams
     enable_principal::Bool       # resource capture mode (default false)
 
     # Simulation
-    network_measure_interval::Int # M (default 10)
+    network_measure_interval::Int # M (default 20)
     T::Int                       # total periods (default 200)
     T_burn::Int                  # burn-in periods (default 30)
     seed::Int                    # RNG seed
@@ -521,11 +527,18 @@ Base.@kwdef mutable struct SimWorkspace
     was_connected_i::Vector{Int} = Int[]  # pre-formation edge snapshot
     was_connected_j::Vector{Int} = Int[]
     remaining_cap::Vector{Int} = Int[]    # capacity tracker for match formation
+    demander_q_sum::Vector{Float64} = Float64[]   # realized output by demander id
+    broker_standard_count::Vector{Int} = Int[]    # successful standard broker matches by demander id
+    all_proposals::Vector{ProposedMatch} = ProposedMatch[]
+    accepted_matches::Vector{AcceptedMatch} = AcceptedMatch[]
 
     # Holdout evaluation scratch (reused each period in step.jl)
     Ax_buf::Vector{Float64} = Float64[]
     Bx_buf::Vector{Float64} = Float64[]
     holdout_z_buf::Vector{Float64} = Float64[]
+    holdout_agent_preds::Vector{Float64} = Float64[]
+    holdout_agent_trues::Vector{Float64} = Float64[]
+    holdout_broker_preds::Vector{Float64} = Float64[]
 end
 
 """Complete simulation state: all agents, broker, network, environment, and accumulators."""
