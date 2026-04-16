@@ -11,7 +11,6 @@ using LinearAlgebra: norm
         @test p.N == 1000
         @test p.d == 8
         @test p.K == 5
-        @test p.tau == 1
         @test p.p_demand == 0.50
         @test p.cost_wedge == 0.10
         @test p.n_strangers == 5
@@ -29,6 +28,7 @@ using LinearAlgebra: norm
 
     @testset "default_params rejects unknown kwargs" begin
         @test_throws ErrorException default_params(; bogus_param=42)
+        @test_throws ErrorException default_params(; tau=1)
     end
 
     @testset "validate_params catches invalid values" begin
@@ -37,7 +37,6 @@ using LinearAlgebra: norm
         @test_throws AssertionError default_params(rho=-0.1)
         @test_throws AssertionError default_params(rho=1.5)
         @test_throws AssertionError default_params(K=0)
-        @test_throws AssertionError default_params(tau=0)
         @test_throws AssertionError default_params(cost_wedge=-0.01)
         @test_throws AssertionError default_params(cost_wedge=0.31)
         @test_throws AssertionError default_params(eta=-0.1)
@@ -71,9 +70,8 @@ using LinearAlgebra: norm
     end
 
     @testset "ActiveMatch construction" begin
-        am = ActiveMatch(5, 3, false, :self)
+        am = ActiveMatch(5, false, :self)
         @test am.partner_id == 5
-        @test am.formation_period == 3
         @test am.is_principal == false
         @test am.channel == :self
     end
@@ -204,10 +202,10 @@ using LinearAlgebra: norm
         )
 
         @test available_capacity(agent, 3) == 3
-        push!(agent.active_matches, ActiveMatch(2, 1, false, :self))
+        push!(agent.active_matches, ActiveMatch(2, false, :self))
         @test available_capacity(agent, 3) == 2
-        push!(agent.active_matches, ActiveMatch(3, 1, false, :broker))
-        push!(agent.active_matches, ActiveMatch(3, 1, false, :broker))  # duplicate partner allowed
+        push!(agent.active_matches, ActiveMatch(3, false, :broker))
+        push!(agent.active_matches, ActiveMatch(3, false, :broker))  # duplicate partner allowed
         @test available_capacity(agent, 3) == 0
     end
 

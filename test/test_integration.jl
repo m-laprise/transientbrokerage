@@ -56,14 +56,14 @@ using TransientBrokerage
     end
 
     @testset "High-K regime" begin
-        p = default_params(N=50, T=10, T_burn=2, seed=42, K=20, tau=1)
+        p = default_params(N=50, T=10, T_burn=2, seed=42, K=20)
         _, df = run_simulation(p)
         @test nrow(df) == 10
         @test df.n_total_matches[end] > 50
     end
 
-    @testset "High-tau regime" begin
-        p = default_params(N=50, T=10, T_burn=2, seed=42, K=2, tau=4)
+    @testset "Lower-K regime" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42, K=2)
         _, df = run_simulation(p)
         @test nrow(df) == 10
     end

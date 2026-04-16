@@ -3,7 +3,7 @@
 
 Main simulation loop: one period of the model (§9, Steps 0-6).
 
-Step 0: Match expirations
+Step 0: Current-period match reset
 Step 1: Demand generation and outsourcing decisions
 Step 2: Candidate evaluation (train NNs, self-search, broker allocation, mode selection)
 Step 3: Match formation (sequential acceptance)
@@ -45,18 +45,10 @@ function step_period!(state::ModelState)
         broker.capture_confidence_ready ? broker.capture_confidence_mae : NaN
 
     # ══════════════════════════════════════════════════════════════════════
-    # Step 0: Match expirations
+    # Step 0: Current-period match reset
     # ══════════════════════════════════════════════════════════════════════
-    if p.tau > 1
-        current = state.period
-        for agent in agents
-            filter!(m -> (current - m.formation_period) < p.tau, agent.active_matches)
-        end
-    else
-        # tau=1: all matches dissolve immediately
-        for agent in agents
-            empty!(agent.active_matches)
-        end
+    for agent in agents
+        empty!(agent.active_matches)
     end
 
     # ══════════════════════════════════════════════════════════════════════
@@ -164,17 +156,6 @@ function step_period!(state::ModelState)
     # Step 3: Match formation (sequential acceptance)
     # ══════════════════════════════════════════════════════════════════════
     accepted = sequential_match_formation!(all_proposals, agents, broker, env, G, p, cal, rng)
-
-    # Set formation period on active matches (was set to 0 during formation)
-    for agent in agents
-        for idx in eachindex(agent.active_matches)
-            am = agent.active_matches[idx]
-            if am.formation_period == 0
-                agent.active_matches[idx] = ActiveMatch(am.partner_id, state.period,
-                                                         am.is_principal, am.channel)
-            end
-        end
-    end
 
     # ══════════════════════════════════════════════════════════════════════
     # Step 4: Learning and state updates

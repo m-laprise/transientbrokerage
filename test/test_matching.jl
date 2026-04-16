@@ -36,7 +36,7 @@ using StableRNGs: StableRNG
         state2 = initialize_model(p)
         # Fill agent 5's capacity
         for _ in 1:p.K
-            push!(state2.agents[5].active_matches, ActiveMatch(10, 0, false, :self))
+            push!(state2.agents[5].active_matches, ActiveMatch(10, false, :self))
         end
         proposals = [ProposedMatch(1, 5, :self, 10.0, false, NaN)]
         for j in 1:30

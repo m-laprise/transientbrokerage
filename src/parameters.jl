@@ -35,9 +35,8 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
         :delta => 0.5,
         :sigma_x => 0.5,
         :sigma_eps => 0.10,
-        # Match lifecycle
+        # Match accounting
         :K => 5,
-        :tau => 1,
         :p_demand => 0.50,
         # Network
         :k => 6,
@@ -74,7 +73,6 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
         defaults[:sigma_x],
         defaults[:sigma_eps],
         defaults[:K],
-        defaults[:tau],
         defaults[:p_demand],
         defaults[:k],
         defaults[:p_rewire],
@@ -113,9 +111,8 @@ function validate_params(p::ModelParams)
     @assert p.sigma_x > 0.0 "sigma_x must be > 0, got $(p.sigma_x)"
     @assert p.sigma_eps >= 0.0 "sigma_eps must be >= 0, got $(p.sigma_eps)"
 
-    # Match lifecycle
+    # Match accounting
     @assert p.K >= 1 "K must be >= 1, got $(p.K)"
-    @assert p.tau >= 1 "tau must be >= 1, got $(p.tau)"
     @assert 0.0 < p.p_demand <= 1.0 "p_demand must be in (0, 1], got $(p.p_demand)"
 
     # Network

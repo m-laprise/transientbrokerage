@@ -70,7 +70,7 @@ using StableRNGs: StableRNG
 
     @testset "Broker allocation respects capacity" begin
         for _ in 1:p.K
-            push!(agents[2].active_matches, ActiveMatch(3, 0, false, :self))
+            push!(agents[2].active_matches, ActiveMatch(3, false, :self))
         end
         push!(broker.roster, 2)
         client_demands = [(1, 1)]

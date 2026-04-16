@@ -64,14 +64,13 @@ function ensure_nn_buffers!(grad::NNGradBuffers, h::Int, n::Int)
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Active match tracking
+# Current-period match tracking
 # ─────────────────────────────────────────────────────────────────────────────
 
-"""A single active match in an agent's match list. The same partner may appear
-multiple times (concurrent matches with the same counterparty are allowed)."""
+"""A single current-period match in an agent's match list. The same partner may
+appear multiple times (concurrent matches with the same counterparty are allowed)."""
 struct ActiveMatch
     partner_id::Int
-    formation_period::Int
     is_principal::Bool   # false = standard brokered or self-search; true = principal mode (Model 1)
     channel::Symbol      # :self or :broker
 end
@@ -85,7 +84,7 @@ Base.@kwdef mutable struct Agent
     id::Int
     type::Vector{Float64}                    # x_i on the unit sphere, length d
 
-    # Active matches (list, allows duplicates; length <= K)
+    # Current-period matches (list, allows duplicates; length <= K)
     active_matches::Vector{ActiveMatch} = ActiveMatch[]
 
     # Experience history: d x capacity matrix (column-major, doubling growth)
@@ -435,9 +434,8 @@ struct ModelParams
     sigma_x::Float64             # type noise scale (default 0.5)
     sigma_eps::Float64           # match output noise SD (default 0.10)
 
-    # Match lifecycle
+    # Match accounting
     K::Int                       # match capacity (default 5)
-    tau::Int                     # match duration in periods (default 1)
     p_demand::Float64            # per-slot demand probability (default 0.50)
 
     # Network

@@ -11,7 +11,7 @@ using DataFrames: nrow
 
     @testset "verify_invariants fails on invalid partner id" begin
         state = initialize_model(default_params(N=30, T=5, T_burn=1, seed=99))
-        push!(state.agents[1].active_matches, ActiveMatch(state.params.N + 1, 0, false, :self))
+        push!(state.agents[1].active_matches, ActiveMatch(state.params.N + 1, false, :self))
         @test_throws AssertionError verify_invariants(state)
     end
 

@@ -47,24 +47,12 @@ using Graphs: nv, degree
         @test total > 0  # at least some matches should form
     end
 
-    @testset "Match expirations at tau=1" begin
-        p = default_params(N=50, T=10, T_burn=2, seed=42, tau=1)
+    @testset "Current-period match ledger resets before demand generation" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42)
         state = initialize_model(p)
+        push!(state.agents[1].active_matches, ActiveMatch(0, false, :self))
         step_period!(state)
-        step_period!(state)
-        @test all(am.formation_period == state.period for a in state.agents for am in a.active_matches)
-    end
-
-    @testset "Match expirations at tau=4" begin
-        p = default_params(N=50, T=10, T_burn=2, seed=42, tau=4, K=3)
-        state = initialize_model(p)
-        # Run 5 periods
-        for _ in 1:5
-            step_period!(state)
-        end
-        # Some agents should have active matches (tau=4 means matches persist)
-        any_active = any(a -> !isempty(a.active_matches), state.agents)
-        @test any_active
+        @test all(am.partner_id != 0 for a in state.agents for am in a.active_matches)
     end
 
     @testset "Histories grow over time" begin

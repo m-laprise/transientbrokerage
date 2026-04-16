@@ -113,7 +113,7 @@ The model has $N$ agents (default 1000) and a single broker. Agents are nodes in
 Each agent $i$ is characterized by:
 
 - **Type** $\mathbf{x}_i \in \mathbb{R}^d$: a fixed vector of observable characteristics assigned at initialization. Types determine general quality and productive compatibility with other agents through the matching function (§1). The dimensionality $d = 8$ is fixed.
-- **Active matches** $M_i^t$: the list of active matches involving $i$. The same counterparty may appear multiple times (concurrent matches with the same partner are allowed). The length $|M_i^t| \leq K$ (default $K = 5$).
+- **Current-period matches** $M_i^t$: the list of matches involving $i$ that have already formed in period $t$. The same counterparty may appear multiple times (concurrent matches with the same partner are allowed). The length $|M_i^t| \leq K$ (default $K = 5$).
 - **Available capacity**: $K - |M_i^t|$, the number of additional matches the agent can enter.
 - **Experience history** $\mathcal{H}_{i}^t = \{(\mathbf{x}_j, q_{ij})\}$: the set of (other party's type, realized match output) pairs from all matches $i$ has participated in, regardless of whether $i$ was the demander or the counterparty (§2a). Because the matching function is symmetric (§1a), both roles produce the same prediction target.
 - **Satisfaction indices** $s_{i,c}^t$: one scalar per search channel $c \in \{\text{self}, \text{broker}\}$, tracking realized match value via an EWMA (§6a). Drives the outsourcing decision (§6).
@@ -362,7 +362,7 @@ The entrant is added to $G$ with $\lfloor k/2 \rfloor$ edges to agents sampled f
 
 ### 5. Search
 
-Each period, each of an agent's open capacity slots independently generates demand with probability $p_{\text{demand}}$ (default 0.50). An agent with $K - |M_i^t|$ open slots draws demand $d_i \sim \text{Binomial}(K - |M_i^t|, \; p_{\text{demand}})$ times. Each demand is resolved independently: the agent chooses self-search or broker (§6) and evaluates candidates separately for each slot. The same counterparty may be selected for multiple slots in the same period if it has the highest evaluated quality and both parties have remaining capacity.
+At the start of each period, all $K$ slots are open. Each slot independently generates demand with probability $p_{\text{demand}}$ (default 0.50), so agent $i$ draws demand $d_i \sim \text{Binomial}(K,\; p_{\text{demand}})$. Each demand is resolved independently: the agent chooses self-search or broker (§6) and evaluates candidates separately for each slot. The same counterparty may be selected for multiple slots in the same period if it has the highest evaluated quality and both parties have remaining capacity.
 
 #### 5a. Self-search
 
@@ -450,11 +450,11 @@ $$\text{Roster}^t = \{i : t_i^{\text{out}} > 0 \text{ and } t - t_i^{\text{out}}
 
 where $L$ is the **roster lag** (structural constant, default $L = 4$). Broker edges in $G$ are added and removed to mirror this set. An agent that outsources in period $t$ is placed on the roster immediately; an agent that last outsourced more than $L$ periods ago drops off. This rule decouples roster membership from the current-period outsourcing decision: a recent broker client remains on the roster for a few periods even if it self-searches or has no demand in the interim, smoothing "dry periods" when a known client has no new demand, and retaining recent contacts as available counterparties. Because $L$ is finite, the roster does not accumulate monotonically: inactive agents age out automatically.
 
-**Availability.** A roster member is available as a counterparty in a given period if it has spare capacity ($|M_j^t| < K$). An agent may act as both a demander (seeking matches for its own slots) and a counterparty (being matched with other demanders) in the same period, provided it has capacity for both. Self-matches are excluded: the broker never matches an agent with itself.
+**Availability.** A roster member is available as a counterparty in a given period if it has spare capacity ($|M_j^t| < K$). An agent may act as both a demander (seeking matches for its own slots) and a counterparty (being matched with other demanders) in the same period, provided it still has open slots. Self-matches are excluded: the broker never matches an agent with itself.
 
 ### 8. Match Lifecycle
 
-Matches last $\tau$ periods (default $\tau = 1$). During the match, both parties observe the realized match output. After $\tau$ periods, the match dissolves and both parties regain one unit of capacity.
+Matches are transactional within a period. Once a match forms, it occupies one slot for each side for the remainder of that period, both parties observe the realized match output immediately, and all slots reopen before the next period begins.
 
 **At match formation:**
 1. Realized output is drawn: $q_{ij} = Q + f(\mathbf{x}_i, \mathbf{x}_j) + \varepsilon_{ij}$.
@@ -462,9 +462,7 @@ Matches last $\tau$ periods (default $\tau = 1$). During the match, both parties
 3. If brokered, the broker adds $(\mathbf{x}_i, \mathbf{x}_j, q_{ij})$ to $\mathcal{H}_b$.
 4. An edge is added between $i$ and $j$ in $G$ (if not already present).
 
-**At match expiration** (after $\tau$ periods): the match is removed from both parties' active match lists $M_i^t$ and $M_j^t$. Both regain one unit of capacity.
-
-At $\tau = 1$ (the default), matches are transactional: they form and dissolve within the same period. All $K$ slots are available at the start of each period, and the agent draws demand $\text{Binomial}(K, p_{\text{demand}})$ times. At $\tau > 1$, matches persist across periods and capacity becomes binding as agents accumulate active matches that have not yet expired.
+**Before the next period begins:** clear the current-period match lists $M_i^t$ and $M_j^t$. Both sides regain the slot, so all $K$ slots are open again at the start of the next period.
 
 ### 9. Base Model Pseudocode
 
@@ -501,11 +499,11 @@ Each period proceeds through six steps (plus recording).
 
 > **PERIOD $t$:**
 >
-> **0. MATCH EXPIRATIONS**
-> 0.1. &emsp;For each active match that has lasted $\tau$ periods: remove from both parties' active match lists. Both regain one unit of capacity.
+> **0. CURRENT-PERIOD MATCH RESET**
+> 0.1. &emsp;For each agent $i$: set $M_i^t \leftarrow \emptyset$, so all $K$ slots are open at the start of period $t$.
 >
 > **1. DEMAND GENERATION AND OUTSOURCING DECISIONS**
-> 1.1. &emsp;For each agent $i$: draw demand count $d_i \sim \text{Binomial}(K - |M_i^t|, \; p_{\text{demand}})$.
+> 1.1. &emsp;For each agent $i$: draw demand count $d_i \sim \text{Binomial}(K,\; p_{\text{demand}})$.
 > 1.2. &emsp;For each agent $i$ with $d_i > 0$:
 > &emsp;&emsp;Compute $\text{score}_{\text{self}}, \text{score}_{\text{known}}, \text{score}_{\text{broker}}$ as in §6b.
 > &emsp;&emsp;$\text{decision}_i \leftarrow \text{broker}$ if $\text{score}_{\text{broker}} > \max(\text{score}_{\text{self}},\; \text{score}_{\text{known}})$; else $\text{self}$. Ties broken uniformly at random. (Channel choice applies to all $d_i$ slots.)
@@ -661,7 +659,7 @@ Parameters are organized into four categories reflecting their role in the analy
 | $k$ | Network mean degree | 6 | Watts-Strogatz ring lattice degree |
 | $p_{\text{rewire}}$ | Network rewiring probability | 0.1 | Watts-Strogatz rewiring |
 | $\omega$ | Satisfaction recency weight (§6a) | 0.3 | EWMA weight |
-| $p_{\text{demand}}$ | Per-slot demand probability | 0.50 | Per open capacity slot; $d_i \sim \text{Binomial}(K - \|M_i^t\|, p_{\text{demand}})$ |
+| $p_{\text{demand}}$ | Per-slot demand probability | 0.50 | All $K$ slots are open at period start; $d_i \sim \text{Binomial}(K, p_{\text{demand}})$ |
 | $n_s$ | Max strangers in self-search | 5 | Sampled uniformly from non-neighbors with capacity |
 | $\sigma_x$ | Type noise scale | 0.5 | Expected distance from agent to curve position |
 | $L$ | Roster lag (§7) | 4 | Agent stays on broker roster this many periods after last outsourcing |
@@ -698,18 +696,18 @@ Parameters are organized into four categories reflecting their role in the analy
 
 | Symbol | Meaning | Default | Sweep | Notes |
 |--------|---------|---------|-------|-------|
-| $\tau$ | Match duration (periods) | 1 | {1, 2, 4, 8} | Transactional at $\tau = 1$; relational at $\tau > 1$ |
 | $K$ | Match capacity | 5 | {1, 2, 5, 10, 20, 50} | Exclusive at $K = 1$; concurrent at $K > 1$ |
+| $p_{\text{demand}}$ | Per-slot demand probability | 0.50 | {0.10, 0.25, 0.50, 0.75, 0.90} | Higher values produce a thicker, faster-moving market |
 | $\eta$ | Agent entry/exit rate | 0.02 | {0.01, 0.02, 0.05, 0.10} | |
 | $\delta$ | Regime gain strength | 0.5 | {0, 0.25, 0.50, 0.75} | $\delta = 0$: no regime effect (pure statistical advantage) |
 
-The match lifecycle parameters $\tau$ and $K$ jointly determine the market regime. Because demand is per-slot, the effective activity rate scales with $K \cdot p_{\text{demand}}$: high-capacity agents generate more demands per period, reflecting their higher throughput. Different combinations map to the illustrative domains:
+The activity parameters $p_{\text{demand}}$ and $K$ jointly determine the market regime. Because demand is per-slot, the expected demand volume scales with $K \cdot p_{\text{demand}}$: high-capacity agents in high-demand environments generate more opportunities per period, reflecting a thicker, faster-moving market. Different combinations map to the illustrative domains:
 
-| Domain | $\tau$ | $K$ | Rationale |
-|--------|--------|-----|-----------|
-| Interdealer brokerage | 1 | 10–50 | Transactional; many concurrent positions |
-| Collector networks | 1 | 2–5 | Discrete transactions; moderate concurrency |
-| Import-export trading | 2–4 | 2–5 | Shipments span multiple periods; moderate concurrency |
+| Domain | $p_{\text{demand}}$ | $K$ | Rationale |
+|--------|---------------------|-----|-----------|
+| Interdealer brokerage | High | 10–50 | Frequent opportunities; many concurrent positions |
+| Collector networks | Moderate | 2–5 | Episodic transactions; moderate concurrency |
+| Import-export trading | Low to moderate | 2–5 | Slower opportunity flow; moderate concurrency |
 
 **Implementation parameters.** Control simulation scale.
 
@@ -1072,6 +1070,16 @@ The current Model 1 makes the capture decision **after** the broker has already 
 
 **Exclusivity under principal mode.** The base Model 1 uses per-slot independence: principal-mode matches consume one capacity slot, and other slots remain available for self-search. An alternative is full exclusivity ($\xi = 1$): an agent with any principal-mode match cannot self-search at all during that period, routing all demand through the broker. This produces total information freeze (the agent gains no new observations from any source) and stronger lock-in. With per-slot demand, an agent at $K = 5$ generates ~2.5 demands per period; under per-slot independence, some of these could go through self-search even if one slot is filled by a principal-mode match. Full exclusivity would block all self-search, significantly strengthening the lock-in. Comparing dynamics under per-slot independence and full exclusivity would test whether the full information freeze is necessary for the abrupt capture trajectory of Proposition 3a.
 
+#### 13f. Interpreting $K$ as Counterparty Capacity
+
+The current specification interprets $K$ as a per-period capacity in transactional slots: each accepted match consumes one slot for the demander and one slot for the counterparty for the remainder of the period, and repeated matches with the same partner in the same period are allowed if both parties retain capacity. A deferred alternative is to reinterpret $K$ as the maximum number of **concurrent counterparties** or active bilateral relationships an agent can maintain within a period.
+
+Under that alternative, an accepted match would no longer represent a single transaction-level placement, but the formation of a period-level commercial relationship. Repeated transactions between the same two parties within the period would be bundled into that relationship rather than modeled individually. This interpretation is closer to settings such as labor-market intermediation, where a match is naturally read as a filled bilateral position rather than a sequence of repeated trades.
+
+This reinterpretation has several conceptual advantages. The network edge created by an accepted match aligns more naturally with the object being modeled, since one accepted match would correspond to one active relationship. The support term in principal mode, $s_j^t / K$, would also become easier to read: breadth of prior demander relationships relative to the number of concurrent counterparties an agent can sustain. Likewise, supply scarcity under resource capture would become more relationship-based and easier to interpret.
+
+The tradeoff is that the model would change meaning, not just notation. Match output $q_{ij}$, search costs, broker fees, satisfaction updates, and capture surplus would all need to be reinterpreted at the relationship level rather than the transaction level. Principal-mode acquisition would become a stronger form of exclusivity, because occupying one of an agent's $K$ counterparty positions would block an entire relationship for the period rather than a single transaction slot. Repeated within-period trade volume between the same pair would no longer be observed directly. This could be a useful extension for domains where relationship formation is the relevant matching object, but it is not part of the current base model.
+
 ## Figures
 
 **Fig. 1.** The informational mechanism.
@@ -1108,7 +1116,7 @@ The current Model 1 makes the capture decision **after** the broker has already 
 - *Content:* $\rho$ on horizontal axis; broker-agent gap in holdout $R^2$; outsourcing rate at steady state.
 
 **Fig. S3.** OAT parameter sweeps.
-- *Content:* Grid of panels varying $\eta$, $\delta$, $\tau$, $K$ while holding others at defaults.
+- *Content:* Grid of panels varying $\eta$, $\delta$, $p_{\text{demand}}$, $K$ while holding others at defaults.
 
 **Fig. S4.** Network visualization snapshots.
 - *Content:* The network $G$ at early, middle, and late periods. Broker node positioned centrally. Under Model 1, late-period graph should show persistent structural holes between agents matched through the broker's principal mode.

@@ -92,9 +92,8 @@ function sequential_match_formation!(proposals::Vector{ProposedMatch},
         if pm.is_principal
             # Principal mode: broker learns, agents don't, no edge
             record_broker_history!(broker, agents[i].type, agents[j].type, q_realized)
-            # Active match entries (both sides)
-            push!(agents[i].active_matches, ActiveMatch(j, 0, true, :broker))  # period filled in step.jl
-            push!(agents[j].active_matches, ActiveMatch(i, 0, true, :broker))
+            push!(agents[i].active_matches, ActiveMatch(j, true, :broker))
+            push!(agents[j].active_matches, ActiveMatch(i, true, :broker))
             # §12h Step 4.1: counterparty j was the acquired counterparty
             agents[j].n_principal_acquired += 1
         else
@@ -107,8 +106,8 @@ function sequential_match_formation!(proposals::Vector{ProposedMatch},
                 record_broker_history!(broker, agents[i].type, agents[j].type, q_realized)
             end
             add_match_edge!(G, i, j)
-            push!(agents[i].active_matches, ActiveMatch(j, 0, false, pm.channel))
-            push!(agents[j].active_matches, ActiveMatch(i, 0, false, pm.channel))
+            push!(agents[i].active_matches, ActiveMatch(j, false, pm.channel))
+            push!(agents[j].active_matches, ActiveMatch(i, false, pm.channel))
         end
 
         # §12h Step 4.1: cumulative match counter (any role, any channel).
