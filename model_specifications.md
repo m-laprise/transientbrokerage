@@ -327,7 +327,14 @@ When the broker proposes a match, it applies the constraint using its own predic
 
 #### 3c. Search costs
 
-Both search channels incur costs. The broker charges a fixed per-match fee $\phi$ for each match it mediates. Self-search incurs a cost $c_s = \gamma_c \cdot \phi$ per match, reflecting the effort of evaluating candidates, conducting due diligence, and negotiating. The ratio $\gamma_c \in [0, 1]$ (default 0.5) parameterizes the relative cost of self-search: at $\gamma_c = 0$, self-search is free and the broker must overcome the full fee through better match quality; at $\gamma_c = 1$, both channels have the same cost and compete purely on match quality.
+Both search channels incur fixed per-match costs. Rather than calibrating the broker fee and self-search cost separately, the model uses a single **cost wedge** parameter $\Delta_c$ on the surplus scale $(\bar{q}_{\text{cal}} - r)$ and derives both channel costs from it:
+
+$$
+\phi = (0.15 + \Delta_c / 2)\cdot(\bar{q}_{\text{cal}} - r), \qquad
+c_s = (0.15 - \Delta_c / 2)\cdot(\bar{q}_{\text{cal}} - r).
+$$
+
+The midpoint `0.15` is fixed, so the average channel cost is held constant while $\Delta_c$ controls the economically relevant difference $\phi - c_s$. At $\Delta_c = 0$, both channels have the same cost. At the baseline $\Delta_c = 0.10$, the model reproduces the previous baseline calibration: $\phi = 0.20\cdot(\bar{q}_{\text{cal}} - r)$ and $c_s = 0.10\cdot(\bar{q}_{\text{cal}} - r)$. Larger $\Delta_c$ makes brokerage more expensive relative to self-search; at the upper bound $\Delta_c = 0.30$, self-search is free and the broker fee is $0.30\cdot(\bar{q}_{\text{cal}} - r)$.
 
 Both costs are fixed per match and independent of match quality. The broker fee $\phi$ is calibrated at initialization (§11b).
 
@@ -363,7 +370,7 @@ Agent $i$'s candidate pool has two components:
 
 **Known neighbors.** Direct network neighbors in $G$ with available capacity ($K - |M_j^t| > 0$). The agent has matched with these agents before (every edge in $G$ comes from a prior match or from initialization). For each known neighbor $j$, the agent evaluates quality using the **average of realized outcomes** from prior matches with $j$: $\bar{q}_{ij} = \frac{1}{n_{ij}} \sum q_{ij}^{(m)}$, where $n_{ij}$ is the number of times $i$ and $j$ have matched. This is a direct empirical estimate, not a model prediction.
 
-**Strangers.** $\min(n_s, |\text{eligible}|)$ agents sampled uniformly from the population (excluding current neighbors, current matches, and the broker node), where $n_s = 10$ (default) and eligible agents are those with available capacity. The agent has no prior history with these candidates and evaluates them using its **prediction model**: $\hat{q}_i(\mathbf{x}_j)$ (§2b). Strangers represent cold outreach: attending trade events, browsing listings, or following up on indirect referrals.
+**Strangers.** $\min(n_s, |\text{eligible}|)$ agents sampled uniformly from the population (excluding current neighbors, current matches, and the broker node), where $n_s = 5$ (default) and eligible agents are those with available capacity. The agent has no prior history with these candidates and evaluates them using its **prediction model**: $\hat{q}_i(\mathbf{x}_j)$ (§2b). Strangers represent cold outreach: attending trade events, browsing listings, or following up on indirect referrals.
 
 The agent selects the candidate with the highest evaluated quality (whether from history or prediction), provided the participation constraint is satisfied: the evaluation exceeds $r$ (§3b). If no candidate clears the threshold, no match is proposed and the no-match penalty applies (§6a).
 
@@ -473,7 +480,7 @@ At the start of the simulation, the state of the world must be initialized.
 >
 > *Calibration.*
 > I.5. &emsp;Compute $\bar{q}_{\text{cal}} = E[q]$ from 10,000 random agent pairs $(i, j)$ with $i, j$ drawn independently and uniformly from $\{1, \ldots, N\}$ (self-pairs $i = j$ are not filtered; at $N = 1000$ the resulting bias is $O(1/N)$ and negligible). Set $r \leftarrow 0.60 \cdot \bar{q}_{\text{cal}}$.
-> I.6. &emsp;Set broker fee $\phi$ (§11b).
+> I.6. &emsp;Set channel costs from the cost wedge $\Delta_c$: $\phi \leftarrow (0.15 + \Delta_c / 2)\cdot(\bar{q}_{\text{cal}} - r)$ and $c_s \leftarrow (0.15 - \Delta_c / 2)\cdot(\bar{q}_{\text{cal}} - r)$ (§11b).
 >
 > *Network.*
 > I.7. &emsp;Build $G$: Watts–Strogatz with $N$ nodes, degree $k$, rewiring $p_{\text{rewire}}$. Node order is random (non-assortative initial network).
@@ -655,7 +662,7 @@ Parameters are organized into four categories reflecting their role in the analy
 | $p_{\text{rewire}}$ | Network rewiring probability | 0.1 | Watts-Strogatz rewiring |
 | $\omega$ | Satisfaction recency weight (§6a) | 0.3 | EWMA weight |
 | $p_{\text{demand}}$ | Per-slot demand probability | 0.50 | Per open capacity slot; $d_i \sim \text{Binomial}(K - \|M_i^t\|, p_{\text{demand}})$ |
-| $n_s$ | Max strangers in self-search | 10 | Sampled uniformly from non-neighbors with capacity |
+| $n_s$ | Max strangers in self-search | 5 | Sampled uniformly from non-neighbors with capacity |
 | $\sigma_x$ | Type noise scale | 0.5 | Expected distance from agent to curve position |
 | $L$ | Roster lag (§7) | 4 | Agent stays on broker roster this many periods after last outsourcing |
 
@@ -672,8 +679,7 @@ Parameters are organized into four categories reflecting their role in the analy
 | $b_2^{(0)}$ | Initial output bias | $Q$ | Untrained networks predict population-mean quality rather than zero |
 | $\sigma_\varepsilon$ | Match output noise SD | 0.10 | |
 | $\delta$ | Regime gain strength (§1c) | 0.5 | $\delta = 0$: no regime effect; $\delta = 1$: maximum gain contrast |
-| $\alpha_\phi$ | Broker fee rate | 0.20 | $\phi = \alpha_\phi \cdot (\bar{q}_{\text{cal}} - r)$; §11b |
-| $\gamma_c$ | Self-search cost ratio | 0.5 | $c_s = \gamma_c \cdot \phi$; self-search cost as a fraction of broker fee |
+| $\Delta_c$ | Broker-minus-self cost wedge | 0.10 | $\phi = (0.15 + \Delta_c/2)\cdot(\bar{q}_{\text{cal}} - r)$, $c_s = (0.15 - \Delta_c/2)\cdot(\bar{q}_{\text{cal}} - r)$; §11b |
 
 **Phase diagram axes.** Primary parameters of interest.
 
@@ -714,9 +720,16 @@ The match lifecycle parameters $\tau$ and $K$ jointly determine the market regim
 | $T_{\text{burn}}$ | Burn-in periods (discarded) | 30 | — |
 | $M$ | Network measure interval | 10 | — |
 
-#### 11b. Broker fee calibration
+#### 11b. Search-cost calibration
 
-The broker fee $\phi$ is set to a fraction of the average match surplus: $\phi = \alpha_\phi \cdot (\bar{q}_{\text{cal}} - r)$, where $\alpha_\phi = 0.20$ (default). This ensures the fee is economically meaningful (large enough that outsourcing is a real cost) but not prohibitive (small enough that better match quality can justify the expense). The fee is computed once at initialization and held constant.
+The two channel costs are calibrated jointly from the average match surplus scale $(\bar{q}_{\text{cal}} - r)$ using a single cost-wedge parameter $\Delta_c$:
+
+$$
+\phi = (0.15 + \Delta_c / 2)\cdot(\bar{q}_{\text{cal}} - r), \qquad
+c_s = (0.15 - \Delta_c / 2)\cdot(\bar{q}_{\text{cal}} - r).
+$$
+
+This keeps the average channel cost fixed at $0.15\cdot(\bar{q}_{\text{cal}} - r)$ while letting the model vary the difference $\phi - c_s$ that matters directly for the outsourcing decision. In the default $\Delta_c = 0.10$, brokered search is more expensive than self-search but not prohibitively so. The two costs are computed once at initialization and held constant thereafter.
 
 #### 11c. Initial conditions
 
@@ -724,7 +737,7 @@ The initialization procedure is specified in the pseudocode (§9, steps I.1–I.
 
 - Agent types are drawn at random positions on the sinusoidal curve with noise, then projected to the unit sphere (§0).
 - The matching function parameters ($\mathbf{c}$, $\mathbf{A}$, $\mathbf{B}$) are drawn once and held fixed (§1).
-- Calibration quantities ($\bar{q}_{\text{cal}}$, $r$, $\phi$) are computed from 10,000 random agent pairs (§11b).
+- Calibration quantities ($\bar{q}_{\text{cal}}$, $r$, $\phi$, $c_s$) are computed from 10,000 random agent pairs (§11b).
 - Each agent's history is seeded with 5 pairings from its neighbors in $G$, ensuring initial predictions reflect the local network.
 - The broker's roster is seeded at $\lceil 0.20 \cdot N \rceil$ agents, and its history is seeded from 100 random roster member pairs.
 - All neural networks are trained from random weights for $E_{\text{init}}$ steps on their seed histories before the first period (§2a). These seed histories initialize predictive capability, but under Model 1 they do **not** initialize principal-mode confidence: principal mode is disabled until the broker has observed live brokered outcomes in the simulation (§12c).

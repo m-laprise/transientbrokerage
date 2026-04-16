@@ -13,6 +13,8 @@ using LinearAlgebra: norm
         @test p.K == 5
         @test p.tau == 1
         @test p.p_demand == 0.50
+        @test p.cost_wedge == 0.10
+        @test p.n_strangers == 5
         @test p.enable_principal == false
     end
 
@@ -35,6 +37,8 @@ using LinearAlgebra: norm
         @test_throws AssertionError default_params(rho=1.5)
         @test_throws AssertionError default_params(K=0)
         @test_throws AssertionError default_params(tau=0)
+        @test_throws AssertionError default_params(cost_wedge=-0.01)
+        @test_throws AssertionError default_params(cost_wedge=0.31)
         @test_throws AssertionError default_params(eta=-0.1)
         @test_throws AssertionError default_params(T=10, T_burn=15)
     end

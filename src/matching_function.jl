@@ -147,7 +147,10 @@ function calibrate(env::MatchingEnv,
     end
     q_cal = total / n_samples
     r = R_BASE_FRAC * q_cal
-    phi = params.alpha_phi * (q_cal - r)
-    c_s = params.gamma_c * phi
+    surplus_scale = q_cal - r
+    fee_rate = COST_LEVEL_MID + 0.5 * params.cost_wedge
+    self_rate = COST_LEVEL_MID - 0.5 * params.cost_wedge
+    phi = fee_rate * surplus_scale
+    c_s = self_rate * surplus_scale
     return CalibrationConstants(q_cal, r, phi, c_s)
 end

@@ -138,12 +138,26 @@ using LinearAlgebra: dot, norm, normalize, eigvals
         env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
         p = default_params()
         cal = calibrate(env, types, p, StableRNG(55))
+        surplus_scale = cal.q_cal - cal.r
         @test cal.q_cal > 0.0
         @test cal.r > 0.0
         @test cal.r ≈ R_BASE_FRAC * cal.q_cal
         @test cal.phi > 0.0
-        @test cal.c_s ≈ p.gamma_c * cal.phi
+        @test cal.phi ≈ (0.15 + 0.5 * p.cost_wedge) * surplus_scale
+        @test cal.c_s ≈ (0.15 - 0.5 * p.cost_wedge) * surplus_scale
         @test cal.c_s < cal.phi  # self-search cheaper than broker fee
+    end
+
+    @testset "Cost-wedge calibration edges behave as intended" begin
+        types = test_agent_types(d, 100, StableRNG(10))
+        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+
+        cal_equal = calibrate(env, types, default_params(cost_wedge=0.0), StableRNG(55))
+        @test cal_equal.phi ≈ cal_equal.c_s
+
+        cal_max = calibrate(env, types, default_params(cost_wedge=0.30), StableRNG(55))
+        @test cal_max.c_s ≈ 0.0 atol=1e-12
+        @test cal_max.phi > cal_equal.phi
     end
 
     @testset "Two regimes produce different match qualities" begin

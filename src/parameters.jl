@@ -10,6 +10,12 @@ const Q_OFFSET = 1.0
 # Calibration fraction: r = R_BASE_FRAC * q_cal
 const R_BASE_FRAC = 0.60
 
+# Fixed midpoint of the two search-channel costs, expressed as a share of the
+# calibration surplus scale (q_cal - r). The single free parameter is the cost
+# wedge around this midpoint.
+const COST_LEVEL_MID = 0.15
+const COST_WEDGE_BASE = 0.10
+
 # Roster lag: agents stay on roster this many periods after last outsourcing
 const ROSTER_LAG = 4
 
@@ -38,15 +44,14 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
         :p_rewire => 0.1,
         # Economics
         :omega => 0.3,
-        :alpha_phi => 0.20,
-        :gamma_c => 0.5,
+        :cost_wedge => COST_WEDGE_BASE,
         # Neural network
         :eta_lr => 0.03,
         :E_init => 200,
         :h_a => 16,
         :h_b => 32,
         # Search
-        :n_strangers => 10,
+        :n_strangers => 5,
         :eta => 0.02,
         # Model 1
         :enable_principal => false,
@@ -74,8 +79,7 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
         defaults[:k],
         defaults[:p_rewire],
         defaults[:omega],
-        defaults[:alpha_phi],
-        defaults[:gamma_c],
+        defaults[:cost_wedge],
         defaults[:eta_lr],
         defaults[:E_init],
         defaults[:h_a],
@@ -121,8 +125,7 @@ function validate_params(p::ModelParams)
 
     # Economics
     @assert 0.0 < p.omega < 1.0 "omega must be in (0, 1), got $(p.omega)"
-    @assert 0.0 < p.alpha_phi <= 1.0 "alpha_phi must be in (0, 1], got $(p.alpha_phi)"
-    @assert 0.0 <= p.gamma_c <= 1.0 "gamma_c must be in [0, 1], got $(p.gamma_c)"
+    @assert 0.0 <= p.cost_wedge <= 2.0 * COST_LEVEL_MID "cost_wedge must be in [0, $(2.0 * COST_LEVEL_MID)], got $(p.cost_wedge)"
 
     # Neural network
     @assert p.eta_lr > 0.0 "eta_lr must be > 0, got $(p.eta_lr)"

@@ -287,7 +287,7 @@ struct CalibrationConstants
     q_cal::Float64     # calibration reference E[q] (scales r, phi, c_s; not used for initialization)
     r::Float64         # outside option (0.60 * q_cal)
     phi::Float64       # broker fee
-    c_s::Float64       # self-search cost (gamma_c * phi)
+    c_s::Float64       # self-search cost
 end
 
 """Prediction quality metrics: R-squared, bias, and rank correlation."""
@@ -446,8 +446,7 @@ struct ModelParams
 
     # Economics
     omega::Float64               # satisfaction recency weight (default 0.3)
-    alpha_phi::Float64           # broker fee rate: phi = alpha_phi * (q_cal - r) (default 0.20)
-    gamma_c::Float64             # self-search cost ratio: c_s = gamma_c * phi (default 0.5)
+    cost_wedge::Float64          # broker-minus-self cost wedge on the surplus scale (default 0.10)
 
     # Neural network
     eta_lr::Float64              # learning rate (default 0.03)
@@ -456,7 +455,7 @@ struct ModelParams
     h_b::Int                     # broker hidden layer width (default 32)
 
     # Search
-    n_strangers::Int             # max strangers in self-search (default 10)
+    n_strangers::Int             # max strangers in self-search (default 5)
     eta::Float64                 # agent entry/exit rate (default 0.02)
 
     # Model 1 toggle
