@@ -516,7 +516,7 @@ Each period proceeds through six steps (plus recording).
 > **2. CANDIDATE EVALUATION**
 >
 > &emsp;**2.1. Fit prediction models:**
-> 2.1.1. &emsp;For each agent $i$: update neural network on $\mathcal{H}_{i}^t$ (§2b). Warm start; $E_t = \max(50, \lceil E_{\text{init}} \cdot n_{\text{new}} / n_i \rceil)$ GD steps on the sliding window of the most recent $W = 500$ observations. No regularization.
+> 2.1.1. &emsp;For each agent $i$ whose parity matches the current period ($i \bmod 2 = t \bmod 2$): update neural network on $\mathcal{H}_{i}^t$ (§2b). Warm start; $E_t = \max(50, \lceil E_{\text{init}} \cdot n_{\text{new}} / n_i \rceil)$ GD steps on the sliding window of the most recent $W = 500$ observations. No regularization. Agents not selected in period $t$ keep accumulating $n_{\text{new}}$ observations and retrain the next period.
 > 2.1.2. &emsp;Update broker's neural network on $\mathcal{H}_b^t$ with symmetry-augmented data (§2c). Same adaptive schedule and window. No regularization.
 >
 > &emsp;**2.2. Self-searches:**
@@ -582,7 +582,7 @@ Each period proceeds through six steps (plus recording).
 > 6.1. &emsp;Record period aggregates: match quality by channel; outsourcing rate ($|D^t| / |\text{demanders}|$); roster size.
 > 6.2. &emsp;Record broker state: reputation $\text{rep}^t$; roster size; $|\mathcal{H}_b^t|$.
 > 6.3. &emsp;Compute per-agent averaged holdout prediction quality ($R^2$, bias, rank correlation) for broker and agents (§10), excluding fresh entrants with no match history. This runs every period because the cost is small (≈4,000 NN forward passes) and finer time resolution benefits the headline figures that track the informational gap over time.
-> 6.4. &emsp;Every $M$ periods (default $M = 10$): compute network measures on $G$ (§10): betweenness centrality $C_B(b)$; Burt's constraint (broker's ego network); effective size (broker's ego network). The $M$-period cadence reflects the cost of Brandes BFS on the full graph, not a conceptual alignment with holdout measurement.
+> 6.4. &emsp;Every $M$ periods (default $M = 20$): compute network measures on $G$ (§10): betweenness centrality $C_B(b)$; Burt's constraint (broker's ego network); effective size (broker's ego network). The $M$-period cadence reflects the cost of Brandes BFS on the full graph, not a conceptual alignment with holdout measurement.
 
 #### Parallelism summary
 
@@ -672,7 +672,7 @@ Parameters are organized into four categories reflecting their role in the analy
 |--------|---------|---------|-------|
 | $r$ | Outside option | $0.60 \cdot \bar{q}_{\text{cal}}$ | Constant for all agents; calibrated at initialization |
 | $\eta_{lr}$ | Learning rate | 0.03 | Vanilla gradient descent, full-batch, no weight decay |
-| $E_{\text{init}}$ | Initial training steps | 200 | Full convergence at initialization; per-period steps adapt as $\max(50, \lceil E_{\text{init}} \cdot n_{\text{new}} / n_{\text{total}} \rceil)$ |
+| $E_{\text{init}}$ | Initial training steps | 200 | Full convergence at initialization; in production periods each agent retrains every other period on a deterministic parity schedule, with steps $\max(50, \lceil E_{\text{init}} \cdot n_{\text{new}} / n_{\text{total}} \rceil)$ |
 | $W$ | Training window | 500 | Train on at most $W$ most recent observations (sliding window) |
 | $h_a$ | Agent hidden width | 16 | One hidden layer, ReLU activations |
 | $h_b$ | Broker hidden width | 32 | One hidden layer, ReLU activations |
@@ -718,7 +718,7 @@ The match lifecycle parameters $\tau$ and $K$ jointly determine the market regim
 | $N$ | Agent population | 1000 | {500, 1000, 2000} |
 | $T$ | Simulation length (periods) | 200 | {100, 200, 400} |
 | $T_{\text{burn}}$ | Burn-in periods (discarded) | 30 | — |
-| $M$ | Network measure interval | 10 | — |
+| $M$ | Network measure interval | 20 | — |
 
 #### 11b. Search-cost calibration
 

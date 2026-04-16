@@ -25,6 +25,8 @@ using Base.Threads: @threads
 
 Execute one complete period of the simulation.
 """
+agent_retrains_this_period(agent_id::Int, period::Int)::Bool = isodd(agent_id) == isodd(period)
+
 function step_period!(state::ModelState)
     state.period += 1
     p = state.params
@@ -113,13 +115,16 @@ function step_period!(state::ModelState)
     # ══════════════════════════════════════════════════════════════════════
 
     # 2.1: Train neural networks (adaptive steps).
-    # Agent NNs are independent; train_nn! materializes contiguous Matrix/Vector
-    # copies so train_step! sees concrete types (no SubArray BLAS overhead).
+    # Agents retrain on an alternating parity schedule so each agent updates
+    # every other period while still accumulating all new observations.
+    # train_nn! materializes contiguous Matrix/Vector copies so train_step! sees
+    # concrete types (no SubArray BLAS overhead).
     prev_blas = BLAS.get_num_threads()
     BLAS.set_num_threads(1)
     @threads for i in 1:N
         a = agents[i]
-        a.history_count > 0 && a.n_new_obs > 0 && train_agent_nn!(a, p)
+        a.history_count > 0 && a.n_new_obs > 0 &&
+            agent_retrains_this_period(i, state.period) && train_agent_nn!(a, p)
     end
     BLAS.set_num_threads(prev_blas)
     if broker.history_count > 0 && broker.n_new_obs > 0

@@ -32,6 +32,13 @@ using Graphs: nv, degree
         @test state.period == 1
     end
 
+    @testset "Agent retraining schedule alternates by parity" begin
+        @test TransientBrokerage.agent_retrains_this_period(1, 1)
+        @test !TransientBrokerage.agent_retrains_this_period(2, 1)
+        @test !TransientBrokerage.agent_retrains_this_period(1, 2)
+        @test TransientBrokerage.agent_retrains_this_period(2, 2)
+    end
+
     @testset "step_period! produces matches" begin
         p = default_params(N=50, T=10, T_burn=2, seed=42)
         state = initialize_model(p)

@@ -56,7 +56,7 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
         # Model 1
         :enable_principal => false,
         # Simulation
-        :network_measure_interval => 10,
+        :network_measure_interval => 20,
         :T => 200,
         :T_burn => 30,
         :seed => seed,

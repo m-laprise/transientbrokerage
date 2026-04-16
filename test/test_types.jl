@@ -15,6 +15,7 @@ using LinearAlgebra: norm
         @test p.p_demand == 0.50
         @test p.cost_wedge == 0.10
         @test p.n_strangers == 5
+        @test p.network_measure_interval == 20
         @test p.enable_principal == false
     end
 
