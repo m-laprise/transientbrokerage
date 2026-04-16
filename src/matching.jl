@@ -85,6 +85,10 @@ function sequential_match_formation!(proposals::Vector{ProposedMatch},
         remaining_cap[i] -= 1
         remaining_cap[j] -= 1
 
+        if pm.channel == :broker
+            update_counterparty_support!(broker, i, j)
+        end
+
         if pm.is_principal
             # Principal mode: broker learns, agents don't, no edge
             record_broker_history!(broker, agents[i].type, agents[j].type, q_realized)
@@ -101,8 +105,6 @@ function sequential_match_formation!(proposals::Vector{ProposedMatch},
             update_partner_mean!(agents[j], i, q_realized)
             if pm.channel == :broker
                 record_broker_history!(broker, agents[i].type, agents[j].type, q_realized)
-                # Record pair for familiarity-gated capture (principal mode)
-                push!(broker.familiar_pairs, (min(i, j), max(i, j)))
             end
             add_match_edge!(G, i, j)
             push!(agents[i].active_matches, ActiveMatch(j, 0, false, pm.channel))

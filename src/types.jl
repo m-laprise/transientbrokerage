@@ -219,9 +219,15 @@ Base.@kwdef mutable struct Broker
     last_reputation::Float64 = 0.0
     has_had_clients::Bool = false
 
-    # Familiarity: pairs the broker has previously matched via standard placement.
-    # Capture (principal mode) is only available for pairs in this set.
-    familiar_pairs::Set{Tuple{Int,Int}} = Set{Tuple{Int,Int}}()
+    # Capture confidence and counterparty support:
+    # - capture_confidence_mae: EWMA of recent realized broker-match absolute errors
+    # - capture_confidence_ready: whether live broker-realized matches have initialized κ
+    # - counterparty_support[j]: number of distinct demanders previously matched with j
+    # - support_seen[i, j]: whether demander i has ever been broker-matched with j
+    capture_confidence_mae::Float64 = 0.0
+    capture_confidence_ready::Bool = false
+    counterparty_support::Vector{Int} = Int[]
+    support_seen::Matrix{Bool} = zeros(Bool, 0, 0)
 end
 
 """Number of valid history entries for the broker."""
@@ -345,6 +351,9 @@ Base.@kwdef mutable struct PeriodAccumulators
     agent_realized::Vector{Float64} = Float64[]
     broker_predicted::Vector{Float64} = Float64[]
     broker_realized::Vector{Float64} = Float64[]
+    broker_error_abs_sum::Float64 = 0.0
+    broker_error_count::Int = 0
+    broker_confidence_mae::Float64 = NaN
 
     # Holdout: per-agent averaged over sampled agents (both agent and broker
     # evaluated on the same per-agent partner sets for comparability)
@@ -381,6 +390,9 @@ function reset_accumulators!(a::PeriodAccumulators)
     empty!(a.agent_realized)
     empty!(a.broker_predicted)
     empty!(a.broker_realized)
+    a.broker_error_abs_sum = 0.0
+    a.broker_error_count = 0
+    a.broker_confidence_mae = NaN
     a.agent_holdout_r2 = NaN
     a.agent_holdout_bias = NaN
     a.agent_holdout_rank = NaN

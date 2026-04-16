@@ -686,7 +686,7 @@ Parameters are organized into four categories reflecting their role in the analy
 
 | Symbol | Meaning | Default | Notes |
 |--------|---------|---------|-------|
-| `enable_principal` | Resource capture toggle | false | When true, the broker can operate in principal mode for familiar pairs (§12c) |
+| `enable_principal` | Resource capture toggle | false | When true, the broker can operate in principal mode using the smooth post-pairing threshold (§12c) |
 
 **OAT sensitivity parameters.** Varied one at a time while holding all others at defaults.
 
@@ -727,7 +727,7 @@ The initialization procedure is specified in the pseudocode (§9, steps I.1–I.
 - Calibration quantities ($\bar{q}_{\text{cal}}$, $r$, $\phi$) are computed from 10,000 random agent pairs (§11b).
 - Each agent's history is seeded with 5 pairings from its neighbors in $G$, ensuring initial predictions reflect the local network.
 - The broker's roster is seeded at $\lceil 0.20 \cdot N \rceil$ agents, and its history is seeded from 100 random roster member pairs.
-- All neural networks are trained from random weights for $E_{\text{init}}$ steps on their seed histories before the first period (§2a).
+- All neural networks are trained from random weights for $E_{\text{init}}$ steps on their seed histories before the first period (§2a). These seed histories initialize predictive capability, but under Model 1 they do **not** initialize principal-mode confidence: principal mode is disabled until the broker has observed live brokered outcomes in the simulation (§12c).
 
 #### 11d. Reproducibility
 
@@ -743,7 +743,7 @@ All base model mechanisms (§§0–10) operate unchanged. The difference: the br
 
 Under resource capture, the broker transitions from intermediary to principal. Instead of connecting a demander with a counterparty, the broker acquires the counterparty's position (paying the counterparty for its resource or service) and then matches directly with the demander. The demander deals with the broker, not with the original counterparty. The broker earns the spread between what it charges the demander and what it pays the counterparty, bearing inventory risk if the match output falls short.
 
-**Agent state additions.** Matches gain a flag: *standard* (brokerage as in the base model) or *principal* (broker takes one side). No new agent-level state variables are needed.
+**Agent state additions.** Matches gain a flag: *standard* (brokerage as in the base model) or *principal* (broker takes one side). No new agent-level state variables are needed. On the broker side, Model 1 additionally tracks a scalar confidence state $\kappa_b^t$ and counterparty support counts $\{s_j^t\}$ used in the principal-mode decision (§12c).
 
 #### 12b. Mechanism
 
@@ -765,19 +765,51 @@ If the broker repeatedly acquires positions from the same high-value agents, tho
 
 #### 12c. Broker's decision: standard vs. principal
 
-Each time the broker fills a match for demander $i$ with counterparty $j$, it decides between two placement modes by comparing expected quantities:
+Each time the broker fills a match for demander $i$ with counterparty $j$, it first identifies the specific pairing $(i, j)$ using the same broker-allocation logic as in the base model (§9 Step 2.3), and then chooses between standard placement and principal mode using the smooth threshold
 
-$$\text{Placement threshold: } \phi \qquad \text{Expected capture surplus: } \hat{q}_b([\mathbf{x}_i; \mathbf{x}_j]) - \bar{q}_j$$
+$$
+\hat{q}_b([\mathbf{x}_i; \mathbf{x}_j]) - \bar{q}_j > \phi + \frac{\kappa_b^t}{\sqrt{1 + s_j^t / K}}.
+$$
 
-where $\phi$ is the placement friction cost (§3c; born by the demander in standard placement, not charged in principal mode), $\hat{q}_b$ is the broker's predicted match output, and $\bar{q}_j$ is agent $j$'s acquisition reservation (the mean of all outputs in $j$'s history, or $\bar{q}_{\text{cal}}$ if $j$ has no history). Under standard placement, the broker mediates the match; the demander incurs $\phi$ as friction; the broker has no output-level stake. Under principal mode, the broker steps into the counterparty's role and the match generates capture surplus $\Delta q_{ij}$ for the broker's ledger of realized outcomes; no $\phi$ is charged to the demander.
+The left-hand side is the broker's expected capture surplus on the specific pairing. The right-hand side is the standard placement benchmark $\phi$ plus a confidence penalty that is high when the broker's recent forecasting errors are large and low when counterparty $j$ has broad prior broker placement support. Support is scaled by match capacity $K$, so the caution term relaxes only after support has built up relative to the market's per-period slot volume.
 
-The broker chooses principal mode when two conditions are met:
+The objects in the rule are:
 
-1. **Familiarity requirement.** The broker has previously matched this specific pair $(i, j)$ through a standard placement. This ensures the broker only captures relationships it has already facilitated and observed, creating a natural two-stage pipeline: first a standard placement (both parties learn, edge forms, the demander incurs $\phi$), then if expected capture surplus is large enough, the broker captures the position in subsequent periods. The broker must "invest" in a pair through standard mediation before it can extract capture surplus from it.
+- $\hat{q}_b([\mathbf{x}_i; \mathbf{x}_j])$: the broker's predicted match output for the specific pairing.
+- $\bar{q}_j$: agent $j$'s acquisition reservation, equal to the mean of all outputs in $j$'s history, or $\bar{q}_{\text{cal}}$ if $j$ has no history.
+- $\phi$: the standard brokered-placement friction (§3c). Under standard placement the demander incurs $\phi$ and the broker has no output-level stake. Under principal mode no $\phi$ is charged to the demander; instead the broker bears capture risk and records realized capture surplus $\Delta q_{ij}$.
+- $s_j^t$: **counterparty support**, defined as the number of distinct demanders previously matched with counterparty $j$ through accepted broker matches, whether those matches were standard or principal. Support starts at zero at $t = 0$ and grows only from realized broker activity.
+- $K$: match capacity (§4a), used here as a scale factor so support lowers the caution term only after breadth has built up relative to the number of possible slots an agent can carry.
+- $\kappa_b^t$: the broker's current **confidence MAE**, an exponentially weighted moving average of realized broker-match absolute forecast errors, initialized only from live brokered matches observed in the simulation.
 
-2. **Profitability condition.** $\hat{q}_b - \bar{q}_j > \phi$. The expected capture surplus exceeds the placement threshold. The threshold $\phi$ keeps the two modes comparable: the broker should only take on capture risk for pairings whose expected surplus outperforms the friction-level reference set by standard placement.
+Principal mode is disabled in period 1 by construction. More generally, principal mode remains disabled until the broker has observed at least one period with realized broker matches, so seed history trains the broker's model but does not by itself authorize capture.
 
-Early in the simulation, the broker has few familiar pairs and limited prediction accuracy, so principal mode is rare. As the broker accumulates standard placements and its model improves, the pool of familiar pairs grows and the broker reliably identifies high-surplus opportunities, making principal mode increasingly frequent.
+Formally, if $B_t$ is the set of all realized broker matches in period $t$ (standard and principal), the current-period broker MAE is
+
+$$
+\tilde{\kappa}_b^t =
+\begin{cases}
+\dfrac{1}{|B_t|}\sum_{m \in B_t} |q_m - \hat{q}_{b,m}| & \text{if } |B_t| > 0 \\
+\text{undefined} & \text{if } |B_t| = 0,
+\end{cases}
+$$
+
+and the broker updates its confidence state as
+
+$$
+\kappa_b^{t+1} =
+\begin{cases}
+\tilde{\kappa}_b^t & \text{if } \kappa_b^t \text{ is not yet available and } |B_t| > 0 \\
+(1-\omega)\kappa_b^t + \omega \tilde{\kappa}_b^t & \text{if } \kappa_b^t \text{ is available and } |B_t| > 0 \\
+\kappa_b^t & \text{if } \kappa_b^t \text{ is available and } |B_t| = 0,
+\end{cases}
+$$
+
+If $\kappa_b^t$ is not yet available and $|B_t| = 0$, it remains unavailable and principal mode stays disabled. The broker uses $\kappa_b^t$ during period $t$ mode selection and updates it only after period-$t$ outcomes are realized. This confidence term depends only on information the broker plausibly observes about its own activity: its own ex-ante predictions and realized outcomes on brokered matches.
+
+**Design motivation.** The decision remains after pairing because the broker's informational advantage in the model is primarily about evaluating **specific pairings**, not generic counterparty quality in isolation. The confidence penalty is anchored in the broker's own realized forecast errors because that is the most natural observable summary of how reliable its predictions have recently been. Seed history is used only for learning, not for immediate capture, so the broker must first operate as an intermediary in the modeled market before principal mode becomes available. Counterparty support is defined by distinct demander breadth because repeated successful placement of $j$ across multiple demanders is a natural reduced-form signal that $j$ is marketable even when the broker has not previously captured that exact pairing. Scaling support by $K$ makes this signal build gradually with market volume instead of relaxing caution too sharply after one or two placements. The smooth threshold preserves a gradual buildup of confidence and support while keeping the model parsimonious.
+
+Early in the simulation, principal mode is unavailable at first, then becomes rare because newly initialized $\kappa_b^t$ is based on live broker errors and most counterparties have little or no support. As the broker's realized forecasting errors fall and more counterparties accumulate broader demander support, the effective hurdle declines for well-understood, marketable counterparties, making principal mode increasingly frequent.
 
 The capture dynamic relies on informational dependency and supply scarcity rather than long-duration lock-in (see §12e for the full feedback mechanism).
 
@@ -801,7 +833,7 @@ Resource capture produces a **triple lock-in**:
 
 **Supply-side lock-in.** Agents whose positions are repeatedly acquired by the broker are effectively removed from the open market during those periods. Self-searchers face a thinner candidate pool, degrading the quality of self-search outcomes and pushing more agents toward the broker. This supply scarcity reinforces the information lock-in.
 
-**Positive feedback loop.** Principal-mode matching prevents agent learning and thins the open market → agent's self-search quality stagnates or declines → agent's self-search satisfaction falls below broker satisfaction → agent continues outsourcing → broker captures surplus on each principal-mode match, continues learning, and acquires from more counterparties → broker's predictions improve and the familiar-pair pool expands → more pairings clear the principal-mode profitability condition ($\hat{q}_b - \bar{q}_j > \phi$) → more agents locked in, more positions acquired.
+**Positive feedback loop.** Principal-mode matching prevents agent learning and thins the open market → agent's self-search quality stagnates or declines → agent's self-search satisfaction falls below broker satisfaction → agent continues outsourcing → broker captures surplus on each principal-mode match, continues learning, and acquires from more counterparties → recent successful broker forecasting lowers the effective caution term $\kappa_b^t$, while repeated broker placement of a counterparty raises its support $s_j^t$ and lowers the support penalty on future capture of that counterparty on the slower $s_j^t / K$ scale → more pairings clear the principal-mode decision rule in §12c → more agents locked in, more positions acquired.
 
 This feedback loop is self-reinforcing once initiated, producing the abrupt capture trajectory predicted by Proposition 3a. The self-liquidating dynamic of structural advantage is suspended: because principal-mode matches create no direct ties between agents, the broker's structural position stops eroding.
 
@@ -863,10 +895,13 @@ Steps not listed are identical to the base model pseudocode (§9).
 >
 > &emsp;**2.4. Broker mode selection** (new):
 > 2.4.1. &emsp;for each proposed brokered match $(i, j)$:
-> &emsp;&emsp;**Familiarity gate:** skip if $(i, j)$ has not been previously matched via standard placement
-> &emsp;&emsp;Compute $\Pi^{\text{standard}} = \phi$
-> &emsp;&emsp;Compute acquisition cost: $\bar{q}_j$ = mean of agent $j$'s realized match history (or $\bar{q}_{\text{cal}}$ if empty)
-> &emsp;&emsp;Compute $\Pi^{\text{principal}} = \hat{q}_b([\mathbf{x}_i; \mathbf{x}_j]) - \bar{q}_j$
+> &emsp;&emsp;If $\kappa_b^t$ is not yet available: mark match as standard
+> &emsp;&emsp;Compute acquisition reservation: $\bar{q}_j$ = mean of agent $j$'s realized match history (or $\bar{q}_{\text{cal}}$ if empty)
+> &emsp;&emsp;Read current counterparty support: $s_j^t$ = number of distinct demanders previously matched with $j$ through accepted broker matches
+> &emsp;&emsp;Read current broker confidence state: $\kappa_b^t$
+> &emsp;&emsp;Compute smooth caution term: $\kappa_b^t / \sqrt{1 + s_j^t / K}$
+> &emsp;&emsp;Compute standard-placement benchmark: $\Pi^{\text{standard}} = \phi + \kappa_b^t / \sqrt{1 + s_j^t / K}$
+> &emsp;&emsp;Compute expected principal surplus: $\Pi^{\text{principal}} = \hat{q}_b([\mathbf{x}_i; \mathbf{x}_j]) - \bar{q}_j$
 > &emsp;&emsp;If $\Pi^{\text{principal}} > \Pi^{\text{standard}}$: mark match as principal
 > &emsp;&emsp;Else: mark match as standard
 >
@@ -886,6 +921,7 @@ Steps not listed are identical to the base model pseudocode (§9).
 > 4.1. &emsp;for each accepted match $(i, j)$:
 > &emsp;&emsp;Realize output: $q_{ij} = Q + f(\mathbf{x}_i, \mathbf{x}_j) + \varepsilon_{ij}$
 > &emsp;&emsp;Increment $n_{\text{matches},i}$ and $n_{\text{matches},j}$ (cumulative match counters, any role, any channel — used for broker dependency $D_j$, §12i).
+> &emsp;&emsp;If brokered and demander $i$ has not previously been broker-matched with counterparty $j$: mark that support link and increment $s_j$
 > &emsp;&emsp;**If standard** (self-search or standard brokered):
 > &emsp;&emsp;&emsp;Add $(\mathbf{x}_j, q_{ij})$ to $\mathcal{H}_i$ (demander's history)
 > &emsp;&emsp;&emsp;Add $(\mathbf{x}_i, q_{ij})$ to $\mathcal{H}_j$ (counterparty's history)
@@ -905,12 +941,25 @@ Steps not listed are identical to the base model pseudocode (§9).
 >
 > 4.3. &emsp;Capture surplus recording (principal-mode matches):
 > &emsp;&emsp;for each accepted principal-mode match $(i, j)$, record the triple $(q_{ij}, \bar{q}_j, \hat{q}_b)$ in the period's principal-mode ledger, where $\bar{q}_j$ is the acquisition reservation used at mode-selection time (§2.4) and $\hat{q}_b$ is the broker's ex-ante predicted match output. The capture surplus is $\Delta q_{ij} = q_{ij} - \bar{q}_j$; the broker's ex-ante expected surplus was $\hat{q}_b - \bar{q}_j$. These per-match quantities feed the capture measures in §12i.
+>
+> 4.4. &emsp;Broker confidence update:
+> &emsp;&emsp;Collect all accepted broker matches in period $t$ (standard and principal)
+> &emsp;&emsp;If at least one exists: compute $\tilde{\kappa}_b^t = \frac{1}{|B_t|}\sum_{m \in B_t}|q_m - \hat{q}_{b,m}|$
+> &emsp;&emsp;If $\kappa_b^t$ is not yet available: set $\kappa_b^{t+1} = \tilde{\kappa}_b^t$
+> &emsp;&emsp;If $\kappa_b^t$ is available: update $\kappa_b^{t+1} = (1-\omega)\kappa_b^t + \omega \tilde{\kappa}_b^t$
+> &emsp;&emsp;If no broker matches and $\kappa_b^t$ is available: leave $\kappa_b^{t+1} = \kappa_b^t$
+> &emsp;&emsp;If no broker matches and $\kappa_b^t$ is not yet available: leave $\kappa_b^{t+1}$ unavailable
 
 </small>
 
 #### 12i. Model 1 performance measures
 
-**Principal-mode share** $P^t$: the fraction of brokered matches in period $t$ that are principal-mode (versus standard placement). This is the primary capture metric. Proposition 3a predicts an abrupt tipping point: $P^t$ should remain near zero while the broker builds its informational advantage, then jump sharply to near one as the profitability condition ($\hat{q}_b - \bar{q}_j > \phi$) clears for most pairings.
+**Principal-mode share** $P^t$: the fraction of brokered matches in period $t$ that are principal-mode (versus standard placement). This is the primary capture metric. Proposition 3a predicts an abrupt tipping point: $P^t$ should remain near zero while the broker builds its informational advantage, then jump sharply once the smooth decision rule in §12c clears for a broad set of pairings. Under the current timing, $P^1 = 0$ by construction because principal mode is disabled until live broker confidence is available.
+
+**Broker confidence state.**
+
+- **Broker selected-match MAE** $= \frac{1}{|B_t|}\sum_{m \in B_t}|q_m - \hat{q}_{b,m}|$ over all realized broker matches in period $t$ (standard and principal). This is the broker-observable period statistic feeding the confidence update.
+- **Broker confidence MAE** $\kappa_b^t$: the broker's state variable carried into period $t$ and used in principal-mode decisions. Before the first live broker period with realized matches, this quantity is unavailable. A declining $\kappa_b^t$ indicates that the broker's recent realized forecasts have become more reliable, lowering the effective caution term in §12c.
 
 **Agent prediction quality by principal-mode exposure.** Average holdout $R^2$ stratified by agents' cumulative principal-mode match fraction. Agents with high exposure should show stagnating prediction quality (informational lock-in), while agents who primarily self-search or receive standard placements should continue improving.
 
@@ -978,17 +1027,17 @@ This variant provides a continuous lock-in parameter that can be swept, serving 
 
 #### 13c. Prediction Confidence and Uncertainty
 
-The current model does not track prediction confidence. All predictions are point estimates; the broker's principal-mode decision is purely economic (§12c) with no risk adjustment for prediction uncertainty.
+The current model does not track per-prediction posterior uncertainty. All match predictions are still point estimates. It does, however, track a reduced-form broker confidence state, $\kappa_b^t$, defined from live realized broker-match absolute forecast errors and used as a scalar caution term in the principal-mode decision (§12c). This captures recent realized forecasting reliability without requiring a full predictive distribution.
 
 **Bayesian last layer.** A natural extension of the current neural network architecture (§2a): the hidden layer remains a deterministic feature extractor trained by gradient descent, but the output layer is replaced with Bayesian linear regression. Given hidden features $\mathbf{h} = \text{ReLU}(\mathbf{W}_1 \mathbf{z} + \mathbf{b}_1)$ from the training data, the posterior over output weights $\mathbf{w}_2$ is available in closed form (conjugate Gaussian). For a new input $\mathbf{z}^*$, the predictive distribution is $N(\boldsymbol{\mu}_{\text{post}}^\top \mathbf{h}^*, \; \sigma_\varepsilon^2 + \mathbf{h}^{*\top} \boldsymbol{\Sigma}_{\text{post}} \mathbf{h}^*)$, where the second variance term $\mathbf{h}^{*\top} \boldsymbol{\Sigma}_{\text{post}} \mathbf{h}^*$ is the *epistemic* uncertainty (large when the input is far from training data in feature space, small when it is well-covered). Implementation cost is minimal: one $h \times h$ matrix inversion per agent per period (at $h = 16$, this is trivial).
 
 **Uses of per-prediction uncertainty:**
 - *Match selection.* An upper confidence bound (UCB) rule (select the partner with the highest $\hat{q} + \kappa \cdot \hat{\sigma}$) would balance exploitation (high predicted quality) with exploration (high uncertainty), generating more informative data and accelerating learning.
-- *Principal-mode decision.* The broker could adjust expected profit by prediction uncertainty, avoiding principal positions where $q_{ij}$ is highly uncertain and inventory risk is greatest.
+- *Principal-mode decision.* The broker could replace the current global MAE-based caution term with pair-specific prediction uncertainty, avoiding principal positions where $q_{ij}$ is highly uncertain and inventory risk is greatest.
 - *Outsourcing decision.* An agent whose average predictive uncertainty is high might rationally prefer the broker even when satisfaction scores are comparable.
 - *Measuring the informational advantage.* The epistemic uncertainty gap between agent and broker (the broker's $\Sigma_{\text{post}}$ is smaller because it has more diverse training data) directly quantifies the informational advantage at the prediction level.
 
-Deferred because the base model's point-estimate predictions are sufficient to demonstrate the core propositions. The Bayesian last layer would enrich the dynamics (especially the capture transition, where the broker's confidence determines when it begins taking principal risk) and could be added without changing the hidden-layer training procedure.
+Deferred because the current reduced-form MAE-based confidence state is sufficient to demonstrate the core propositions while keeping the model parsimonious. A Bayesian last layer would enrich the dynamics by replacing the global caution term with pair-specific epistemic uncertainty, and could be added without changing the hidden-layer training procedure.
 
 #### 13d. Pricing Alternatives
 
@@ -1001,6 +1050,10 @@ The base model uses a fixed per-match fee $\phi$. Under Model 1 (principal mode)
 Both alternatives create richer dynamics but add parameters and complicate the satisfaction comparison between channels. The fixed-fee design isolates the informational channel by removing price as a margin of competition.
 
 #### 13e. Other Design Choices
+
+**Before-pairing capture decision.**
+
+The current Model 1 makes the capture decision **after** the broker has already selected a specific pairing $(i, j)$, so the decision object is the predicted pair surplus $\hat{q}_b(i, j) - \bar{q}_j$ adjusted by the smooth caution term in §12c. A future variant could instead let the broker first acquire counterparty $j$ and only then assign that acquired position to a demander. In that design, the natural decision object would no longer be pair surplus itself, but a **resale-option value** for counterparty $j$, for example the best predicted current outsourced demander for $j$ or an expected future resale value. This would likely require explicit inventory and assignment timing. If acquisition can precede placement across periods, the model would also need holding-cost, depreciation, or expiry assumptions for unplaced inventory. This alternative is conceptually interesting but is not implemented here.
 
 **Fixed acquisition price at outside option.** The current model sets the counterparty's ask price at $\bar{q}_j$ (average realized match quality from its history). A simpler alternative: the counterparty always accepts at the fixed outside option $r$, regardless of its match history. This makes acceptance truly automatic and the acquisition cost constant across counterparties, producing a clean regime shift in the broker's principal-mode decision. The tradeoff is that the broker acquires all positions at the same low price, which may make capture too easy and remove the natural margin compression from rising counterparty experience.
 

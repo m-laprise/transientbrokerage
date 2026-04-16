@@ -143,6 +143,10 @@ function initialize_model(params::ModelParams; sort_by_pc1::Bool = false)::Model
         train_q = Vector{Float64}(undef, 128),
         last_reputation = 0.0,     # set from seed data in step I.11 below
         has_had_clients = false,
+        capture_confidence_mae = 0.0,
+        capture_confidence_ready = false,
+        counterparty_support = zeros(Int, N),
+        support_seen = zeros(Bool, N, N),
     )
 
     # Seed roster with random agents

@@ -39,6 +39,8 @@ function step_period!(state::ModelState)
     cal = state.cal
 
     reset_accumulators!(state.accum)
+    state.accum.broker_confidence_mae =
+        broker.capture_confidence_ready ? broker.capture_confidence_mae : NaN
 
     # ══════════════════════════════════════════════════════════════════════
     # Step 0: Match expirations
@@ -190,6 +192,8 @@ function step_period!(state::ModelState)
         elseif m.channel == :broker
             push!(state.accum.broker_predicted, m.q_predicted)
             push!(state.accum.broker_realized, m.q_realized)
+            state.accum.broker_error_abs_sum += abs(m.q_realized - m.q_predicted)
+            state.accum.broker_error_count += 1
         end
 
         if m.channel == :self
@@ -224,6 +228,11 @@ function step_period!(state::ModelState)
             end
         end
     end
+
+    update_capture_confidence_mae!(broker,
+                                   state.accum.broker_error_abs_sum,
+                                   state.accum.broker_error_count,
+                                   p.omega)
 
     # Holdout evaluation: per-agent R² averaged over sampled agents.
     # For each sampled agent i, evaluate both agent i's NN and the broker's NN

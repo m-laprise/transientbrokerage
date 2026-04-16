@@ -52,6 +52,7 @@ function collect_period_metrics(state::ModelState)
         sqrt(mean((a.agent_predicted .- a.agent_realized).^2))
     broker_sel_rmse = isempty(a.broker_predicted) ? NaN :
         sqrt(mean((a.broker_predicted .- a.broker_realized).^2))
+    broker_sel_mae = a.broker_error_count > 0 ? a.broker_error_abs_sum / a.broker_error_count : NaN
 
     # ── Capture outcome and decision quality (§12i) ──
     # Δq_ij = q_ij - q̄_j for principal-mode matches in this period.
@@ -145,7 +146,9 @@ function collect_period_metrics(state::ModelState)
         broker_selected_rank = broker_sel.rank_corr,
         broker_selected_r2 = broker_sel.r_squared,
         broker_selected_rmse = broker_sel_rmse,
+        broker_selected_mae = broker_sel_mae,
         broker_selected_bias = broker_sel.bias,
+        broker_confidence_mae = a.broker_confidence_mae,
         # Broker state
         broker_reputation = broker.last_reputation,
         roster_size = a.roster_size,

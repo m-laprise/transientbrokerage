@@ -82,6 +82,9 @@ using LinearAlgebra: norm
         accum.n_demanders = 7
         accum.n_outsourced = 2
         accum.roster_size = 42
+        accum.broker_error_abs_sum = 4.0
+        accum.broker_error_count = 3
+        accum.broker_confidence_mae = 1.5
 
         reset_accumulators!(accum)
 
@@ -92,6 +95,9 @@ using LinearAlgebra: norm
         @test accum.n_demanders == 0
         @test accum.n_outsourced == 0
         @test accum.roster_size == 0
+        @test accum.broker_error_abs_sum == 0.0
+        @test accum.broker_error_count == 0
+        @test isnan(accum.broker_confidence_mae)
     end
 
     @testset "Agent history recording and growth" begin
