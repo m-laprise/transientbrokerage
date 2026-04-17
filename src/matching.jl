@@ -54,18 +54,18 @@ function finalize_accepted_proposal!(accepted::Vector{AcceptedMatch},
                                      G::SimpleGraph,
                                      rng::AbstractRNG;
                                      Ax_buf::Vector{Float64},
-                                     Bx_buf::Vector{Float64})
+                                     Bx_buf::Vector{Float64},
+                                     reserved_capacity::Union{Vector{Int}, Nothing} = nothing)
     i = pm.demander_id
     j = pm.counterparty_id
 
     q_realized = match_output!(Ax_buf, Bx_buf, agents[i].type, agents[j].type, env, rng)
 
-    if pm.channel == :broker
-        update_counterparty_support!(broker, i, j)
-    end
-
     if pm.is_principal
         record_broker_history!(broker, agents[i].type, agents[j].type, q_realized)
+        if !isnothing(reserved_capacity) && reserved_capacity[j] > 0
+            reserved_capacity[j] -= 1
+        end
         push!(agents[i].active_matches, ActiveMatch(j, true, :broker))
         push!(agents[j].active_matches, ActiveMatch(i, true, :broker))
         agents[j].n_principal_acquired += 1
@@ -87,7 +87,8 @@ function finalize_accepted_proposal!(accepted::Vector{AcceptedMatch},
 
     push!(accepted, (demander_id=i, counterparty_id=j, channel=pm.channel,
                      is_principal=pm.is_principal, q_realized=q_realized,
-                     q_predicted=pm.evaluation, ask_j=pm.ask_j))
+                     q_predicted=pm.evaluation, ask_j=pm.ask_j,
+                     capture_qhat=pm.capture_qhat))
     return nothing
 end
 
@@ -108,7 +109,8 @@ tracker instead of allocating a fresh vector.
 If `accepted_matches` is provided, it is emptied and reused as the output buffer.
 
 Each accepted match record is a NamedTuple with fields:
-  demander_id, counterparty_id, channel, is_principal, q_realized, q_predicted
+  demander_id, counterparty_id, channel, is_principal, q_realized, q_predicted,
+  ask_j, capture_qhat
 """
 function sequential_match_formation!(proposals::Vector{ProposedMatch},
                                       agents::Vector{Agent},
@@ -208,12 +210,13 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
     K = params.K
     d = params.d
     max_rounds = maximum(demand_counts)
+    reserved_capacity = ws === nothing ? nothing : ws.principal_reserved_capacity
 
     if ws === nothing
         remaining_demand = copy(demand_counts)
         demand_failed = fill(false, n_demanders)
         active_positions = Int[]
-        broker_positions = Int[]
+        broker_indices = Int[]
         broker_demanders = Int[]
         pref_offsets = Int[]
         next_pref = Int[]
@@ -225,6 +228,7 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
         hold_counts = zeros(Int, N)
         held_prop_idx = Matrix{Int}(undef, N, max(K, 1))
         held_scores = Matrix{Float64}(undef, N, max(K, 1))
+        broker_slot_caps = Int[]
         broker_pref_matches = ProposedMatch[]
         broker_pref_counts = Int[]
         pref_matches = ProposedMatch[]
@@ -238,7 +242,7 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
         remaining_demand .= demand_counts
         demand_failed = ws.demand_failed; resize!(demand_failed, n_demanders); fill!(demand_failed, false)
         active_positions = ws.round_active_positions; empty!(active_positions)
-        broker_positions = ws.round_broker_positions; empty!(broker_positions)
+        broker_indices = ws.round_broker_indices; empty!(broker_indices)
         broker_demanders = ws.round_broker_demanders; empty!(broker_demanders)
         pref_offsets = ws.round_pref_offsets; empty!(pref_offsets)
         next_pref = ws.round_next_pref; empty!(next_pref)
@@ -262,6 +266,7 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
         end
         held_prop_idx = ws.round_held_prop_idx
         held_scores = ws.round_held_scores
+        broker_slot_caps = ws.demander_remaining; empty!(broker_slot_caps)
         broker_pref_matches = ws.round_broker_pref_matches; empty!(broker_pref_matches)
         broker_pref_counts = ws.round_broker_pref_counts; empty!(broker_pref_counts)
         pref_matches = ws.all_proposals; empty!(pref_matches)
@@ -275,6 +280,12 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
         end
         Ax_buf = ws.Ax_buf
         Bx_buf = ws.Bx_buf
+    end
+
+    if ws !== nothing
+        prepare_period_broker_round_cache!(broker, demand_agent_ids, demand_channels,
+                                           agents, params;
+                                           ws=ws, reserved_capacity=reserved_capacity)
     end
 
     @inline function requeue_or_fail!(pos::Int)
@@ -301,19 +312,19 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
 
     for _ in 1:max_rounds
         empty!(active_positions)
-        empty!(broker_positions)
+        empty!(broker_indices)
         empty!(broker_demanders)
         @inbounds for idx in eachindex(demand_agent_ids)
             if remaining_demand[idx] <= 0 || demand_failed[idx]
                 continue
             end
-            if available_capacity(agents[demand_agent_ids[idx]], K) <= 0
+            if current_open_capacity(agents, demand_agent_ids[idx], K, reserved_capacity) <= 0
                 demand_failed[idx] = true
                 continue
             end
             push!(active_positions, idx)
             if demand_channels[idx] == :broker
-                push!(broker_positions, length(active_positions))
+                push!(broker_indices, idx)
                 push!(broker_demanders, demand_agent_ids[idx])
             end
         end
@@ -324,17 +335,57 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
         resize!(pref_offsets, length(active_positions) + 1)
         pref_offsets[1] = 1
 
-        build_broker_round_preferences!(broker_pref_matches, broker_pref_counts, broker,
-                                        broker_demanders, agents, params, cal.r; ws=ws)
+        principal_round_accepts = 0
         broker_cursor = 1
         broker_pref_cursor = 1
+        if !isempty(broker_demanders)
+            if params.enable_principal
+                principal_round_accepts = execute_inventory_round!(
+                    accepted, remaining_demand, broker_indices, broker_demanders,
+                    agents, broker, env, G, params, cal, rng, wc_i, wc_j;
+                    ws=ws, Ax_buf=Ax_buf, Bx_buf=Bx_buf
+                )
+            end
+            resize!(broker_slot_caps, length(broker_demanders))
+            @inbounds for di in eachindex(broker_demanders)
+                did = broker_demanders[di]
+                demand_idx = broker_indices[di]
+                broker_slot_caps[di] = min(remaining_demand[demand_idx],
+                                           current_open_capacity(agents, did, K, reserved_capacity))
+            end
+            if ws === nothing
+                broker_matrix = prepare_broker_round_matrix!(broker, broker_demanders, agents, params;
+                                                             ws=ws, reserved_capacity=reserved_capacity)
+                append_broker_round_preferences_from_matrix!(
+                    broker_pref_matches, broker_pref_counts, broker_matrix,
+                    broker_demanders, agents, params, cal.r;
+                    demander_slots=broker_slot_caps, reserved_capacity=reserved_capacity
+                )
+            else
+                append_broker_round_preferences_from_cache!(
+                    broker_pref_matches, broker_pref_counts, broker_demanders,
+                    agents, params, cal.r;
+                    ws=ws, demander_slots=broker_slot_caps,
+                    reserved_capacity=reserved_capacity
+                )
+            end
+        else
+            empty!(broker_pref_matches)
+            resize!(broker_pref_counts, 0)
+        end
 
         for pos in eachindex(active_positions)
             idx = active_positions[pos]
             agent_id = demand_agent_ids[idx]
+            if remaining_demand[idx] <= 0 || current_open_capacity(agents, agent_id, K, reserved_capacity) <= 0
+                remaining_demand[idx] > 0 && (demand_failed[idx] = true)
+                pref_offsets[pos + 1] = length(pref_matches) + 1
+                continue
+            end
             if demand_channels[idx] == :self
                 n_added = append_self_round_preferences!(pref_matches, agents[agent_id], agents, G,
-                                                         broker.node_id, params, rng, cal.r; ws=ws)
+                                                         broker.node_id, params, rng, cal.r;
+                                                         ws=ws, reserved_capacity=reserved_capacity)
                 for _ in 1:n_added
                     push!(pref_owner, pos)
                 end
@@ -343,7 +394,6 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
                 for local_idx in 1:n_added
                     pm = broker_pref_matches[broker_pref_cursor]
                     broker_pref_cursor += 1
-                    pm = mode_selected_broker_proposal(pm, agents, broker, params, cal)
                     if has_edge(G, pm.demander_id, pm.counterparty_id)
                         push!(wc_i, pm.demander_id)
                         push!(wc_j, pm.counterparty_id)
@@ -363,12 +413,16 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
         fill!(hold_counts, 0)
 
         @inbounds for i in 1:N
-            round_capacity[i] = available_capacity(agents[i], K)
+            round_capacity[i] = current_open_capacity(agents, i, K, reserved_capacity)
         end
         @inbounds for pos in eachindex(active_positions)
             next_pref[pos] = pref_offsets[pos]
-            push!(queue, pos)
             agent_id = demand_agent_ids[active_positions[pos]]
+            if remaining_demand[active_positions[pos]] <= 0 || round_capacity[agent_id] <= 0
+                remaining_demand[active_positions[pos]] > 0 && (demand_failed[active_positions[pos]] = true)
+                continue
+            end
+            push!(queue, pos)
             agent_to_active[agent_id] = pos
             push!(agent_to_active_touched, agent_id)
         end
@@ -445,7 +499,7 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
             end
         end
 
-        round_accepts = 0
+        round_accepts = principal_round_accepts
         @inbounds for pos in eachindex(active_positions)
             prop_idx = outgoing_prop_idx[pos]
             prop_idx == 0 && continue

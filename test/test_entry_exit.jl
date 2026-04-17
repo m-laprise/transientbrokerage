@@ -4,7 +4,7 @@ using TransientBrokerage
 @testset "Entry/Exit" begin
     using Graphs: degree, has_edge, neighbors, nv
 
-    @testset "exit_agent! clears edges, broker access sets, and support state" begin
+    @testset "exit_agent! clears edges, broker access sets, and partner tracking" begin
         state1 = initialize_model(default_params(N=20, seed=42))
         target = 1
         partner = 2
@@ -19,10 +19,6 @@ using TransientBrokerage
         push!(state1.broker.current_clients, target)
         state1.agents[partner].partner_sum[target] = 5.0
         state1.agents[partner].partner_count[target] = 2
-        state1.broker.support_seen[target, partner] = true
-        state1.broker.counterparty_support[partner] = 1
-        state1.broker.support_seen[partner, target] = true
-        state1.broker.counterparty_support[target] = 1
 
         @test degree(state1.G, target) > 0
         exit_agent!(state1, target)
@@ -34,10 +30,6 @@ using TransientBrokerage
         @test !any(m -> m.partner_id == target, state1.agents[partner].active_matches)
         @test state1.agents[partner].partner_sum[target] == 0.0
         @test state1.agents[partner].partner_count[target] == 0
-        @test !state1.broker.support_seen[target, partner]
-        @test !state1.broker.support_seen[partner, target]
-        @test state1.broker.counterparty_support[partner] == 0
-        @test state1.broker.counterparty_support[target] == 0
     end
 
     @testset "enter_agent! resets all fields to fresh state" begin
@@ -134,20 +126,5 @@ using TransientBrokerage
         for nbr in neighbors(state9.G, 5)
             @test has_edge(state9.G, nbr, 5)
         end
-    end
-
-    @testset "replacement entrant starts with zero support state" begin
-        state10 = initialize_model(default_params(N=20, seed=22))
-        state10.broker.support_seen[3, 5] = true
-        state10.broker.counterparty_support[5] = 1
-        state10.broker.support_seen[5, 4] = true
-        state10.broker.counterparty_support[4] = 1
-
-        exit_agent!(state10, 5)
-        enter_agent!(state10, 5, state10.rng)
-
-        @test state10.broker.counterparty_support[5] == 0
-        @test !any(state10.broker.support_seen[5, j] for j in 1:state10.params.N)
-        @test !any(state10.broker.support_seen[j, 5] for j in 1:state10.params.N)
     end
 end

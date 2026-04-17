@@ -52,25 +52,27 @@ function collect_period_metrics(state::ModelState)
         sqrt(mean((a.agent_predicted .- a.agent_realized).^2))
     broker_sel_rmse = isempty(a.broker_predicted) ? NaN :
         sqrt(mean((a.broker_predicted .- a.broker_realized).^2))
-    broker_sel_mae = a.broker_error_count > 0 ? a.broker_error_abs_sum / a.broker_error_count : NaN
+    broker_sel_mae = isempty(a.broker_predicted) ? NaN :
+        mean(abs.(a.broker_predicted .- a.broker_realized))
 
     # ── Capture outcome and decision quality (§12i) ──
-    # Δq_ij = q_ij - q̄_j for principal-mode matches in this period.
+    # Δq_ij = realized slot value minus q̄_j for all acquired slots, placed or unplaced.
     n_principal = length(a.q_broker_principal)
-    capture_delta = n_principal == 0 ? Float64[] :
-        a.q_broker_principal .- a.q_bar_j_principal
+    n_capture = length(a.capture_realized)
+    capture_delta = n_capture == 0 ? Float64[] :
+        a.capture_realized .- a.capture_ask
     capture_surplus_mean = isempty(capture_delta) ? NaN : mean(capture_delta)
     n_loss = count(<(0.0), capture_delta)
-    capture_loss_rate = n_principal == 0 ? NaN : n_loss / n_principal
+    capture_loss_rate = n_capture == 0 ? NaN : n_loss / n_capture
     capture_loss_magnitude = n_loss == 0 ? NaN :
         mean(abs(d) for d in capture_delta if d < 0.0)
 
     # Capture decision quality: Spearman ρ and RMSE on the principal-mode subset.
-    # NaN when fewer than 5 matches to keep the metric comparable to selected_r2.
-    if n_principal >= 5
-        expected_delta = a.q_hat_b_principal .- a.q_bar_j_principal
+    # NaN when fewer than 5 acquired slots to keep the metric comparable to selected_r2.
+    if n_capture >= 5
+        expected_delta = a.capture_qhat .- a.capture_ask
         capture_decision_rank = corspearman(expected_delta, capture_delta)
-        capture_decision_rmse = sqrt(mean((a.q_hat_b_principal .- a.q_broker_principal) .^ 2))
+        capture_decision_rmse = sqrt(mean((a.capture_qhat .- a.capture_realized) .^ 2))
     else
         capture_decision_rank = NaN
         capture_decision_rmse = NaN

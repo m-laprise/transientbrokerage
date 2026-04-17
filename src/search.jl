@@ -8,6 +8,16 @@ using Graphs: neighbors, has_edge
 using Random: AbstractRNG
 using StatsBase: sample
 
+@inline function current_open_capacity(agents::Vector{Agent},
+                                       agent_id::Int,
+                                       K::Int,
+                                       reserved_capacity::Union{Vector{Int}, Nothing})
+    if isnothing(reserved_capacity)
+        return available_capacity(agents[agent_id], K)
+    end
+    return available_capacity(agents[agent_id], K, reserved_capacity[agent_id])
+end
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Self-search
 # ─────────────────────────────────────────────────────────────────────────────
@@ -25,6 +35,7 @@ function self_search(agent::Agent, agents::Vector{Agent}, G::SimpleGraph,
                      broker_node::Int, params::ModelParams, rng::AbstractRNG,
                      d_i::Int, r::Float64;
                      ws::Union{SimWorkspace, Nothing} = nothing,
+                     reserved_capacity::Union{Vector{Int}, Nothing} = nothing,
                      proposals::Union{Vector{ProposedMatch}, Nothing} = nothing)
     out = proposals === nothing ? ProposedMatch[] : proposals
     d_i <= 0 && return out
@@ -72,7 +83,7 @@ function self_search(agent::Agent, agents::Vector{Agent}, G::SimpleGraph,
         (nbr < 1 || nbr > N) && continue
         nbr_mask[nbr] = true
         push!(local_marked, nbr)
-        cap = available_capacity(agents[nbr], K)
+        cap = current_open_capacity(agents, nbr, K, reserved_capacity)
         cap <= 0 && continue
         mean_q = partner_mean(agent, nbr)
         if !isnan(mean_q)
@@ -87,7 +98,7 @@ function self_search(agent::Agent, agents::Vector{Agent}, G::SimpleGraph,
         @inbounds for j in 1:N
             j == agent_id && continue
             nbr_mask[j] && continue
-            available_capacity(agents[j], K) <= 0 && continue
+            current_open_capacity(agents, j, K, reserved_capacity) <= 0 && continue
             push!(eligible, j)
         end
 
@@ -100,7 +111,7 @@ function self_search(agent::Agent, agents::Vector{Agent}, G::SimpleGraph,
                 q_hat = predict_nn!(agent.nn, agent.predict_buf, agents[j].type)
                 push!(stranger_ids, j)
                 push!(stranger_evals, q_hat)
-                push!(stranger_caps, available_capacity(agents[j], K))
+                push!(stranger_caps, current_open_capacity(agents, j, K, reserved_capacity))
             end
         end
     end
@@ -151,7 +162,7 @@ function self_search(agent::Agent, agents::Vector{Agent}, G::SimpleGraph,
         if best_id == 0 || best_eval <= r
             break
         end
-        push!(out, ProposedMatch(agent_id, best_id, :self, best_eval, false, NaN))
+        push!(out, ProposedMatch(agent_id, best_id, :self, best_eval, false, NaN, NaN))
         @inbounds for idx in eachindex(neighbor_ids)
             if neighbor_ids[idx] == best_id
                 neighbor_caps[idx] -= 1
@@ -186,7 +197,8 @@ function append_self_round_preferences!(out::Vector{ProposedMatch},
                                         params::ModelParams,
                                         rng::AbstractRNG,
                                         r::Float64;
-                                        ws::Union{SimWorkspace, Nothing} = nothing)::Int
+                                        ws::Union{SimWorkspace, Nothing} = nothing,
+                                        reserved_capacity::Union{Vector{Int}, Nothing} = nothing)::Int
     K = params.K
     agent_id = agent.id
     N = length(agents)
@@ -218,7 +230,7 @@ function append_self_round_preferences!(out::Vector{ProposedMatch},
         (nbr < 1 || nbr > N) && continue
         nbr_mask[nbr] = true
         push!(local_marked, nbr)
-        available_capacity(agents[nbr], K) > 0 || continue
+        current_open_capacity(agents, nbr, K, reserved_capacity) > 0 || continue
         mean_q = partner_mean(agent, nbr)
         if !isnan(mean_q) && mean_q > r
             push!(neighbor_ids, nbr)
@@ -230,7 +242,7 @@ function append_self_round_preferences!(out::Vector{ProposedMatch},
         @inbounds for j in 1:N
             j == agent_id && continue
             nbr_mask[j] && continue
-            available_capacity(agents[j], K) > 0 || continue
+            current_open_capacity(agents, j, K, reserved_capacity) > 0 || continue
             push!(eligible, j)
         end
 
@@ -253,11 +265,11 @@ function append_self_round_preferences!(out::Vector{ProposedMatch},
     start_idx = length(out) + 1
     @inbounds for idx in eachindex(neighbor_ids)
         push!(out, ProposedMatch(agent_id, neighbor_ids[idx], :self,
-                                 neighbor_evals[idx], false, NaN))
+                                 neighbor_evals[idx], false, NaN, NaN))
     end
     @inbounds for idx in eachindex(stranger_ids)
         push!(out, ProposedMatch(agent_id, stranger_ids[idx], :self,
-                                 stranger_evals[idx], false, NaN))
+                                 stranger_evals[idx], false, NaN, NaN))
     end
 
     n_added = length(out) - start_idx + 1
@@ -285,6 +297,7 @@ function broker_allocate(broker::Broker, client_demands::Vector{Tuple{Int, Int}}
                          agents::Vector{Agent}, params::ModelParams,
                          rng::AbstractRNG, r::Float64;
                          ws::Union{SimWorkspace, Nothing} = nothing,
+                         reserved_capacity::Union{Vector{Int}, Nothing} = nothing,
                          proposals::Union{Vector{ProposedMatch}, Nothing} = nothing)
     out = proposals === nothing ? ProposedMatch[] : proposals
     isempty(client_demands) && return out
@@ -345,7 +358,7 @@ function broker_allocate(broker::Broker, client_demands::Vector{Tuple{Int, Int}}
     # Available counterparties from the standing roster plus current-period clients.
     for rid in broker.roster
         (rid < 1 || rid > N) && continue
-        available_capacity(agents[rid], K) > 0 || continue
+        current_open_capacity(agents, rid, K, reserved_capacity) > 0 || continue
         access_seen[rid] && continue
         access_seen[rid] = true
         push!(access_touched, rid)
@@ -353,7 +366,7 @@ function broker_allocate(broker::Broker, client_demands::Vector{Tuple{Int, Int}}
     end
     for rid in broker.current_clients
         (rid < 1 || rid > N) && continue
-        available_capacity(agents[rid], K) > 0 || continue
+        current_open_capacity(agents, rid, K, reserved_capacity) > 0 || continue
         access_seen[rid] && continue
         access_seen[rid] = true
         push!(access_touched, rid)
@@ -450,7 +463,7 @@ function broker_allocate(broker::Broker, client_demands::Vector{Tuple{Int, Int}}
     # Capacity tracking
     resize!(roster_capacity, n_roster)
     @inbounds for ri in 1:n_roster
-        roster_capacity[ri] = available_capacity(agents[roster_members[ri]], K)
+        roster_capacity[ri] = current_open_capacity(agents, roster_members[ri], K, reserved_capacity)
     end
 
     # Iterate sorted entries. A selected pair can fill multiple slots because the
@@ -472,7 +485,7 @@ function broker_allocate(broker::Broker, client_demands::Vector{Tuple{Int, Int}}
             push!(out, ProposedMatch(
                 unique_demanders[di],
                 roster_members[ri],
-                :broker, val, false, NaN
+                :broker, val, false, NaN, NaN
             ))
         end
 
@@ -492,30 +505,111 @@ function broker_allocate(broker::Broker, client_demands::Vector{Tuple{Int, Int}}
     return out
 end
 
-"""
-    build_broker_round_preferences!(out, counts, broker, demander_ids, agents, params, r; ws) -> Vector
+function prepare_broker_quality_matrix!(broker::Broker,
+                                        demander_ids::Vector{Int},
+                                        access_ids::Vector{Int},
+                                        agents::Vector{Agent},
+                                        params::ModelParams;
+                                        ws::Union{SimWorkspace, Nothing} = nothing)
+    isempty(demander_ids) &&
+        return (Q=Matrix{Float64}(undef, 0, 0), roster_members=access_ids,
+                sort_pairs=Tuple{Float64, Int}[], n_roster=0)
+    isempty(access_ids) &&
+        return (Q=Matrix{Float64}(undef, 0, 0), roster_members=access_ids,
+                sort_pairs=Tuple{Float64, Int}[], n_roster=0)
 
-Build demander-side ranked broker options for one within-period round. The
-output vector is grouped by `demander_ids` order, and `counts[k]` records the
-number of appended preferences for demander `demander_ids[k]`.
-"""
-function build_broker_round_preferences!(out::Vector{ProposedMatch},
-                                         counts::Vector{Int},
-                                         broker::Broker,
-                                         demander_ids::Vector{Int},
-                                         agents::Vector{Agent},
-                                         params::ModelParams,
-                                         r::Float64;
-                                         ws::Union{SimWorkspace, Nothing} = nothing)
-    empty!(out)
-    resize!(counts, length(demander_ids))
-    fill!(counts, 0)
-    isempty(demander_ids) && return out
-
-    K = params.K
     d = params.d
     d2 = 2 * d
     h_b = params.h_b
+    n_unique = length(demander_ids)
+    n_roster = length(access_ids)
+
+    if ws !== nothing && (size(ws.Q, 1) < n_unique || size(ws.Q, 2) < n_roster)
+        ws.Q = Matrix{Float64}(undef, max(n_unique, size(ws.Q, 1)),
+                                      max(n_roster, size(ws.Q, 2)))
+    end
+    Q = ws === nothing ? Matrix{Float64}(undef, n_unique, n_roster) : ws.Q
+
+    n_pairs = n_unique * n_roster
+    n_self = 0
+    @inbounds for ri in 1:n_roster
+        rid = access_ids[ri]
+        for di in 1:n_unique
+            demander_ids[di] == rid && (n_self += 1)
+        end
+    end
+    n_pairs -= n_self
+
+    if ws !== nothing
+        if size(ws.Z_batch, 1) != d2 || size(ws.Z_batch, 2) < n_pairs
+            cap = max(n_pairs, 2 * size(ws.Z_batch, 2), 256)
+            ws.Z_batch = Matrix{Float64}(undef, d2, cap)
+            ws.H_batch = Matrix{Float64}(undef, h_b, cap)
+            resize!(ws.Y_batch, cap)
+        end
+    end
+    Z_batch = ws === nothing ? Matrix{Float64}(undef, d2, n_pairs) : ws.Z_batch
+    H_batch = ws === nothing ? Matrix{Float64}(undef, h_b, n_pairs) : ws.H_batch
+    Y_batch = ws === nothing ? Vector{Float64}(undef, n_pairs) : ws.Y_batch
+
+    col = 0
+    @inbounds for ri in 1:n_roster
+        rid = access_ids[ri]
+        xj = agents[rid].type
+        for di in 1:n_unique
+            did = demander_ids[di]
+            if did == rid
+                Q[di, ri] = -Inf
+            else
+                col += 1
+                xi = agents[did].type
+                for k in 1:d
+                    Z_batch[k, col] = xi[k]
+                    Z_batch[d + k, col] = xj[k]
+                end
+            end
+        end
+    end
+
+    n_pairs > 0 && predict_nn_batch!(broker.nn, H_batch, Y_batch, Z_batch, n_pairs)
+
+    col = 0
+    @inbounds for ri in 1:n_roster
+        rid = access_ids[ri]
+        for di in 1:n_unique
+            if demander_ids[di] != rid
+                col += 1
+                Q[di, ri] = Y_batch[col]
+            end
+        end
+    end
+
+    sort_pairs = ws === nothing ? Tuple{Float64, Int}[] : ws.sort_pairs
+    length(sort_pairs) < n_roster && resize!(sort_pairs, n_roster)
+    ws !== nothing && (ws.sort_pairs = sort_pairs)
+
+    return (Q=Q, roster_members=access_ids, sort_pairs=sort_pairs, n_roster=n_roster)
+end
+
+"""
+    prepare_broker_round_matrix!(broker, demander_ids, agents, params; ws)
+
+Build the broker's current-round quality matrix over `demander_ids` and the
+current broker access set `A^t`. Returns a NamedTuple with the precomputed
+matrix, the access-set agent IDs, reusable sort scratch, and the realized
+access-set size.
+"""
+function prepare_broker_round_matrix!(broker::Broker,
+                                      demander_ids::Vector{Int},
+                                      agents::Vector{Agent},
+                                      params::ModelParams;
+                                      ws::Union{SimWorkspace, Nothing} = nothing,
+                                      reserved_capacity::Union{Vector{Int}, Nothing} = nothing)
+    isempty(demander_ids) &&
+        return (Q=Matrix{Float64}(undef, 0, 0), roster_members=Int[],
+                sort_pairs=Tuple{Float64, Int}[], n_roster=0)
+
+    K = params.K
     N = length(agents)
 
     if ws === nothing
@@ -539,7 +633,7 @@ function build_broker_round_preferences!(out::Vector{ProposedMatch},
 
     for rid in broker.roster
         (rid < 1 || rid > N) && continue
-        available_capacity(agents[rid], K) > 0 || continue
+        current_open_capacity(agents, rid, K, reserved_capacity) > 0 || continue
         access_seen[rid] && continue
         access_seen[rid] = true
         push!(access_touched, rid)
@@ -547,82 +641,125 @@ function build_broker_round_preferences!(out::Vector{ProposedMatch},
     end
     for rid in broker.current_clients
         (rid < 1 || rid > N) && continue
-        available_capacity(agents[rid], K) > 0 || continue
+        current_open_capacity(agents, rid, K, reserved_capacity) > 0 || continue
         access_seen[rid] && continue
         access_seen[rid] = true
         push!(access_touched, rid)
         push!(roster_members, rid)
     end
     n_roster = length(roster_members)
-    n_roster == 0 && (@goto cleanup; return out)
-
-    n_unique = length(demander_ids)
-    if ws !== nothing && (size(ws.Q, 1) < n_unique || size(ws.Q, 2) < n_roster)
-        ws.Q = Matrix{Float64}(undef, max(n_unique, size(ws.Q, 1)),
-                                      max(n_roster, size(ws.Q, 2)))
+    if n_roster == 0
+        @inbounds for aid in access_touched
+            access_seen[aid] = false
+        end
+        empty_Q = ws === nothing ? Matrix{Float64}(undef, 0, 0) : ws.Q
+        return (Q=empty_Q, roster_members=roster_members,
+                sort_pairs=sort_pairs, n_roster=0)
     end
-    Q = ws === nothing ? Matrix{Float64}(undef, n_unique, n_roster) : ws.Q
 
-    n_pairs = n_unique * n_roster
-    n_self = 0
-    @inbounds for ri in 1:n_roster
-        rid = roster_members[ri]
-        for di in 1:n_unique
-            demander_ids[di] == rid && (n_self += 1)
+    @inbounds for aid in access_touched
+        access_seen[aid] = false
+    end
+
+    return prepare_broker_quality_matrix!(broker, demander_ids, roster_members, agents, params; ws=ws)
+end
+
+"""
+    prepare_period_broker_round_cache!(broker, demand_agent_ids, demand_channels,
+                                       agents, params; ws, reserved_capacity=nothing)
+
+Build the broker's within-period quality cache once, over all demanders that
+chose the broker channel and the post-planning access set that is open at the
+start of round matching. Later rounds reuse this matrix and only re-filter the
+currently open counterparties.
+"""
+function prepare_period_broker_round_cache!(broker::Broker,
+                                            demand_agent_ids::Vector{Int},
+                                            demand_channels::Vector{Symbol},
+                                            agents::Vector{Agent},
+                                            params::ModelParams;
+                                            ws::Union{SimWorkspace, Nothing} = nothing,
+                                            reserved_capacity::Union{Vector{Int}, Nothing} = nothing)
+    ws === nothing && return nothing
+
+    period_demanders = ws.period_broker_demanders; empty!(period_demanders)
+    @inbounds for idx in eachindex(demand_agent_ids)
+        demand_channels[idx] == :broker || continue
+        push!(period_demanders, demand_agent_ids[idx])
+    end
+
+    period_access_ids = ws.period_broker_access_ids; empty!(period_access_ids)
+    isempty(period_demanders) && return nothing
+
+    K = params.K
+    N = length(agents)
+    if length(ws.access_seen) < N
+        old = length(ws.access_seen)
+        resize!(ws.access_seen, N)
+        @inbounds for i in (old + 1):N
+            ws.access_seen[i] = false
         end
     end
-    n_pairs -= n_self
+    access_seen = ws.access_seen
+    access_touched = ws.access_touched; empty!(access_touched)
 
-    if ws !== nothing
-        if size(ws.Z_batch, 1) != d2 || size(ws.Z_batch, 2) < n_pairs
-            cap = max(n_pairs, 2 * size(ws.Z_batch, 2), 256)
-            ws.Z_batch = Matrix{Float64}(undef, d2, cap)
-            ws.H_batch = Matrix{Float64}(undef, h_b, cap)
-            resize!(ws.Y_batch, cap)
-        end
+    @inbounds for rid in broker.roster
+        (rid < 1 || rid > N) && continue
+        current_open_capacity(agents, rid, K, reserved_capacity) > 0 || continue
+        access_seen[rid] && continue
+        access_seen[rid] = true
+        push!(access_touched, rid)
+        push!(period_access_ids, rid)
     end
-    Z_batch = ws === nothing ? Matrix{Float64}(undef, d2, n_pairs) : ws.Z_batch
-    H_batch = ws === nothing ? Matrix{Float64}(undef, h_b, n_pairs) : ws.H_batch
-    Y_batch = ws === nothing ? Vector{Float64}(undef, n_pairs) : ws.Y_batch
-
-    col = 0
-    @inbounds for ri in 1:n_roster
-        rid = roster_members[ri]
-        xj = agents[rid].type
-        for di in 1:n_unique
-            did = demander_ids[di]
-            if did == rid
-                Q[di, ri] = -Inf
-            else
-                col += 1
-                xi = agents[did].type
-                for k in 1:d
-                    Z_batch[k, col] = xi[k]
-                    Z_batch[d + k, col] = xj[k]
-                end
-            end
-        end
+    @inbounds for rid in broker.current_clients
+        (rid < 1 || rid > N) && continue
+        current_open_capacity(agents, rid, K, reserved_capacity) > 0 || continue
+        access_seen[rid] && continue
+        access_seen[rid] = true
+        push!(access_touched, rid)
+        push!(period_access_ids, rid)
     end
 
-    n_pairs > 0 && predict_nn_batch!(broker.nn, H_batch, Y_batch, Z_batch, n_pairs)
-
-    col = 0
-    @inbounds for ri in 1:n_roster
-        rid = roster_members[ri]
-        for di in 1:n_unique
-            if demander_ids[di] != rid
-                col += 1
-                Q[di, ri] = Y_batch[col]
-            end
-        end
+    @inbounds for rid in access_touched
+        access_seen[rid] = false
     end
+    isempty(period_access_ids) && return nothing
 
-    length(sort_pairs) < n_roster && resize!(sort_pairs, n_roster)
-    if ws !== nothing
-        ws.sort_pairs = sort_pairs
-    end
+    prepare_broker_quality_matrix!(broker, period_demanders, period_access_ids, agents, params; ws=ws)
+    return nothing
+end
 
-    @inbounds for di in 1:n_unique
+"""
+    append_broker_round_preferences_from_matrix!(out, counts, broker_matrix, demander_ids,
+                                                 agents, params, r; demander_slots=nothing)
+
+Append demander-side ranked broker options from a precomputed broker quality
+matrix. When `demander_slots` is provided, demanders with zero remaining slots
+contribute no preferences.
+"""
+function append_broker_round_preferences_from_matrix!(out::Vector{ProposedMatch},
+                                                      counts::Vector{Int},
+                                                      broker_matrix,
+                                                      demander_ids::Vector{Int},
+                                                      agents::Vector{Agent},
+                                                      params::ModelParams,
+                                                      r::Float64;
+                                                      demander_slots::Union{Vector{Int}, Nothing} = nothing,
+                                                      reserved_capacity::Union{Vector{Int}, Nothing} = nothing)
+    empty!(out)
+    resize!(counts, length(demander_ids))
+    fill!(counts, 0)
+    isempty(demander_ids) && return out
+
+    K = params.K
+    Q = broker_matrix.Q
+    roster_members = broker_matrix.roster_members
+    sort_pairs = broker_matrix.sort_pairs
+    n_roster = broker_matrix.n_roster
+    n_roster == 0 && return out
+
+    @inbounds for di in eachindex(demander_ids)
+        !isnothing(demander_slots) && demander_slots[di] <= 0 && continue
         did = demander_ids[di]
         for ri in 1:n_roster
             sort_pairs[ri] = (-Q[di, ri], ri)
@@ -635,15 +772,110 @@ function build_broker_round_preferences!(out::Vector{ProposedMatch},
             val <= r && break
             rid = roster_members[ri]
             did == rid && continue
-            push!(out, ProposedMatch(did, rid, :broker, val, false, NaN))
+            current_open_capacity(agents, rid, K, reserved_capacity) > 0 || continue
+            push!(out, ProposedMatch(did, rid, :broker, val, false, NaN, NaN))
             counts[di] += 1
         end
     end
 
-    @label cleanup
-    @inbounds for aid in access_touched
-        access_seen[aid] = false
+    return out
+end
+
+"""
+    append_broker_round_preferences_from_cache!(out, counts, demander_ids, agents,
+                                                params, r; ws, demander_slots=nothing)
+
+Append demander-side ranked broker options using the period-level broker
+quality cache prepared once before round matching. Only currently open
+counterparties are considered in each round, preserving the live-capacity
+logic while avoiding repeated broker NN passes.
+"""
+function append_broker_round_preferences_from_cache!(out::Vector{ProposedMatch},
+                                                     counts::Vector{Int},
+                                                     demander_ids::Vector{Int},
+                                                     agents::Vector{Agent},
+                                                     params::ModelParams,
+                                                     r::Float64;
+                                                     ws::Union{SimWorkspace, Nothing} = nothing,
+                                                     demander_slots::Union{Vector{Int}, Nothing} = nothing,
+                                                     reserved_capacity::Union{Vector{Int}, Nothing} = nothing)
+    ws === nothing &&
+        error("append_broker_round_preferences_from_cache! requires a workspace cache")
+
+    empty!(out)
+    resize!(counts, length(demander_ids))
+    fill!(counts, 0)
+    isempty(demander_ids) && return out
+
+    period_demanders = ws.period_broker_demanders
+    period_access_ids = ws.period_broker_access_ids
+    isempty(period_demanders) && return out
+    isempty(period_access_ids) && return out
+
+    K = params.K
+    Q = ws.Q
+    sort_pairs = ws.sort_pairs
+    open_cols = ws.period_broker_open_cols; empty!(open_cols)
+
+    @inbounds for col in eachindex(period_access_ids)
+        rid = period_access_ids[col]
+        current_open_capacity(agents, rid, K, reserved_capacity) > 0 || continue
+        push!(open_cols, col)
+    end
+    isempty(open_cols) && return out
+
+    length(sort_pairs) < length(open_cols) && resize!(sort_pairs, length(open_cols))
+
+    row_cursor = 1
+    @inbounds for di in eachindex(demander_ids)
+        !isnothing(demander_slots) && demander_slots[di] <= 0 && continue
+        did = demander_ids[di]
+        while row_cursor <= length(period_demanders) && period_demanders[row_cursor] != did
+            row_cursor += 1
+        end
+        row_cursor > length(period_demanders) &&
+            error("Broker round cache desynchronized from current demander order")
+
+        for k in eachindex(open_cols)
+            col = open_cols[k]
+            sort_pairs[k] = (-Q[row_cursor, col], col)
+        end
+        sort!(view(sort_pairs, 1:length(open_cols)), alg=QuickSort)
+
+        for k in 1:length(open_cols)
+            neg_val, col = sort_pairs[k]
+            val = -neg_val
+            val <= r && break
+            rid = period_access_ids[col]
+            did == rid && continue
+            push!(out, ProposedMatch(did, rid, :broker, val, false, NaN, NaN))
+            counts[di] += 1
+        end
     end
 
+    return out
+end
+
+"""
+    build_broker_round_preferences!(out, counts, broker, demander_ids, agents, params, r; ws) -> Vector
+
+Build demander-side ranked broker options for one within-period round. The
+output vector is grouped by `demander_ids` order, and `counts[k]` records the
+number of appended preferences for demander `demander_ids[k]`.
+"""
+function build_broker_round_preferences!(out::Vector{ProposedMatch},
+                                         counts::Vector{Int},
+                                         broker::Broker,
+                                         demander_ids::Vector{Int},
+                                         agents::Vector{Agent},
+                                         params::ModelParams,
+                                         r::Float64;
+                                         ws::Union{SimWorkspace, Nothing} = nothing,
+                                         reserved_capacity::Union{Vector{Int}, Nothing} = nothing)
+    broker_matrix = prepare_broker_round_matrix!(broker, demander_ids, agents, params;
+                                                 ws=ws, reserved_capacity=reserved_capacity)
+    append_broker_round_preferences_from_matrix!(out, counts, broker_matrix,
+                                                 demander_ids, agents, params, r;
+                                                 reserved_capacity=reserved_capacity)
     return out
 end

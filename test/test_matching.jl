@@ -75,6 +75,57 @@ using StableRNGs: StableRNG
         @test length(state_round2.agents[1].active_matches) == 2
     end
 
+    @testset "Broker round cache matches direct round preferences" begin
+        p_cache = default_params(N=18, T=5, T_burn=1, K=3, n_strangers=0, seed=404)
+        state_cache = initialize_model(p_cache)
+        ws_cache = state_cache.workspace
+        agents_c = state_cache.agents
+
+        empty!(state_cache.broker.roster)
+        union!(state_cache.broker.roster, [5, 6, 7, 8])
+        empty!(state_cache.broker.current_clients)
+        union!(state_cache.broker.current_clients, [1, 3, 4])
+
+        TransientBrokerage.reset_principal_inventory!(ws_cache, p_cache.N)
+        TransientBrokerage.reserve_principal_capacity!(ws_cache, 7, 1)
+        push!(agents_c[6].active_matches, ActiveMatch(9, false, :self))
+
+        demand_agent_ids = [1, 2, 3, 4]
+        demand_channels = [:broker, :self, :broker, :broker]
+        broker_demanders = [1, 3, 4]
+        demander_slots = [1, 0, 2]
+        reserved_capacity = ws_cache.principal_reserved_capacity
+
+        TransientBrokerage.prepare_period_broker_round_cache!(
+            state_cache.broker, demand_agent_ids, demand_channels, agents_c, p_cache;
+            ws=ws_cache, reserved_capacity=reserved_capacity
+        )
+
+        direct_out = ProposedMatch[]
+        direct_counts = Int[]
+        broker_matrix = TransientBrokerage.prepare_broker_round_matrix!(
+            state_cache.broker, broker_demanders, agents_c, p_cache;
+            reserved_capacity=reserved_capacity
+        )
+        TransientBrokerage.append_broker_round_preferences_from_matrix!(
+            direct_out, direct_counts, broker_matrix, broker_demanders,
+            agents_c, p_cache, state_cache.cal.r;
+            demander_slots=demander_slots, reserved_capacity=reserved_capacity
+        )
+
+        cached_out = ProposedMatch[]
+        cached_counts = Int[]
+        TransientBrokerage.append_broker_round_preferences_from_cache!(
+            cached_out, cached_counts, broker_demanders, agents_c,
+            p_cache, state_cache.cal.r;
+            ws=ws_cache, demander_slots=demander_slots,
+            reserved_capacity=reserved_capacity
+        )
+
+        @test cached_counts == direct_counts
+        @test cached_out == direct_out
+    end
+
     @testset "Sequential formation accepts valid proposals" begin
         # Seed partner history so counterparties can evaluate
         for i in 1:10, j in 11:20
@@ -82,8 +133,8 @@ using StableRNGs: StableRNG
             add_match_edge!(G, i, j)
         end
         proposals = [
-            ProposedMatch(1, 15, :self, 2.0, false, NaN),
-            ProposedMatch(2, 16, :broker, 2.0, false, NaN),
+            ProposedMatch(1, 15, :self, 2.0, false, NaN, NaN),
+            ProposedMatch(2, 16, :broker, 2.0, false, NaN, NaN),
         ]
         rng = StableRNG(77)
         accepted = sequential_match_formation!(proposals, agents, broker, env, G, p, cal, rng)
@@ -101,7 +152,7 @@ using StableRNGs: StableRNG
         for _ in 1:p.K
             push!(state2.agents[5].active_matches, ActiveMatch(10, false, :self))
         end
-        proposals = [ProposedMatch(1, 5, :self, 10.0, false, NaN)]
+        proposals = [ProposedMatch(1, 5, :self, 10.0, false, NaN, NaN)]
         for j in 1:30
             update_partner_mean!(state2.agents[5], 1, 2.0)
             update_partner_mean!(state2.agents[1], 5, 2.0)
@@ -124,7 +175,7 @@ using StableRNGs: StableRNG
         update_partner_mean!(a2, 1, 5.0)
         add_match_edge!(state3.G, 1, 2)
 
-        proposals = [ProposedMatch(1, 2, :self, 5.0, false, NaN)]
+        proposals = [ProposedMatch(1, 2, :self, 5.0, false, NaN, NaN)]
         rng = StableRNG(55)
         accepted = sequential_match_formation!(proposals, state3.agents, state3.broker,
                                                 state3.env, state3.G, p, cal, rng)
@@ -144,7 +195,7 @@ using StableRNGs: StableRNG
         # Remove edge if exists so we can check it's not added
         TransientBrokerage.remove_agent_edges!(state4.G, 1)
 
-        proposals = [ProposedMatch(1, 2, :broker, 5.0, true, 1.0)]
+        proposals = [ProposedMatch(1, 2, :broker, 5.0, true, 1.0, 5.0)]
         rng = StableRNG(44)
         accepted = sequential_match_formation!(proposals, state4.agents, state4.broker,
                                                 state4.env, state4.G,
@@ -166,7 +217,8 @@ using StableRNGs: StableRNG
         # is charged per demanded slot, regardless of fill.
         d_ids = [1]; d_chs = [:self]; d_cnts = [2]
         accepted = [(demander_id=1, counterparty_id=5, channel=:self,
-                      is_principal=false, q_realized=2.0, q_predicted=1.5)]
+                      is_principal=false, q_realized=2.0, q_predicted=1.5,
+                      ask_j=NaN, capture_qhat=NaN)]
         sat_before = state5.agents[1].satisfaction_self
         update_satisfaction!(state5.agents, accepted, d_ids, d_chs, d_cnts, state5.cal, p)
         expected = (1 - omega) * sat_before + omega * (2.0 / 2 - c_s)
@@ -178,8 +230,9 @@ using StableRNGs: StableRNG
         omega = p.omega
         sat_before = state6.agents[1].satisfaction_broker
         d_ids = [1]; d_chs = [:broker]; d_cnts = [2]
-        accepted = NamedTuple{(:demander_id, :counterparty_id, :channel, :is_principal, :q_realized, :q_predicted),
-                              Tuple{Int, Int, Symbol, Bool, Float64, Float64}}[]
+        accepted = NamedTuple{(:demander_id, :counterparty_id, :channel, :is_principal,
+                               :q_realized, :q_predicted, :ask_j, :capture_qhat),
+                              Tuple{Int, Int, Symbol, Bool, Float64, Float64, Float64, Float64}}[]
         update_satisfaction!(state6.agents, accepted, d_ids, d_chs, d_cnts, state6.cal, p)
         @test state6.agents[1].satisfaction_broker ≈ (1 - omega) * sat_before
     end
@@ -189,8 +242,9 @@ using StableRNGs: StableRNG
         omega = p.omega
         sat_before = state6b.agents[1].satisfaction_self
         d_ids = [1]; d_chs = [:self]; d_cnts = [2]
-        accepted = NamedTuple{(:demander_id, :counterparty_id, :channel, :is_principal, :q_realized, :q_predicted),
-                              Tuple{Int, Int, Symbol, Bool, Float64, Float64}}[]
+        accepted = NamedTuple{(:demander_id, :counterparty_id, :channel, :is_principal,
+                               :q_realized, :q_predicted, :ask_j, :capture_qhat),
+                              Tuple{Int, Int, Symbol, Bool, Float64, Float64, Float64, Float64}}[]
         update_satisfaction!(state6b.agents, accepted, d_ids, d_chs, d_cnts, state6b.cal, p)
         expected = (1 - omega) * sat_before - omega * state6b.cal.c_s
         @test state6b.agents[1].satisfaction_self ≈ expected
@@ -202,7 +256,8 @@ using StableRNGs: StableRNG
         sat_before = state6c.agents[1].satisfaction_broker
         d_ids = [1]; d_chs = [:broker]; d_cnts = [2]
         accepted = [(demander_id=1, counterparty_id=5, channel=:broker,
-                      is_principal=false, q_realized=3.0, q_predicted=2.5)]
+                      is_principal=false, q_realized=3.0, q_predicted=2.5,
+                      ask_j=NaN, capture_qhat=NaN)]
         update_satisfaction!(state6c.agents, accepted, d_ids, d_chs, d_cnts, state6c.cal, p)
         expected = (1 - omega) * sat_before + omega * ((3.0 - state6c.cal.phi) / 2)
         @test state6c.agents[1].satisfaction_broker ≈ expected
@@ -214,7 +269,8 @@ using StableRNGs: StableRNG
         sat_before = state7.agents[1].satisfaction_broker
         d_ids = [1]; d_chs = [:broker]; d_cnts = [2]
         accepted = [(demander_id=1, counterparty_id=5, channel=:broker,
-                      is_principal=true, q_realized=3.0, q_predicted=2.5)]
+                      is_principal=true, q_realized=3.0, q_predicted=2.5,
+                      ask_j=1.0, capture_qhat=2.5)]
         update_satisfaction!(state7.agents, accepted, d_ids, d_chs, d_cnts, state7.cal, state7.params)
         # No fee for principal mode: cost = 0
         expected = (1 - omega) * sat_before + omega * (3.0 / 2)

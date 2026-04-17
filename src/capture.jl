@@ -1,19 +1,17 @@
 """
     capture.jl
 
-Resource capture (Model 1): principal-mode matching.
-The broker decides per-match whether to act as a standard intermediary (earning φ)
-or as a principal (stepping into the counterparty's role, earning the spread q_ij - q̄_j).
-
-The broker acquires the counterparty's position at a price equal to the counterparty's
-average realized match quality (its self-assessed value). No additional fee is charged
-to the demander. The broker's profit is the spread between the match output and the
-acquisition cost. The principal-mode hurdle is smoothed by:
-- counterparty support: breadth of distinct prior demanders for counterparty j
-- broker confidence: an EWMA of live realized broker-match absolute errors
-
-Gated by params.enable_principal. When disabled, all brokered matches are standard.
+Resource capture (Model 1): literal same-period principal acquisition.
+The broker evaluates whole counterparty blocks once, before within-period
+rounds. If a block is worth taking, the broker acquires the full currently
+available block immediately, removes it from the open market for the rest of
+the period, and then tries to deploy that owned inventory round by round to
+outsourced demanders. Unsold slots expire at period end and count as realized
+zero-value exposures for κ_b^t.
 """
+
+using Graphs: has_edge, SimpleGraph
+using Random: AbstractRNG
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Counterparty ask price
@@ -24,7 +22,7 @@ Gated by params.enable_principal. When disabled, all brokered matches are standa
 
 The counterparty's ask price: its average realized match quality from history,
 or q_cal if it has no history. This is the minimum price the counterparty
-accepts for selling its position to the broker.
+accepts for selling its currently available block to the broker.
 """
 function counterparty_ask(agent::Agent, q_cal::Float64)::Float64
     n = agent.history_count
@@ -36,81 +34,21 @@ function counterparty_ask(agent::Agent, q_cal::Float64)::Float64
     return total / n
 end
 
+"""Expected per-slot advantage of capture relative to standard placement."""
+capture_slot_margin(q_hat_b::Float64, ask_j::Float64, phi::Float64)::Float64 =
+    q_hat_b - ask_j - phi
+
 # ─────────────────────────────────────────────────────────────────────────────
-# Mode decision
+# Confidence update
 # ─────────────────────────────────────────────────────────────────────────────
-
-"""
-    capture_confidence_penalty(kappa, support_j, K) -> Float64
-
-Smooth confidence penalty for principal mode:
-    κ / sqrt(1 + s_j / K)
-where κ is the broker's current realized-error scale and s_j is counterparty
-support (distinct prior demanders for j). Scaling support by K makes the
-penalty relax only after breadth has built up relative to the market's
-per-period slot volume.
-"""
-function capture_confidence_penalty(kappa::Float64, support_j::Int, K::Int)::Float64
-    return kappa / sqrt(1.0 + support_j / K)
-end
-
-"""
-    broker_mode_decision(q_hat_b, ask_j, phi, kappa, support_j, K) -> Bool
-
-Decide whether the broker operates in principal mode for a given match.
-Returns true if the expected spread exceeds the standard placement fee:
-    Π_principal = q̂_b - q̄_j > Π_standard = φ + κ / sqrt(1 + s_j / K)
-"""
-function broker_mode_decision(q_hat_b::Float64, ask_j::Float64,
-                              phi::Float64, kappa::Float64,
-                              support_j::Int, K::Int)::Bool
-    return (q_hat_b - ask_j) > (phi + capture_confidence_penalty(kappa, support_j, K))
-end
-
-"""
-    update_counterparty_support!(broker, demander_id, counterparty_id) -> Nothing
-
-Record that demander i has been broker-matched with counterparty j. Support is
-the count of distinct demanders previously matched with j.
-"""
-function update_counterparty_support!(broker::Broker, demander_id::Int,
-                                      counterparty_id::Int)
-    demander_id == counterparty_id && return nothing
-    @inbounds if !broker.support_seen[demander_id, counterparty_id]
-        broker.support_seen[demander_id, counterparty_id] = true
-        broker.counterparty_support[counterparty_id] += 1
-    end
-    return nothing
-end
-
-"""
-    clear_counterparty_support!(broker, agent_id) -> Nothing
-
-Remove all support state touching a recycled agent slot. Row cleanup removes the
-exiting agent as a prior demander; column cleanup clears the exiting agent as a
-counterparty and resets its support count.
-"""
-function clear_counterparty_support!(broker::Broker, agent_id::Int)
-    N = length(broker.counterparty_support)
-    @inbounds for j in 1:N
-        if broker.support_seen[agent_id, j]
-            broker.support_seen[agent_id, j] = false
-            broker.counterparty_support[j] -= 1
-        end
-        broker.support_seen[j, agent_id] = false
-    end
-    broker.counterparty_support[agent_id] = 0
-    return nothing
-end
 
 """
     update_capture_confidence_mae!(broker, abs_error_sum, n_errors, omega) -> Nothing
 
-Update the broker's live confidence scale from realized broker-match absolute
-errors. If confidence has not yet been initialized, the first period with any
-broker-realized matches sets κ directly to that period MAE. No-op when there are
-no broker-realized matches in the period, so capture remains disabled until the
-first live broker period with data.
+Update the broker's live confidence scale from realized broker-controlled
+exposure errors. If confidence has not yet been initialized, the first period
+with any broker-controlled exposures sets κ directly to that period MAE. No-op
+when there are no such exposures in the period.
 """
 function update_capture_confidence_mae!(broker::Broker,
                                         abs_error_sum::Float64,
@@ -128,52 +66,389 @@ function update_capture_confidence_mae!(broker::Broker,
     return nothing
 end
 
-"""
-    mode_selected_broker_proposal(pm, agents, broker, params, cal) -> ProposedMatch
+# ─────────────────────────────────────────────────────────────────────────────
+# Whole-block capture planning
+# ─────────────────────────────────────────────────────────────────────────────
 
-Apply the principal-mode decision rule to one broker proposal, returning either
-the unchanged standard proposal or a principal-mode proposal with `ask_j`
-cached from the counterparty's reservation value.
-"""
-function mode_selected_broker_proposal(pm::ProposedMatch,
-                                       agents::Vector{Agent},
-                                       broker::Broker,
-                                       params::ModelParams,
-                                       cal::CalibrationConstants)::ProposedMatch
-    pm.channel == :broker || return pm
-    (params.enable_principal && broker.capture_confidence_ready) || return pm
+@inline principal_inventory_remaining_slots(ws::SimWorkspace, block_idx::Int)::Int =
+    length(ws.principal_inventory_slot_qhats[block_idx]) - ws.principal_inventory_next_slot[block_idx] + 1
 
-    ask_j = counterparty_ask(agents[pm.counterparty_id], cal.q_cal)
-    support_j = broker.counterparty_support[pm.counterparty_id]
-    if broker_mode_decision(pm.evaluation, ask_j, cal.phi,
-                            broker.capture_confidence_mae, support_j, params.K)
-        return ProposedMatch(pm.demander_id, pm.counterparty_id,
-                             pm.channel, pm.evaluation, true, ask_j)
+function reset_principal_inventory!(ws::SimWorkspace, N::Int)
+    if length(ws.principal_reserved_capacity) < N
+        old = length(ws.principal_reserved_capacity)
+        resize!(ws.principal_reserved_capacity, N)
+        @inbounds for idx in (old + 1):N
+            ws.principal_reserved_capacity[idx] = 0
+        end
     end
-    return pm
+    @inbounds for agent_id in ws.principal_reserved_touched
+        ws.principal_reserved_capacity[agent_id] = 0
+    end
+    empty!(ws.principal_reserved_touched)
+    empty!(ws.principal_inventory_ids)
+    empty!(ws.principal_inventory_asks)
+    empty!(ws.principal_inventory_next_slot)
+    empty!(ws.principal_inventory_round_ids)
+    empty!(ws.principal_inventory_round_blocks)
+    empty!(ws.principal_inventory_round_remaining)
+    empty!(ws.capture_plan_remaining)
+    empty!(ws.capture_block_qhats)
+    empty!(ws.principal_round_taken)
+    return nothing
+end
+
+function reserve_principal_capacity!(ws::SimWorkspace, counterparty_id::Int, n_slots::Int)
+    if ws.principal_reserved_capacity[counterparty_id] == 0
+        push!(ws.principal_reserved_touched, counterparty_id)
+    end
+    ws.principal_reserved_capacity[counterparty_id] += n_slots
+    return nothing
 end
 
 """
-    apply_mode_selection!(proposals, agents, broker, params, cal)
+    score_capture_block!(sort_pairs, Q, roster_members, roster_idx, broker_demanders,
+                         broker_slot_caps, agents, cal, K; reserved_capacity=nothing)
 
-Mark broker proposals as principal-mode where profitable after the smooth
-support/confidence penalty (§12c). Caches the acquisition reservation `ask_j` =
-q̄_j on the principal-mode proposal so that capture surplus at acceptance time
-uses the same reservation the broker used for its mode decision (avoiding drift
-from within-period history updates). Only applies when params.enable_principal
-is true and the broker has already observed at least one live broker period with
-realized match errors.
+Evaluate one candidate counterparty block under the whole-block rule. The
+counterparty contributes all currently available slots, and the broker values
+the block by assigning those slots to the best current outsourced uses.
+Returns a NamedTuple with the block margin net of standard fees, whether the
+whole block can be placed immediately, and the number of distinct demanders
+among the selected positive-margin uses.
 """
-function apply_mode_selection!(proposals::Vector{ProposedMatch},
-                               agents::Vector{Agent},
-                               broker::Broker,
-                               params::ModelParams,
-                               cal::CalibrationConstants)
-    for idx in eachindex(proposals)
-        proposals[idx] = mode_selected_broker_proposal(proposals[idx], agents, broker, params, cal)
+function score_capture_block!(sort_pairs::Vector{Tuple{Float64, Int}},
+                              Q::AbstractMatrix{Float64},
+                              roster_members::Vector{Int},
+                              roster_idx::Int,
+                              broker_demanders::Vector{Int},
+                              broker_slot_caps::Vector{Int},
+                              agents::Vector{Agent},
+                              cal::CalibrationConstants,
+                              K::Int;
+                              reserved_capacity::Union{Vector{Int}, Nothing} = nothing)
+    counterparty_id = roster_members[roster_idx]
+    blocked_j = isnothing(reserved_capacity) ? 0 : reserved_capacity[counterparty_id]
+    cap_j = available_capacity(agents[counterparty_id], K, blocked_j)
+    ask_j = counterparty_ask(agents[counterparty_id], cal.q_cal)
+    n_demanders = length(broker_demanders)
+
+    if cap_j <= 0 || n_demanders == 0
+        return (counterparty_id=counterparty_id, ask_j=ask_j, cap_j=cap_j,
+                block_margin=-Inf, profitable_depth=0, filled=false)
     end
 
-    return proposals
+    length(sort_pairs) < n_demanders && resize!(sort_pairs, n_demanders)
+
+    @inbounds for di in 1:n_demanders
+        did = broker_demanders[di]
+        slot_cap = broker_slot_caps[di]
+        q_hat = Q[di, roster_idx]
+        margin = if slot_cap <= 0 || did == counterparty_id || q_hat == -Inf
+            -Inf
+        else
+            capture_slot_margin(q_hat, ask_j, cal.phi)
+        end
+        sort_pairs[di] = (-margin, di)
+    end
+    sort!(view(sort_pairs, 1:n_demanders), alg=QuickSort)
+
+    used = 0
+    block_margin = 0.0
+    profitable_depth = 0
+    @inbounds for k in 1:n_demanders
+        neg_margin, di = sort_pairs[k]
+        margin = -neg_margin
+        isfinite(margin) || break
+        slot_cap = broker_slot_caps[di]
+        slot_cap <= 0 && continue
+        n_take = min(slot_cap, cap_j - used)
+        n_take <= 0 && break
+        block_margin += n_take * margin
+        margin > 0.0 && (profitable_depth += 1)
+        used += n_take
+        used == cap_j && break
+    end
+
+    return (counterparty_id=counterparty_id, ask_j=ask_j, cap_j=cap_j,
+            block_margin=block_margin, profitable_depth=profitable_depth,
+            filled=used == cap_j)
+end
+
+"""
+    best_capture_block!(sort_pairs, Q, roster_members, broker_demanders,
+                        broker_slot_caps, agents, broker, cal, K; reserved_capacity=nothing)
+
+Pick the current best whole block to capture, if any. Blocks are ranked by
+their net expected advantage after subtracting the block-size confidence hurdle
+`cap_j * κ_b^t`. Returns `nothing` when no block is worth taking.
+"""
+function best_capture_block!(sort_pairs::Vector{Tuple{Float64, Int}},
+                             Q::AbstractMatrix{Float64},
+                             roster_members::Vector{Int},
+                             broker_demanders::Vector{Int},
+                             broker_slot_caps::Vector{Int},
+                             agents::Vector{Agent},
+                             broker::Broker,
+                             cal::CalibrationConstants,
+                             K::Int;
+                             reserved_capacity::Union{Vector{Int}, Nothing} = nothing)
+    best_ri = 0
+    best_excess = 0.0
+    best_score = nothing
+
+    @inbounds for roster_idx in eachindex(roster_members)
+        score = score_capture_block!(sort_pairs, Q, roster_members, roster_idx,
+                                     broker_demanders, broker_slot_caps,
+                                     agents, cal, K;
+                                     reserved_capacity=reserved_capacity)
+        score.filled || continue
+        score.profitable_depth >= 2 || continue
+        excess = score.block_margin - score.cap_j * broker.capture_confidence_mae
+        if excess > best_excess
+            best_excess = excess
+            best_ri = roster_idx
+            best_score = score
+        end
+    end
+
+    best_ri == 0 && return nothing
+    return (; roster_idx=best_ri, excess=best_excess, best_score...)
+end
+
+"""
+    capture_block_slots!(slot_qhats, plan_remaining, sort_pairs, Q, roster_idx,
+                         broker_demanders, broker_slot_caps, ask_j, counterparty_id, cal, cap_j)
+
+Consume the best current uses of a captured block, write one acquisition-time
+q̂ per slot into `slot_qhats`, and decrement the corresponding planned demand.
+"""
+function capture_block_slots!(slot_qhats::Vector{Float64},
+                              plan_remaining::Vector{Int},
+                              sort_pairs::Vector{Tuple{Float64, Int}},
+                              Q::AbstractMatrix{Float64},
+                              roster_idx::Int,
+                              broker_demanders::Vector{Int},
+                              broker_slot_caps::Vector{Int},
+                              ask_j::Float64,
+                              counterparty_id::Int,
+                              cal::CalibrationConstants,
+                              cap_j::Int)::Int
+    empty!(slot_qhats)
+    length(sort_pairs) < length(broker_demanders) && resize!(sort_pairs, length(broker_demanders))
+
+    @inbounds for di in eachindex(broker_demanders)
+        did = broker_demanders[di]
+        slot_cap = broker_slot_caps[di]
+        q_hat = Q[di, roster_idx]
+        margin = if slot_cap <= 0 || did == counterparty_id || q_hat == -Inf
+            -Inf
+        else
+            capture_slot_margin(q_hat, ask_j, cal.phi)
+        end
+        sort_pairs[di] = (-margin, di)
+    end
+    sort!(view(sort_pairs, 1:length(broker_demanders)), alg=QuickSort)
+
+    used = 0
+    @inbounds for k in 1:length(broker_demanders)
+        neg_margin, di = sort_pairs[k]
+        margin = -neg_margin
+        isfinite(margin) || break
+        slot_cap = broker_slot_caps[di]
+        slot_cap <= 0 && continue
+        n_take = min(slot_cap, cap_j - used)
+        n_take <= 0 && break
+
+        q_hat = Q[di, roster_idx]
+        for _ in 1:n_take
+            push!(slot_qhats, q_hat)
+        end
+        plan_remaining[di] -= n_take
+        used += n_take
+        used == cap_j && break
+    end
+
+    return used
+end
+
+"""
+    plan_period_capture!(demand_agent_ids, demand_channels, demand_counts,
+                         agents, broker, params, cal; ws)
+
+Before within-period rounds begin, greedily acquire whole counterparty blocks
+that clear the Model 1 rule on the current residual state. Acquired slots are
+stored as broker-owned same-period inventory in `ws` and are removed from open
+market capacity immediately. Returns the number of acquired blocks.
+"""
+function plan_period_capture!(demand_agent_ids::Vector{Int},
+                              demand_channels::Vector{Symbol},
+                              demand_counts::Vector{Int},
+                              agents::Vector{Agent},
+                              broker::Broker,
+                              params::ModelParams,
+                              cal::CalibrationConstants;
+                              ws::Union{SimWorkspace, Nothing} = nothing)::Int
+    (!params.enable_principal || !broker.capture_confidence_ready) && return 0
+    ws === nothing && return 0
+
+    N = length(agents)
+    K = params.K
+    reset_principal_inventory!(ws, N)
+
+    broker_demanders = ws.round_broker_demanders
+    empty!(broker_demanders)
+    plan_remaining = ws.capture_plan_remaining
+    empty!(plan_remaining)
+    broker_slot_caps = ws.demander_remaining
+    empty!(broker_slot_caps)
+
+    @inbounds for idx in eachindex(demand_agent_ids)
+        demand_channels[idx] == :broker || continue
+        push!(broker_demanders, demand_agent_ids[idx])
+        push!(plan_remaining, demand_counts[idx])
+    end
+    isempty(broker_demanders) && return 0
+
+    broker_matrix = prepare_broker_round_matrix!(broker, broker_demanders, agents, params; ws=ws)
+    broker_matrix.n_roster == 0 && return 0
+
+    resize!(broker_slot_caps, length(broker_demanders))
+    n_blocks = 0
+
+    while true
+        @inbounds for di in eachindex(broker_demanders)
+            did = broker_demanders[di]
+            broker_slot_caps[di] = min(plan_remaining[di],
+                                       available_capacity(agents[did], K, ws.principal_reserved_capacity[did]))
+        end
+
+        best = best_capture_block!(broker_matrix.sort_pairs, broker_matrix.Q,
+                                   broker_matrix.roster_members, broker_demanders,
+                                   broker_slot_caps, agents, broker, cal, K;
+                                   reserved_capacity=ws.principal_reserved_capacity)
+        isnothing(best) && break
+
+        block_idx = length(ws.principal_inventory_ids) + 1
+        if length(ws.principal_inventory_slot_qhats) < block_idx
+            push!(ws.principal_inventory_slot_qhats, Float64[])
+        end
+        slot_qhats = ws.principal_inventory_slot_qhats[block_idx]
+        used = capture_block_slots!(slot_qhats, plan_remaining, broker_matrix.sort_pairs,
+                                    broker_matrix.Q, best.roster_idx, broker_demanders,
+                                    broker_slot_caps, best.ask_j, best.counterparty_id,
+                                    cal, best.cap_j)
+        used == best.cap_j || break
+
+        push!(ws.principal_inventory_ids, best.counterparty_id)
+        push!(ws.principal_inventory_asks, best.ask_j)
+        push!(ws.principal_inventory_next_slot, 1)
+        reserve_principal_capacity!(ws, best.counterparty_id, best.cap_j)
+        n_blocks += 1
+    end
+
+    return n_blocks
+end
+
+"""
+    execute_inventory_round!(accepted, remaining_demand, broker_indices, broker_demanders,
+                             agents, broker, env, G, params, cal, rng,
+                             was_connected_i, was_connected_j; ws, Ax_buf, Bx_buf)
+
+Execute one round of principal placements from already acquired broker-owned
+inventory. Each active outsourced demander can receive at most one owned slot
+in the round. Returns the number of realized principal-mode matches.
+"""
+function execute_inventory_round!(accepted::Vector{AcceptedMatch},
+                                  remaining_demand::Vector{Int},
+                                  broker_indices::Vector{Int},
+                                  broker_demanders::Vector{Int},
+                                  agents::Vector{Agent},
+                                  broker::Broker,
+                                  env::MatchingEnv,
+                                  G::SimpleGraph,
+                                  params::ModelParams,
+                                  cal::CalibrationConstants,
+                                  rng::AbstractRNG,
+                                  was_connected_i::Vector{Int},
+                                  was_connected_j::Vector{Int};
+                                  ws::Union{SimWorkspace, Nothing} = nothing,
+                                  Ax_buf::Vector{Float64},
+                                  Bx_buf::Vector{Float64})::Int
+    ws === nothing && return 0
+    isempty(broker_demanders) && return 0
+    isempty(ws.principal_inventory_ids) && return 0
+
+    round_ids = ws.principal_inventory_round_ids
+    round_blocks = ws.principal_inventory_round_blocks
+    round_remaining = ws.principal_inventory_round_remaining
+    empty!(round_ids)
+    empty!(round_blocks)
+    empty!(round_remaining)
+
+    @inbounds for block_idx in eachindex(ws.principal_inventory_ids)
+        remaining_slots = principal_inventory_remaining_slots(ws, block_idx)
+        remaining_slots > 0 || continue
+        push!(round_ids, ws.principal_inventory_ids[block_idx])
+        push!(round_blocks, block_idx)
+        push!(round_remaining, remaining_slots)
+    end
+    isempty(round_ids) && return 0
+
+    broker_matrix = prepare_broker_quality_matrix!(broker, broker_demanders, round_ids, agents, params; ws=ws)
+    n_demanders = length(broker_demanders)
+    n_inventory = length(round_ids)
+    n_entries = n_demanders * n_inventory
+    sort_pairs = broker_matrix.sort_pairs
+    length(sort_pairs) < n_entries && resize!(sort_pairs, n_entries)
+
+    idx = 0
+    @inbounds for ri in 1:n_inventory
+        for di in 1:n_demanders
+            idx += 1
+            sort_pairs[idx] = (-broker_matrix.Q[di, ri], idx)
+        end
+    end
+    sort!(view(sort_pairs, 1:n_entries), alg=QuickSort)
+
+    resize!(ws.principal_round_taken, n_demanders)
+    fill!(ws.principal_round_taken, false)
+    n_accepts = 0
+
+    @inbounds for k in 1:n_entries
+        neg_val, flat = sort_pairs[k]
+        val = -neg_val
+        val == -Inf && break
+        val <= cal.r && break
+
+        di = (flat - 1) % n_demanders + 1
+        ri = (flat - 1) ÷ n_demanders + 1
+        ws.principal_round_taken[di] && continue
+        round_remaining[ri] <= 0 && continue
+
+        did = broker_demanders[di]
+        counterparty_id = round_ids[ri]
+        block_idx = round_blocks[ri]
+        slot_idx = ws.principal_inventory_next_slot[block_idx]
+        capture_qhat = ws.principal_inventory_slot_qhats[block_idx][slot_idx]
+        ask_j = ws.principal_inventory_asks[block_idx]
+
+        has_edge(G, did, counterparty_id) && begin
+            push!(was_connected_i, did)
+            push!(was_connected_j, counterparty_id)
+        end
+
+        pm = ProposedMatch(did, counterparty_id, :broker, val, true, ask_j, capture_qhat)
+        finalize_accepted_proposal!(accepted, pm, agents, broker, env, G, rng;
+                                    Ax_buf=Ax_buf, Bx_buf=Bx_buf,
+                                    reserved_capacity=ws.principal_reserved_capacity)
+        remaining_demand[broker_indices[di]] -= 1
+        ws.principal_inventory_next_slot[block_idx] += 1
+        round_remaining[ri] -= 1
+        ws.principal_round_taken[di] = true
+        n_accepts += 1
+    end
+
+    return n_accepts
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -183,10 +458,9 @@ end
 """
     capture_surplus(q_realized, ask_j) -> Float64
 
-Capture surplus Δq_{ij} = q_{ij} - q̄_j (§12b): the realized match output net of
-the counterparty's acquisition reservation. Positive when the acquired position
-outperforms the counterparty's self-assessed value; negative realizations
-represent the broker's capture risk (§12d).
+Capture surplus Δq_{ij} = q_{ij} - q̄_j: the realized match output net of the
+counterparty's acquisition reservation. Positive values indicate profitable
+capture; negative values are realized inventory risk.
 """
 function capture_surplus(q_realized::Float64, ask_j::Float64)::Float64
     return q_realized - ask_j

@@ -5,7 +5,7 @@ Main simulation loop: one period of the model (§9, Steps 0-6).
 
 Step 0: Current-period match reset
 Step 1: Demand generation and outsourcing decisions
-Step 2: Candidate evaluation (train NNs, self-search, broker allocation, mode selection)
+Step 2: Candidate evaluation (train NNs and pre-period capture planning)
 Step 3: Within-period round-based match formation
 Step 4: Learning updates (histories already recorded in Step 3; satisfaction, reputation)
 Step 5: Entry/exit
@@ -81,6 +81,7 @@ function step_period!(state::ModelState)
     G = state.G
     env = state.env
     cal = state.cal
+    ws = state.workspace
 
     reset_accumulators!(state.accum)
     state.accum.broker_confidence_mae =
@@ -92,6 +93,7 @@ function step_period!(state::ModelState)
     for agent in agents
         empty!(agent.active_matches)
     end
+    reset_principal_inventory!(ws, N)
 
     # Clear the current-client overlay from the prior period, then refresh the
     # standing roster after prior-period turnover and before current-period
@@ -102,8 +104,6 @@ function step_period!(state::ModelState)
     # ══════════════════════════════════════════════════════════════════════
     # Step 1: Demand generation and outsourcing decisions
     # ══════════════════════════════════════════════════════════════════════
-    ws = state.workspace
-
     # Reuse workspace vectors (avoid Dict/Set allocation every period)
     demand_agent_ids = ws.demand_agent_ids; empty!(demand_agent_ids)
     demand_channels = ws.demand_channels; empty!(demand_channels)
@@ -159,7 +159,11 @@ function step_period!(state::ModelState)
         train_broker_nn!(broker, p)
     end
 
-    # 2.2-3: Within-period round-based search and match formation
+    # 2.2: Literal same-period acquisition planning (Model 1)
+    plan_period_capture!(demand_agent_ids, demand_channels, demand_counts,
+                         agents, broker, p, cal; ws=ws)
+
+    # 2.3: Within-period round-based principal execution and residual match formation
     accepted = round_match_formation!(demand_agent_ids, demand_channels, demand_counts,
                                       agents, broker, env, G, p, cal, rng;
                                       ws=ws, accepted_matches=ws.accepted_matches)
@@ -188,7 +192,8 @@ function step_period!(state::ModelState)
         elseif m.channel == :broker
             push!(state.accum.broker_predicted, m.q_predicted)
             push!(state.accum.broker_realized, m.q_realized)
-            state.accum.broker_error_abs_sum += abs(m.q_realized - m.q_predicted)
+            exposure_qhat = m.is_principal ? m.capture_qhat : m.q_predicted
+            state.accum.broker_error_abs_sum += abs(m.q_realized - exposure_qhat)
             state.accum.broker_error_count += 1
         end
 
@@ -198,12 +203,9 @@ function step_period!(state::ModelState)
         elseif m.is_principal
             state.accum.n_broker_principal += 1
             push!(state.accum.q_broker_principal, m.q_realized)
-            # §12h Step 4.3: capture-surplus ledger for this period.
-            # q_predicted carries the broker's ex-ante q̂_b from allocation (§9 Step 2.3).
-            # ask_j carries q̄_j from mode selection (§12c).
-            push!(state.accum.q_bar_j_principal, m.ask_j)
-            push!(state.accum.q_hat_b_principal, m.q_predicted)
-            push!(state.accum.principal_acquired_ids, m.counterparty_id)
+            push!(state.accum.capture_realized, m.q_realized)
+            push!(state.accum.capture_ask, m.ask_j)
+            push!(state.accum.capture_qhat, m.capture_qhat)
         else
             state.accum.n_broker_standard += 1
             push!(state.accum.q_broker_standard, m.q_realized)
@@ -224,6 +226,23 @@ function step_period!(state::ModelState)
             else
                 state.accum.access_count += 1
             end
+        end
+    end
+
+    for counterparty_id in ws.principal_inventory_ids
+        push!(state.accum.principal_acquired_ids, counterparty_id)
+    end
+    @inbounds for block_idx in eachindex(ws.principal_inventory_ids)
+        ask_j = ws.principal_inventory_asks[block_idx]
+        qhats = ws.principal_inventory_slot_qhats[block_idx]
+        next_slot = ws.principal_inventory_next_slot[block_idx]
+        for slot_idx in next_slot:length(qhats)
+            qhat = qhats[slot_idx]
+            push!(state.accum.capture_realized, 0.0)
+            push!(state.accum.capture_ask, ask_j)
+            push!(state.accum.capture_qhat, qhat)
+            state.accum.broker_error_abs_sum += abs(qhat)
+            state.accum.broker_error_count += 1
         end
     end
 

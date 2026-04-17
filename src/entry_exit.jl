@@ -15,8 +15,8 @@ using Graphs: neighbors
 Remove agent from the simulation: clear all edges in G, terminate active matches
 (counterparties regain capacity), remove from the broker's standing roster and
 current client overlay, and clear any references to the exiting slot held
-elsewhere in state (other agents' per-partner tracking and the broker's
-counterparty-support state). The agent's node index is reused for the entrant.
+elsewhere in state (other agents' per-partner tracking). The agent's node index
+is reused for the entrant.
 """
 function exit_agent!(state::ModelState, agent_id::Int)
     agent = state.agents[agent_id]
@@ -47,11 +47,6 @@ function exit_agent!(state::ModelState, agent_id::Int)
         state.agents[j].partner_sum[agent_id] = 0.0
         state.agents[j].partner_count[agent_id] = 0
     end
-
-    # Remove all broker support state touching this recycled slot. Otherwise a
-    # fresh entrant would inherit the prior occupant's counterparty-marketability
-    # state or remain counted as a historical demander for other counterparties.
-    clear_counterparty_support!(state.broker, agent_id)
 
     return nothing
 end
