@@ -170,6 +170,103 @@ function self_search(agent::Agent, agents::Vector{Agent}, G::SimpleGraph,
     return out
 end
 
+"""
+    append_self_round_preferences!(out, agent, agents, G, broker_node, params, rng, r; ws) -> Int
+
+Append demander-side ranked self-search options for one within-period round.
+Each feasible candidate appears at most once, ordered by the demander's current
+evaluation (known-partner mean for neighbors, NN prediction for strangers).
+Returns the number of appended preferences.
+"""
+function append_self_round_preferences!(out::Vector{ProposedMatch},
+                                        agent::Agent,
+                                        agents::Vector{Agent},
+                                        G::SimpleGraph,
+                                        broker_node::Int,
+                                        params::ModelParams,
+                                        rng::AbstractRNG,
+                                        r::Float64;
+                                        ws::Union{SimWorkspace, Nothing} = nothing)::Int
+    K = params.K
+    agent_id = agent.id
+    N = length(agents)
+
+    if ws === nothing
+        neighbor_ids = Int[]; neighbor_evals = Float64[]
+        stranger_ids = Int[]; stranger_evals = Float64[]
+        eligible = Int[]; nbr_mask = fill(false, N + 1)
+        local_marked = Int[]
+    else
+        neighbor_ids = ws.neighbor_ids; empty!(neighbor_ids)
+        neighbor_evals = ws.neighbor_evals; empty!(neighbor_evals)
+        stranger_ids = ws.stranger_ids; empty!(stranger_ids)
+        stranger_evals = ws.stranger_evals; empty!(stranger_evals)
+        eligible = ws.eligible; empty!(eligible)
+        if length(ws.nbr_mask) < N + 1
+            old_len = length(ws.nbr_mask)
+            resize!(ws.nbr_mask, N + 1)
+            @inbounds for i in (old_len + 1):(N + 1)
+                ws.nbr_mask[i] = false
+            end
+        end
+        nbr_mask = ws.nbr_mask
+        local_marked = ws.nbr_marked; empty!(local_marked)
+    end
+
+    @inbounds for nbr in neighbors(G, agent_id)
+        nbr == broker_node && continue
+        (nbr < 1 || nbr > N) && continue
+        nbr_mask[nbr] = true
+        push!(local_marked, nbr)
+        available_capacity(agents[nbr], K) > 0 || continue
+        mean_q = partner_mean(agent, nbr)
+        if !isnan(mean_q) && mean_q > r
+            push!(neighbor_ids, nbr)
+            push!(neighbor_evals, mean_q)
+        end
+    end
+
+    if params.n_strangers > 0
+        @inbounds for j in 1:N
+            j == agent_id && continue
+            nbr_mask[j] && continue
+            available_capacity(agents[j], K) > 0 || continue
+            push!(eligible, j)
+        end
+
+        n_sample = min(params.n_strangers, length(eligible))
+        if n_sample > 0
+            sampled = sample(rng, eligible, n_sample; replace=false)
+            @inbounds for j in sampled
+                q_hat = predict_nn!(agent.nn, agent.predict_buf, agents[j].type)
+                q_hat > r || continue
+                push!(stranger_ids, j)
+                push!(stranger_evals, q_hat)
+            end
+        end
+    end
+
+    @inbounds for nbr in local_marked
+        nbr_mask[nbr] = false
+    end
+
+    start_idx = length(out) + 1
+    @inbounds for idx in eachindex(neighbor_ids)
+        push!(out, ProposedMatch(agent_id, neighbor_ids[idx], :self,
+                                 neighbor_evals[idx], false, NaN))
+    end
+    @inbounds for idx in eachindex(stranger_ids)
+        push!(out, ProposedMatch(agent_id, stranger_ids[idx], :self,
+                                 stranger_evals[idx], false, NaN))
+    end
+
+    n_added = length(out) - start_idx + 1
+    n_added <= 0 && return 0
+
+    sort!(view(out, start_idx:length(out)); by=pm -> pm.evaluation, rev=true)
+    return n_added
+end
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Broker allocation
 # ─────────────────────────────────────────────────────────────────────────────
@@ -178,10 +275,11 @@ end
     broker_allocate(broker, client_demands, agents, params, rng, r; ws, proposals)
 
 Greedy best-pair allocation from the broker's quality matrix. Builds a batched
-NN prediction over unique (demander, roster_member) pairs, then iterates in
-descending quality order, allowing the same demander-counterparty pair to fill
-multiple slots if it remains the best feasible pair. Appends matches to
-`proposals` (or a fresh vector).
+NN prediction over unique (demander, accessible counterparty) pairs, where the
+broker's current access set is the standing roster plus current-period broker
+clients. The allocator then iterates in descending quality order, allowing the
+same demander-counterparty pair to fill multiple slots if it remains the best
+feasible pair. Appends matches to `proposals` (or a fresh vector).
 """
 function broker_allocate(broker::Broker, client_demands::Vector{Tuple{Int, Int}},
                          agents::Vector{Agent}, params::ModelParams,
@@ -202,12 +300,23 @@ function broker_allocate(broker::Broker, client_demands::Vector{Tuple{Int, Int}}
         roster_members = Int[]; roster_capacity = Int[]
         unique_demanders = Int[]; demander_remaining = Int[]
         demander_idx = zeros(Int, N); demander_touched = Int[]
+        access_seen = falses(N)
+        access_touched = Int[]
     else
         roster_members = ws.roster_members; empty!(roster_members)
         roster_capacity = ws.roster_capacity; empty!(roster_capacity)
         unique_demanders = ws.unique_demanders; empty!(unique_demanders)
         demander_remaining = ws.demander_remaining; empty!(demander_remaining)
         demander_touched = ws.demander_touched; empty!(demander_touched)
+        if length(ws.access_seen) < N
+            old = length(ws.access_seen)
+            resize!(ws.access_seen, N)
+            @inbounds for i in (old+1):N
+                ws.access_seen[i] = false
+            end
+        end
+        access_seen = ws.access_seen
+        access_touched = ws.access_touched; empty!(access_touched)
         if length(ws.demander_idx) < N
             old = length(ws.demander_idx)
             resize!(ws.demander_idx, N)
@@ -233,10 +342,21 @@ function broker_allocate(broker::Broker, client_demands::Vector{Tuple{Int, Int}}
     n_unique = length(unique_demanders)
     n_unique == 0 && (@goto cleanup; return out)
 
-    # Available roster members with capacity
+    # Available counterparties from the standing roster plus current-period clients.
     for rid in broker.roster
         (rid < 1 || rid > N) && continue
         available_capacity(agents[rid], K) > 0 || continue
+        access_seen[rid] && continue
+        access_seen[rid] = true
+        push!(access_touched, rid)
+        push!(roster_members, rid)
+    end
+    for rid in broker.current_clients
+        (rid < 1 || rid > N) && continue
+        available_capacity(agents[rid], K) > 0 || continue
+        access_seen[rid] && continue
+        access_seen[rid] = true
+        push!(access_touched, rid)
         push!(roster_members, rid)
     end
     if isempty(roster_members); @goto cleanup; end
@@ -364,6 +484,165 @@ function broker_allocate(broker::Broker, client_demands::Vector{Tuple{Int, Int}}
     # Sparse-clear demander_idx (only entries we touched)
     @inbounds for aid in demander_touched
         demander_idx[aid] = 0
+    end
+    @inbounds for aid in access_touched
+        access_seen[aid] = false
+    end
+
+    return out
+end
+
+"""
+    build_broker_round_preferences!(out, counts, broker, demander_ids, agents, params, r; ws) -> Vector
+
+Build demander-side ranked broker options for one within-period round. The
+output vector is grouped by `demander_ids` order, and `counts[k]` records the
+number of appended preferences for demander `demander_ids[k]`.
+"""
+function build_broker_round_preferences!(out::Vector{ProposedMatch},
+                                         counts::Vector{Int},
+                                         broker::Broker,
+                                         demander_ids::Vector{Int},
+                                         agents::Vector{Agent},
+                                         params::ModelParams,
+                                         r::Float64;
+                                         ws::Union{SimWorkspace, Nothing} = nothing)
+    empty!(out)
+    resize!(counts, length(demander_ids))
+    fill!(counts, 0)
+    isempty(demander_ids) && return out
+
+    K = params.K
+    d = params.d
+    d2 = 2 * d
+    h_b = params.h_b
+    N = length(agents)
+
+    if ws === nothing
+        roster_members = Int[]
+        access_seen = falses(N)
+        access_touched = Int[]
+        sort_pairs = Tuple{Float64, Int}[]
+    else
+        roster_members = ws.roster_members; empty!(roster_members)
+        if length(ws.access_seen) < N
+            old = length(ws.access_seen)
+            resize!(ws.access_seen, N)
+            @inbounds for i in (old + 1):N
+                ws.access_seen[i] = false
+            end
+        end
+        access_seen = ws.access_seen
+        access_touched = ws.access_touched; empty!(access_touched)
+        sort_pairs = ws.sort_pairs
+    end
+
+    for rid in broker.roster
+        (rid < 1 || rid > N) && continue
+        available_capacity(agents[rid], K) > 0 || continue
+        access_seen[rid] && continue
+        access_seen[rid] = true
+        push!(access_touched, rid)
+        push!(roster_members, rid)
+    end
+    for rid in broker.current_clients
+        (rid < 1 || rid > N) && continue
+        available_capacity(agents[rid], K) > 0 || continue
+        access_seen[rid] && continue
+        access_seen[rid] = true
+        push!(access_touched, rid)
+        push!(roster_members, rid)
+    end
+    n_roster = length(roster_members)
+    n_roster == 0 && (@goto cleanup; return out)
+
+    n_unique = length(demander_ids)
+    if ws !== nothing && (size(ws.Q, 1) < n_unique || size(ws.Q, 2) < n_roster)
+        ws.Q = Matrix{Float64}(undef, max(n_unique, size(ws.Q, 1)),
+                                      max(n_roster, size(ws.Q, 2)))
+    end
+    Q = ws === nothing ? Matrix{Float64}(undef, n_unique, n_roster) : ws.Q
+
+    n_pairs = n_unique * n_roster
+    n_self = 0
+    @inbounds for ri in 1:n_roster
+        rid = roster_members[ri]
+        for di in 1:n_unique
+            demander_ids[di] == rid && (n_self += 1)
+        end
+    end
+    n_pairs -= n_self
+
+    if ws !== nothing
+        if size(ws.Z_batch, 1) != d2 || size(ws.Z_batch, 2) < n_pairs
+            cap = max(n_pairs, 2 * size(ws.Z_batch, 2), 256)
+            ws.Z_batch = Matrix{Float64}(undef, d2, cap)
+            ws.H_batch = Matrix{Float64}(undef, h_b, cap)
+            resize!(ws.Y_batch, cap)
+        end
+    end
+    Z_batch = ws === nothing ? Matrix{Float64}(undef, d2, n_pairs) : ws.Z_batch
+    H_batch = ws === nothing ? Matrix{Float64}(undef, h_b, n_pairs) : ws.H_batch
+    Y_batch = ws === nothing ? Vector{Float64}(undef, n_pairs) : ws.Y_batch
+
+    col = 0
+    @inbounds for ri in 1:n_roster
+        rid = roster_members[ri]
+        xj = agents[rid].type
+        for di in 1:n_unique
+            did = demander_ids[di]
+            if did == rid
+                Q[di, ri] = -Inf
+            else
+                col += 1
+                xi = agents[did].type
+                for k in 1:d
+                    Z_batch[k, col] = xi[k]
+                    Z_batch[d + k, col] = xj[k]
+                end
+            end
+        end
+    end
+
+    n_pairs > 0 && predict_nn_batch!(broker.nn, H_batch, Y_batch, Z_batch, n_pairs)
+
+    col = 0
+    @inbounds for ri in 1:n_roster
+        rid = roster_members[ri]
+        for di in 1:n_unique
+            if demander_ids[di] != rid
+                col += 1
+                Q[di, ri] = Y_batch[col]
+            end
+        end
+    end
+
+    length(sort_pairs) < n_roster && resize!(sort_pairs, n_roster)
+    if ws !== nothing
+        ws.sort_pairs = sort_pairs
+    end
+
+    @inbounds for di in 1:n_unique
+        did = demander_ids[di]
+        for ri in 1:n_roster
+            sort_pairs[ri] = (-Q[di, ri], ri)
+        end
+        sort!(view(sort_pairs, 1:n_roster), alg=QuickSort)
+
+        for k in 1:n_roster
+            neg_val, ri = sort_pairs[k]
+            val = -neg_val
+            val <= r && break
+            rid = roster_members[ri]
+            did == rid && continue
+            push!(out, ProposedMatch(did, rid, :broker, val, false, NaN))
+            counts[di] += 1
+        end
+    end
+
+    @label cleanup
+    @inbounds for aid in access_touched
+        access_seen[aid] = false
     end
 
     return out

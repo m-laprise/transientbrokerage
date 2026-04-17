@@ -1,7 +1,7 @@
 """
     matching.jl
 
-Sequential match formation, satisfaction tracking, and outsourcing decision.
+Within-period match formation, satisfaction tracking, and outsourcing decision.
 No wages in v0.2: match economics use fixed fees (phi, c_s) and the outside option r.
 Under principal mode (Model 1), the broker's compensation is the spread q_ij - ask_j.
 """
@@ -10,7 +10,89 @@ using Random: AbstractRNG, shuffle!
 using Graphs: has_edge, neighbors, SimpleGraph
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Sequential match formation (§9 Step 3)
+# Match formation helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    counterparty_offer_score(pm, agents, G, r) -> (admissible, score)
+
+Return whether proposal `pm` clears the counterparty-side participation rule and
+the score used for within-round counterparty ranking. Standard proposals use the
+counterparty's own evaluation. Principal-mode proposals are admissible without
+counterparty evaluation and are ranked by the broker's own predicted value.
+"""
+function counterparty_offer_score(pm::ProposedMatch,
+                                  agents::Vector{Agent},
+                                  G::SimpleGraph,
+                                  r::Float64)
+    if pm.is_principal
+        return true, pm.evaluation
+    end
+
+    i = pm.demander_id
+    j = pm.counterparty_id
+    counterparty_eval = if has_edge(G, j, i) && agents[j].partner_count[i] > 0
+        partner_mean(agents[j], i)
+    else
+        predict_nn!(agents[j].nn, agents[j].predict_buf, agents[i].type)
+    end
+
+    return counterparty_eval > r, counterparty_eval
+end
+
+"""
+    finalize_accepted_proposal!(accepted, pm, agents, broker, env, G, rng; Ax_buf, Bx_buf)
+
+Realize one accepted proposal, update histories/network/state, and append the
+accepted-match record.
+"""
+function finalize_accepted_proposal!(accepted::Vector{AcceptedMatch},
+                                     pm::ProposedMatch,
+                                     agents::Vector{Agent},
+                                     broker::Broker,
+                                     env::MatchingEnv,
+                                     G::SimpleGraph,
+                                     rng::AbstractRNG;
+                                     Ax_buf::Vector{Float64},
+                                     Bx_buf::Vector{Float64})
+    i = pm.demander_id
+    j = pm.counterparty_id
+
+    q_realized = match_output!(Ax_buf, Bx_buf, agents[i].type, agents[j].type, env, rng)
+
+    if pm.channel == :broker
+        update_counterparty_support!(broker, i, j)
+    end
+
+    if pm.is_principal
+        record_broker_history!(broker, agents[i].type, agents[j].type, q_realized)
+        push!(agents[i].active_matches, ActiveMatch(j, true, :broker))
+        push!(agents[j].active_matches, ActiveMatch(i, true, :broker))
+        agents[j].n_principal_acquired += 1
+    else
+        record_agent_history!(agents[i], agents[j].type, q_realized)
+        record_agent_history!(agents[j], agents[i].type, q_realized)
+        update_partner_mean!(agents[i], j, q_realized)
+        update_partner_mean!(agents[j], i, q_realized)
+        if pm.channel == :broker
+            record_broker_history!(broker, agents[i].type, agents[j].type, q_realized)
+        end
+        add_match_edge!(G, i, j)
+        push!(agents[i].active_matches, ActiveMatch(j, false, pm.channel))
+        push!(agents[j].active_matches, ActiveMatch(i, false, pm.channel))
+    end
+
+    agents[i].n_matches_any += 1
+    agents[j].n_matches_any += 1
+
+    push!(accepted, (demander_id=i, counterparty_id=j, channel=pm.channel,
+                     is_principal=pm.is_principal, q_realized=q_realized,
+                     q_predicted=pm.evaluation, ask_j=pm.ask_j))
+    return nothing
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sequential match formation (§9 Step 3, legacy helper)
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
@@ -48,8 +130,6 @@ function sequential_match_formation!(proposals::Vector{ProposedMatch},
     N = length(agents)
     K = params.K
     d = params.d
-    broker_node = broker.node_id
-
     # Pre-allocated buffers for match_output! (avoid alloc per match)
     Ax_buf = Vector{Float64}(undef, d)
     Bx_buf = Vector{Float64}(undef, d)
@@ -75,65 +155,311 @@ function sequential_match_formation!(proposals::Vector{ProposedMatch},
         remaining_cap[i] <= 0 && continue
         remaining_cap[j] <= 0 && continue
 
-        if pm.is_principal
-            # Principal mode: counterparty acceptance is automatic (broker pays r)
-            # Demander's participation constraint was applied during broker allocation
-        else
-            # Counterparty evaluates independently
-            counterparty_eval = if has_edge(G, j, i) && agents[j].partner_count[i] > 0
-                # Known neighbor: use historical average
-                partner_mean(agents[j], i)
-            else
-                # Stranger: use NN prediction
-                predict_nn!(agents[j].nn, agents[j].predict_buf, agents[i].type)
-            end
-
-            # Participation constraint
-            counterparty_eval <= cal.r && continue
-        end
-
-        # ── Accept the match ──
-
-        # Realize output
-        q_realized = match_output!(Ax_buf, Bx_buf, agents[i].type, agents[j].type, env, rng)
+        admissible, _ = counterparty_offer_score(pm, agents, G, cal.r)
+        admissible || continue
 
         # Decrement capacity
         remaining_cap[i] -= 1
         remaining_cap[j] -= 1
 
-        if pm.channel == :broker
-            update_counterparty_support!(broker, i, j)
-        end
+        finalize_accepted_proposal!(accepted, pm, agents, broker, env, G, rng;
+                                    Ax_buf=Ax_buf, Bx_buf=Bx_buf)
+    end
 
-        if pm.is_principal
-            # Principal mode: broker learns, agents don't, no edge
-            record_broker_history!(broker, agents[i].type, agents[j].type, q_realized)
-            push!(agents[i].active_matches, ActiveMatch(j, true, :broker))
-            push!(agents[j].active_matches, ActiveMatch(i, true, :broker))
-            # §12h Step 4.1: counterparty j was the acquired counterparty
-            agents[j].n_principal_acquired += 1
-        else
-            # Standard match: both parties learn, edge forms
-            record_agent_history!(agents[i], agents[j].type, q_realized)
-            record_agent_history!(agents[j], agents[i].type, q_realized)
-            update_partner_mean!(agents[i], j, q_realized)
-            update_partner_mean!(agents[j], i, q_realized)
-            if pm.channel == :broker
-                record_broker_history!(broker, agents[i].type, agents[j].type, q_realized)
+    return accepted
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Round-based concurrent match formation (§9 Step 3)
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    round_match_formation!(demand_agent_ids, demand_channels, demand_counts,
+                           agents, broker, env, G, params, cal, rng;
+                           ws=nothing, accepted_matches=nothing)
+
+Run the approved within-period round protocol. Each round lets every still-live
+demander attempt to fill one slot through its chosen channel. Demanders can
+fall back to next-best candidates within the round via deferred acceptance with
+capacity. A demander that exhausts its feasible list without being held exits
+for the rest of the period.
+"""
+function round_match_formation!(demand_agent_ids::Vector{Int},
+                                demand_channels::Vector{Symbol},
+                                demand_counts::Vector{Int},
+                                agents::Vector{Agent},
+                                broker::Broker,
+                                env::MatchingEnv,
+                                G::SimpleGraph,
+                                params::ModelParams,
+                                cal::CalibrationConstants,
+                                rng::AbstractRNG;
+                                ws::Union{SimWorkspace, Nothing} = nothing,
+                                accepted_matches::Union{Vector{AcceptedMatch}, Nothing} = nothing)
+    accepted = if isnothing(accepted_matches)
+        AcceptedMatch[]
+    else
+        empty!(accepted_matches)
+    end
+    isempty(demand_agent_ids) && return accepted
+
+    n_demanders = length(demand_agent_ids)
+    N = length(agents)
+    K = params.K
+    d = params.d
+    max_rounds = maximum(demand_counts)
+
+    if ws === nothing
+        remaining_demand = copy(demand_counts)
+        demand_failed = fill(false, n_demanders)
+        active_positions = Int[]
+        broker_positions = Int[]
+        broker_demanders = Int[]
+        pref_offsets = Int[]
+        next_pref = Int[]
+        pref_owner = Int[]
+        queue = Int[]
+        agent_to_active = zeros(Int, N)
+        agent_to_active_touched = Int[]
+        outgoing_prop_idx = Int[]
+        hold_counts = zeros(Int, N)
+        held_prop_idx = Matrix{Int}(undef, N, max(K, 1))
+        held_scores = Matrix{Float64}(undef, N, max(K, 1))
+        broker_pref_matches = ProposedMatch[]
+        broker_pref_counts = Int[]
+        pref_matches = ProposedMatch[]
+        round_capacity = Vector{Int}(undef, N)
+        wc_i = Int[]
+        wc_j = Int[]
+        Ax_buf = Vector{Float64}(undef, d)
+        Bx_buf = Vector{Float64}(undef, d)
+    else
+        remaining_demand = ws.demand_remaining; resize!(remaining_demand, n_demanders)
+        remaining_demand .= demand_counts
+        demand_failed = ws.demand_failed; resize!(demand_failed, n_demanders); fill!(demand_failed, false)
+        active_positions = ws.round_active_positions; empty!(active_positions)
+        broker_positions = ws.round_broker_positions; empty!(broker_positions)
+        broker_demanders = ws.round_broker_demanders; empty!(broker_demanders)
+        pref_offsets = ws.round_pref_offsets; empty!(pref_offsets)
+        next_pref = ws.round_next_pref; empty!(next_pref)
+        pref_owner = ws.round_pref_owner; empty!(pref_owner)
+        queue = ws.round_queue; empty!(queue)
+        if length(ws.round_agent_to_active) < N
+            old = length(ws.round_agent_to_active)
+            resize!(ws.round_agent_to_active, N)
+            @inbounds for i in (old + 1):N
+                ws.round_agent_to_active[i] = 0
             end
-            add_match_edge!(G, i, j)
-            push!(agents[i].active_matches, ActiveMatch(j, false, pm.channel))
-            push!(agents[j].active_matches, ActiveMatch(i, false, pm.channel))
+        end
+        agent_to_active = ws.round_agent_to_active
+        agent_to_active_touched = ws.round_agent_touched; empty!(agent_to_active_touched)
+        outgoing_prop_idx = ws.round_outgoing_prop_idx; empty!(outgoing_prop_idx)
+        hold_counts = ws.round_hold_counts
+        resize!(hold_counts, N)
+        if size(ws.round_held_prop_idx, 1) != N || size(ws.round_held_prop_idx, 2) != K
+            ws.round_held_prop_idx = Matrix{Int}(undef, N, max(K, 1))
+            ws.round_held_scores = Matrix{Float64}(undef, N, max(K, 1))
+        end
+        held_prop_idx = ws.round_held_prop_idx
+        held_scores = ws.round_held_scores
+        broker_pref_matches = ws.round_broker_pref_matches; empty!(broker_pref_matches)
+        broker_pref_counts = ws.round_broker_pref_counts; empty!(broker_pref_counts)
+        pref_matches = ws.all_proposals; empty!(pref_matches)
+        round_capacity = ws.remaining_cap
+        resize!(round_capacity, N)
+        wc_i = ws.was_connected_i; empty!(wc_i)
+        wc_j = ws.was_connected_j; empty!(wc_j)
+        if length(ws.Ax_buf) != d
+            ws.Ax_buf = Vector{Float64}(undef, d)
+            ws.Bx_buf = Vector{Float64}(undef, d)
+        end
+        Ax_buf = ws.Ax_buf
+        Bx_buf = ws.Bx_buf
+    end
+
+    @inline function requeue_or_fail!(pos::Int)
+        idx = active_positions[pos]
+        if next_pref[pos] <= pref_offsets[pos + 1] - 1
+            push!(queue, pos)
+        else
+            demand_failed[idx] = true
+        end
+        return nothing
+    end
+
+    @inline function reject_held_offer!(agent_id::Int, slot::Int)
+        rejected_prop_idx = held_prop_idx[agent_id, slot]
+        rejected_pos = pref_owner[rejected_prop_idx]
+        outgoing_prop_idx[rejected_pos] = 0
+        last_slot = hold_counts[agent_id]
+        held_prop_idx[agent_id, slot] = held_prop_idx[agent_id, last_slot]
+        held_scores[agent_id, slot] = held_scores[agent_id, last_slot]
+        hold_counts[agent_id] -= 1
+        requeue_or_fail!(rejected_pos)
+        return nothing
+    end
+
+    for _ in 1:max_rounds
+        empty!(active_positions)
+        empty!(broker_positions)
+        empty!(broker_demanders)
+        @inbounds for idx in eachindex(demand_agent_ids)
+            if remaining_demand[idx] <= 0 || demand_failed[idx]
+                continue
+            end
+            if available_capacity(agents[demand_agent_ids[idx]], K) <= 0
+                demand_failed[idx] = true
+                continue
+            end
+            push!(active_positions, idx)
+            if demand_channels[idx] == :broker
+                push!(broker_positions, length(active_positions))
+                push!(broker_demanders, demand_agent_ids[idx])
+            end
+        end
+        isempty(active_positions) && break
+
+        empty!(pref_matches)
+        empty!(pref_owner)
+        resize!(pref_offsets, length(active_positions) + 1)
+        pref_offsets[1] = 1
+
+        build_broker_round_preferences!(broker_pref_matches, broker_pref_counts, broker,
+                                        broker_demanders, agents, params, cal.r; ws=ws)
+        broker_cursor = 1
+        broker_pref_cursor = 1
+
+        for pos in eachindex(active_positions)
+            idx = active_positions[pos]
+            agent_id = demand_agent_ids[idx]
+            if demand_channels[idx] == :self
+                n_added = append_self_round_preferences!(pref_matches, agents[agent_id], agents, G,
+                                                         broker.node_id, params, rng, cal.r; ws=ws)
+                for _ in 1:n_added
+                    push!(pref_owner, pos)
+                end
+            else
+                n_added = broker_pref_counts[broker_cursor]
+                for local_idx in 1:n_added
+                    pm = broker_pref_matches[broker_pref_cursor]
+                    broker_pref_cursor += 1
+                    pm = mode_selected_broker_proposal(pm, agents, broker, params, cal)
+                    if has_edge(G, pm.demander_id, pm.counterparty_id)
+                        push!(wc_i, pm.demander_id)
+                        push!(wc_j, pm.counterparty_id)
+                    end
+                    push!(pref_matches, pm)
+                    push!(pref_owner, pos)
+                end
+                broker_cursor += 1
+            end
+            pref_offsets[pos + 1] = length(pref_matches) + 1
         end
 
-        # §12h Step 4.1: cumulative match counter (any role, any channel).
-        # Feeds D_j = n_principal_acquired / n_matches_any in collect_period_metrics (§12i).
-        agents[i].n_matches_any += 1
-        agents[j].n_matches_any += 1
+        resize!(next_pref, length(active_positions))
+        resize!(outgoing_prop_idx, length(active_positions))
+        fill!(outgoing_prop_idx, 0)
+        empty!(queue)
+        fill!(hold_counts, 0)
 
-        push!(accepted, (demander_id=i, counterparty_id=j, channel=pm.channel,
-                         is_principal=pm.is_principal, q_realized=q_realized,
-                         q_predicted=pm.evaluation, ask_j=pm.ask_j))
+        @inbounds for i in 1:N
+            round_capacity[i] = available_capacity(agents[i], K)
+        end
+        @inbounds for pos in eachindex(active_positions)
+            next_pref[pos] = pref_offsets[pos]
+            push!(queue, pos)
+            agent_id = demand_agent_ids[active_positions[pos]]
+            agent_to_active[agent_id] = pos
+            push!(agent_to_active_touched, agent_id)
+        end
+
+        head = 1
+        while head <= length(queue)
+            pos = queue[head]
+            head += 1
+            outgoing_prop_idx[pos] == 0 || continue
+
+            prop_start = next_pref[pos]
+            prop_stop = pref_offsets[pos + 1] - 1
+            if prop_start > prop_stop
+                demand_failed[active_positions[pos]] = true
+                continue
+            end
+
+            prop_idx = prop_start
+            next_pref[pos] = prop_start + 1
+            pm = pref_matches[prop_idx]
+            admissible, hold_score = counterparty_offer_score(pm, agents, G, cal.r)
+            admissible || (requeue_or_fail!(pos); continue)
+
+            j = pm.counterparty_id
+            active_j_pos = agent_to_active[j]
+            effective_cap = round_capacity[j] -
+                            ((active_j_pos > 0 && outgoing_prop_idx[active_j_pos] != 0) ? 1 : 0)
+            if effective_cap <= 0
+                requeue_or_fail!(pos)
+                continue
+            end
+
+            accepted_here = false
+            if hold_counts[j] < effective_cap
+                hold_counts[j] += 1
+                held_prop_idx[j, hold_counts[j]] = prop_idx
+                held_scores[j, hold_counts[j]] = hold_score
+                accepted_here = true
+            else
+                worst_slot = 1
+                worst_score = held_scores[j, 1]
+                @inbounds for slot in 2:hold_counts[j]
+                    if held_scores[j, slot] < worst_score
+                        worst_score = held_scores[j, slot]
+                        worst_slot = slot
+                    end
+                end
+                if hold_score > worst_score
+                    reject_held_offer!(j, worst_slot)
+                    hold_counts[j] += 1
+                    held_prop_idx[j, hold_counts[j]] = prop_idx
+                    held_scores[j, hold_counts[j]] = hold_score
+                    accepted_here = true
+                end
+            end
+
+            if !accepted_here
+                requeue_or_fail!(pos)
+                continue
+            end
+
+            outgoing_prop_idx[pos] = prop_idx
+            i = pm.demander_id
+            while hold_counts[i] + 1 > round_capacity[i]
+                worst_slot = 1
+                worst_score = held_scores[i, 1]
+                @inbounds for slot in 2:hold_counts[i]
+                    if held_scores[i, slot] < worst_score
+                        worst_score = held_scores[i, slot]
+                        worst_slot = slot
+                    end
+                end
+                reject_held_offer!(i, worst_slot)
+            end
+        end
+
+        round_accepts = 0
+        @inbounds for pos in eachindex(active_positions)
+            prop_idx = outgoing_prop_idx[pos]
+            prop_idx == 0 && continue
+            finalize_accepted_proposal!(accepted, pref_matches[prop_idx], agents, broker, env, G, rng;
+                                        Ax_buf=Ax_buf, Bx_buf=Bx_buf)
+            remaining_demand[active_positions[pos]] -= 1
+            round_accepts += 1
+        end
+
+        @inbounds for aid in agent_to_active_touched
+            agent_to_active[aid] = 0
+        end
+
+        round_accepts == 0 && break
     end
 
     return accepted

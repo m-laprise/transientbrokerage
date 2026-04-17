@@ -122,7 +122,7 @@ function initialize_model(params::ModelParams; sort_by_pc1::Bool = false)::Model
 
     # ── I.8: Broker setup ──
     broker_node = N + 1
-    n_roster_seed = ceil(Int, 0.20 * N)
+    n_roster_seed = roster_target_size(N)
 
     # Initialize broker NN
     broker_nn = init_neural_net(2 * d, p.h_b, rng)
@@ -131,6 +131,7 @@ function initialize_model(params::ModelParams; sort_by_pc1::Bool = false)::Model
     broker = Broker(
         node_id = broker_node,
         roster = Set{Int}(),
+        current_clients = Set{Int}(),
         history_Xi = Matrix{Float64}(undef, d, 64),
         history_Xj = Matrix{Float64}(undef, d, 64),
         history_q = Vector{Float64}(undef, 64),
@@ -179,7 +180,6 @@ function initialize_model(params::ModelParams; sort_by_pc1::Bool = false)::Model
             satisfaction_self = 0.0,   # set from seed data in step I.11 below
             satisfaction_broker = 0.0, # no broker experience at init
             tried_broker = false,
-            last_outsource_period = i in broker.roster ? 1 : -1000,  # seed roster active; others never outsourced
             periods_alive = 0,
         )
     end

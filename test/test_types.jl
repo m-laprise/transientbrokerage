@@ -14,6 +14,7 @@ using LinearAlgebra: norm
         @test p.p_demand == 0.50
         @test p.cost_wedge == 0.10
         @test p.n_strangers == 5
+        @test p.roster_churn == 0.02
         @test p.network_measure_interval == 20
         @test p.enable_principal == false
     end
@@ -40,6 +41,8 @@ using LinearAlgebra: norm
         @test_throws AssertionError default_params(cost_wedge=-0.01)
         @test_throws AssertionError default_params(cost_wedge=0.31)
         @test_throws AssertionError default_params(eta=-0.1)
+        @test_throws AssertionError default_params(roster_churn=-0.1)
+        @test_throws AssertionError default_params(roster_churn=1.1)
         @test_throws AssertionError default_params(T=10, T_burn=15)
     end
 
@@ -86,6 +89,7 @@ using LinearAlgebra: norm
         accum.n_outsourced = 2
         accum.outsourced_slots = 9
         accum.roster_size = 42
+        accum.broker_access_size = 45
         accum.broker_error_abs_sum = 4.0
         accum.broker_error_count = 3
         accum.broker_confidence_mae = 1.5
@@ -100,6 +104,7 @@ using LinearAlgebra: norm
         @test accum.n_outsourced == 0
         @test accum.outsourced_slots == 0
         @test accum.roster_size == 0
+        @test accum.broker_access_size == 0
         @test accum.broker_error_abs_sum == 0.0
         @test accum.broker_error_count == 0
         @test isnan(accum.broker_confidence_mae)

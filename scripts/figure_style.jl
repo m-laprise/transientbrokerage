@@ -88,23 +88,25 @@ function access_fraction(mdf::DataFrame)
 end
 
 """
-    plot_metric!(ax, periods, mdfs, metric_fn; label, color, window)
+    plot_metric!(ax, periods, mdfs, metric_fn; label, color, window, line_kw...)
 
 Plot thin per-seed lines (alpha=0.45) and a thick ensemble mean (linewidth=2.5).
-The ensemble mean is NaN when fewer than half the seeds have valid data.
+Additional line keywords, such as `linestyle`, are forwarded to both the seed
+and ensemble layers. The ensemble mean is NaN when fewer than half the seeds
+have valid data.
 """
 function plot_metric!(ax, periods, mdfs::Vector{DataFrame}, metric_fn;
-                      label::String="", color=COL_AGENT, window::Int=20)
+                      label::String="", color=COL_AGENT, window::Int=20, line_kw...)
     n_seeds = length(mdfs)
     seed_vals = [rolling_mean(metric_fn(mdf), window) for mdf in mdfs]
     for sv in seed_vals
-        lines!(ax, periods, sv; color=(color, 0.45), linewidth=0.8)
+        lines!(ax, periods, sv; color=(color, 0.45), linewidth=0.8, line_kw...)
     end
     ensemble = [let vs = [sv[t] for sv in seed_vals]
         nv = count(!isnan, vs)
         nv > n_seeds / 2 ? mean(v for v in vs if !isnan(v)) : NaN
     end for t in eachindex(periods)]
-    lines!(ax, periods, ensemble; color=color, linewidth=2.5, label=label)
+    lines!(ax, periods, ensemble; color=color, linewidth=2.5, label=label, line_kw...)
 end
 
 """Add a vertical dashed line at the burn-in period."""

@@ -69,11 +69,9 @@ using StableRNGs: StableRNG
 
     @testset "broker roster seeded correctly" begin
         roster = state.broker.roster
-        expected_size = ceil(Int, 0.20 * N)
+        expected_size = TransientBrokerage.roster_target_size(N)
         @test length(roster) == expected_size
         @test all(1 <= rid <= N for rid in roster)
-        # Roster members have on_roster flag
-        @test all(state.agents[rid].last_outsource_period > 0 for rid in roster)
         # Roster members have broker edge
         @test all(has_edge(state.G, rid, state.broker.node_id) for rid in roster)
     end

@@ -13,10 +13,10 @@ using Graphs: neighbors
     exit_agent!(state, agent_id)
 
 Remove agent from the simulation: clear all edges in G, terminate active matches
-(counterparties regain capacity), remove from broker roster, and clear any
-references to the exiting slot held elsewhere in state (other agents' per-partner
-tracking and the broker's counterparty-support state). The agent's node index is reused
-for the entrant.
+(counterparties regain capacity), remove from the broker's standing roster and
+current client overlay, and clear any references to the exiting slot held
+elsewhere in state (other agents' per-partner tracking and the broker's
+counterparty-support state). The agent's node index is reused for the entrant.
 """
 function exit_agent!(state::ModelState, agent_id::Int)
     agent = state.agents[agent_id]
@@ -34,9 +34,9 @@ function exit_agent!(state::ModelState, agent_id::Int)
     # Remove all edges from G
     remove_agent_edges!(state.G, agent_id)
 
-    # Remove from broker roster
+    # Remove from broker standing and current-period access sets
     delete!(state.broker.roster, agent_id)
-    agent.last_outsource_period = 0
+    delete!(state.broker.current_clients, agent_id)
 
     # Clear other agents' per-partner tracking keyed on this slot.
     # Without this, a fresh entrant reusing the slot would inherit the prior
@@ -98,7 +98,6 @@ function enter_agent!(state::ModelState, agent_id::Int, rng::AbstractRNG)
 
     # Reset satisfaction
     agent.tried_broker = false
-    agent.last_outsource_period = 0  # not on roster
     agent.periods_alive = 0
 
     # Reset cumulative match counters so D_j for this slot reflects only the

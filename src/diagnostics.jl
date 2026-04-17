@@ -26,6 +26,7 @@ function diagnostic_summary(state::ModelState)::Dict{String, Any}
         "max_agent_history" => maximum(agent_hist),
         "broker_history_size" => broker.history_count,
         "broker_roster_size" => length(broker.roster),
+        "broker_access_size" => broker_access_size(broker),
         "broker_reputation" => broker.last_reputation,
         "broker_has_had_clients" => broker.has_had_clients,
         "mean_satisfaction_self" => mean(a.satisfaction_self for a in agents),

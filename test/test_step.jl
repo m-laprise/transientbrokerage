@@ -1,7 +1,7 @@
 using Test
 using TransientBrokerage
 using StableRNGs: StableRNG
-using Graphs: nv, degree
+using Graphs: nv, degree, has_edge
 
 @testset "Step and Simulation" begin
 
@@ -18,6 +18,7 @@ using Graphs: nv, degree
         @test seeded > 0
         # Broker has seeded history
         @test state.broker.history_count > 0
+        @test length(state.broker.roster) == TransientBrokerage.roster_target_size(p.N)
         # Calibration constants are valid
         @test state.cal.q_cal > 0
         @test state.cal.r > 0
@@ -77,12 +78,44 @@ using Graphs: nv, degree
         @test h_after >= h_before  # broker only learns from brokered matches
     end
 
-    @testset "Roster is dynamic (agents join and leave)" begin
+    @testset "Roster size stays fixed at the target" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42, eta=0.0)
+        target = TransientBrokerage.roster_target_size(p.N)
+        _, df = run_simulation(p)
+        @test all(df.roster_size .== target)
+    end
+
+    @testset "Roster composition changes under churn" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42, eta=0.0, roster_churn=0.5)
+        state = initialize_model(p)
+        roster_before = copy(state.broker.roster)
+        for _ in 1:3
+            step_period!(state)
+        end
+        @test state.broker.roster != roster_before
+    end
+
+    @testset "Current broker clients receive broker edges" begin
         p = default_params(N=50, T=10, T_burn=2, seed=42)
         state = initialize_model(p)
-        for _ in 1:5; step_period!(state); end
-        # Roster should be less than N (not everyone outsources)
-        @test length(state.broker.roster) < p.N
+        client_id = first(i for i in 1:p.N if i ∉ state.broker.roster)
+
+        push!(state.broker.current_clients, client_id)
+        TransientBrokerage.sync_broker_edges!(state.G, state.agents, state.broker)
+
+        @test has_edge(state.G, client_id, state.broker.node_id)
+    end
+
+    @testset "Broker access size uses the hybrid union without double counting" begin
+        p = default_params(N=50, T=10, T_burn=2, seed=42)
+        state = initialize_model(p)
+        roster_member = first(state.broker.roster)
+        outside_member = first(i for i in 1:p.N if i ∉ state.broker.roster)
+
+        push!(state.broker.current_clients, roster_member)
+        push!(state.broker.current_clients, outside_member)
+
+        @test TransientBrokerage.broker_access_size(state.broker) == length(state.broker.roster) + 1
     end
 
     @testset "Entry/exit maintains population" begin
@@ -119,5 +152,7 @@ using Graphs: nv, degree
         @test isfinite(metrics.mean_satisfaction_self)
         @test isfinite(metrics.mean_satisfaction_broker)
         @test metrics.n_available == count(a -> available_capacity(a, p.K) > 0, state.agents)
+        @test metrics.broker_access_size >= metrics.roster_size
+        @test metrics.broker_access_size <= p.N
     end
 end

@@ -4,7 +4,7 @@ using TransientBrokerage
 @testset "Entry/Exit" begin
     using Graphs: degree, has_edge, neighbors, nv
 
-    @testset "exit_agent! clears edges, matches, roster, and support state" begin
+    @testset "exit_agent! clears edges, broker access sets, and support state" begin
         state1 = initialize_model(default_params(N=20, seed=42))
         target = 1
         partner = 2
@@ -16,7 +16,7 @@ using TransientBrokerage
         add_match_edge!(state1.G, target, partner)
 
         push!(state1.broker.roster, target)
-        state1.agents[target].last_outsource_period = 1
+        push!(state1.broker.current_clients, target)
         state1.agents[partner].partner_sum[target] = 5.0
         state1.agents[partner].partner_count[target] = 2
         state1.broker.support_seen[target, partner] = true
@@ -30,7 +30,7 @@ using TransientBrokerage
         @test degree(state1.G, target) == 0
         @test isempty(state1.agents[target].active_matches)
         @test !(target in state1.broker.roster)
-        @test state1.agents[target].last_outsource_period == 0
+        @test !(target in state1.broker.current_clients)
         @test !any(m -> m.partner_id == target, state1.agents[partner].active_matches)
         @test state1.agents[partner].partner_sum[target] == 0.0
         @test state1.agents[partner].partner_count[target] == 0
@@ -52,7 +52,6 @@ using TransientBrokerage
         a.satisfaction_self = 999.0
         a.satisfaction_broker = 999.0
         a.tried_broker = true
-        a.last_outsource_period = 1
         a.periods_alive = 100
         push!(a.active_matches, ActiveMatch(2, false, :self))
 
@@ -64,7 +63,6 @@ using TransientBrokerage
         @test isfinite(a.satisfaction_self)     # set from neighbors' satisfaction
         @test isfinite(a.satisfaction_broker)  # set to broker reputation (market prior)
         @test a.tried_broker == false
-        @test a.last_outsource_period == 0
         @test a.periods_alive == 0
         @test isempty(a.active_matches)
         @test all(==(0), a.partner_count)

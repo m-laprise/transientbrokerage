@@ -12,7 +12,7 @@ Step 5: Entry/exit
 Step 6: Recording and measurement
 """
 
-using Random: AbstractRNG
+using Random: AbstractRNG, shuffle!
 using Distributions: Binomial
 using Graphs: neighbors, has_edge, rem_edge!
 using LinearAlgebra: BLAS
@@ -26,6 +26,37 @@ using Base.Threads: @threads
 Execute one complete period of the simulation.
 """
 agent_retrains_this_period(agent_id::Int, period::Int)::Bool = isodd(agent_id) == isodd(period)
+
+function refresh_broker_roster!(state::ModelState)
+    p = state.params
+    broker = state.broker
+    rng = state.rng
+    N = p.N
+    target_size = roster_target_size(N)
+
+    if p.roster_churn > 0.0 && !isempty(broker.roster)
+        for rid in collect(broker.roster)
+            rand(rng) < p.roster_churn && delete!(broker.roster, rid)
+        end
+    end
+
+    n_missing = target_size - length(broker.roster)
+    if n_missing > 0
+        candidates = Int[]
+        sizehint!(candidates, max(N - length(broker.roster), 0))
+        for i in 1:N
+            (i in broker.roster) && continue
+            push!(candidates, i)
+        end
+        shuffle!(rng, candidates)
+        for idx in 1:min(n_missing, length(candidates))
+            push!(broker.roster, candidates[idx])
+        end
+    end
+
+    sync_broker_edges!(state.G, state.agents, broker)
+    return nothing
+end
 
 function prefix_rmse(predicted::AbstractVector{<:Real},
                      realized::AbstractVector{<:Real},
@@ -62,6 +93,12 @@ function step_period!(state::ModelState)
         empty!(agent.active_matches)
     end
 
+    # Clear the current-client overlay from the prior period, then refresh the
+    # standing roster after prior-period turnover and before current-period
+    # demand realization.
+    empty!(broker.current_clients)
+    refresh_broker_roster!(state)
+
     # ══════════════════════════════════════════════════════════════════════
     # Step 1: Demand generation and outsourcing decisions
     # ══════════════════════════════════════════════════════════════════════
@@ -71,7 +108,6 @@ function step_period!(state::ModelState)
     demand_agent_ids = ws.demand_agent_ids; empty!(demand_agent_ids)
     demand_channels = ws.demand_channels; empty!(demand_channels)
     demand_counts = ws.demand_counts; empty!(demand_counts)
-    client_demands = ws.client_demands_ws; empty!(client_demands)
     broker_clients = ws.broker_clients_ws; empty!(broker_clients)
 
     broker_rep = broker_reputation(broker)
@@ -94,25 +130,13 @@ function step_period!(state::ModelState)
         state.accum.total_demand += d_i
 
         if channel == :broker
-            push!(client_demands, (i, d_i))
             push!(broker_clients, i)
+            push!(broker.current_clients, i)
             state.accum.n_outsourced += 1
             state.accum.outsourced_slots += d_i
-            agents[i].last_outsource_period = state.period
         end
     end
-
-    # Rebuild roster: agents who outsourced within ROSTER_LAG periods.
-    # Also maintain broker edges in G to match roster membership.
-    empty!(broker.roster)
-    for i in 1:N
-        if is_on_roster(agents[i], state.period)
-            push!(broker.roster, i)
-            has_edge(G, i, broker.node_id) || add_broker_edge!(G, i, broker.node_id)
-        else
-            has_edge(G, i, broker.node_id) && rem_edge!(G, i, broker.node_id)
-        end
-    end
+    sync_broker_edges!(G, agents, broker)
 
     # ══════════════════════════════════════════════════════════════════════
     # Step 2: Candidate evaluation
@@ -135,41 +159,11 @@ function step_period!(state::ModelState)
         train_broker_nn!(broker, p)
     end
 
-    # 2.2: Self-searches (workspace reused across agents, appending into all_proposals)
-    all_proposals = ws.all_proposals; empty!(all_proposals)
-    for idx in eachindex(demand_agent_ids)
-        if demand_channels[idx] == :self
-            self_search(agents[demand_agent_ids[idx]], agents, G, broker.node_id, p, rng,
-                        demand_counts[idx], cal.r; ws=ws, proposals=all_proposals)
-        end
-    end
-
-    # 2.3: Broker allocation (appends into all_proposals using same workspace)
-    broker_allocate(broker, client_demands, agents, p, rng, cal.r;
-                    ws=ws, proposals=all_proposals)
-
-    # 2.4: Mode selection (principal vs standard for broker matches)
-    if p.enable_principal
-        apply_mode_selection!(all_proposals, agents, broker, p, cal)
-    end
-
-    # Snapshot pre-formation edge state for access/assessment classification.
-    # Must check BEFORE formation adds new edges. Use parallel vectors (no Set alloc).
-    wc_i = ws.was_connected_i; empty!(wc_i)
-    wc_j = ws.was_connected_j; empty!(wc_j)
-    for pm in all_proposals
-        if pm.channel == :broker && has_edge(G, pm.demander_id, pm.counterparty_id)
-            push!(wc_i, pm.demander_id)
-            push!(wc_j, pm.counterparty_id)
-        end
-    end
-
-    # ══════════════════════════════════════════════════════════════════════
-    # Step 3: Match formation (sequential acceptance)
-    # ══════════════════════════════════════════════════════════════════════
-    accepted = sequential_match_formation!(all_proposals, agents, broker, env, G, p, cal, rng;
-                                           remaining_cap=ws.remaining_cap,
-                                           accepted_matches=ws.accepted_matches)
+    # 2.2-3: Within-period round-based search and match formation
+    accepted = round_match_formation!(demand_agent_ids, demand_channels, demand_counts,
+                                      agents, broker, env, G, p, cal, rng;
+                                      ws=ws, accepted_matches=ws.accepted_matches)
+    sync_broker_edges!(G, agents, broker)
 
     # ══════════════════════════════════════════════════════════════════════
     # Step 4: Learning and state updates
@@ -215,7 +209,9 @@ function step_period!(state::ModelState)
             push!(state.accum.q_broker_standard, m.q_realized)
         end
 
-        # Access vs assessment (uses pre-formation edge snapshot)
+        # Access vs assessment (uses per-round pre-finalization edge snapshots)
+        wc_i = ws.was_connected_i
+        wc_j = ws.was_connected_j
         if m.channel == :broker
             connected = false
             @inbounds for k in eachindex(wc_i)
@@ -243,7 +239,7 @@ function step_period!(state::ModelState)
     n_sample_agents = min(100, N)
     n_partners = 40
 
-    if length(ws.Ax_buf) != d
+    if length(ws.Ax_buf) != d || length(ws.Bx_buf) != d || length(ws.holdout_z_buf) != 2 * d
         ws.Ax_buf = Vector{Float64}(undef, d)
         ws.Bx_buf = Vector{Float64}(undef, d)
         ws.holdout_z_buf = Vector{Float64}(undef, 2 * d)
@@ -317,11 +313,13 @@ function step_period!(state::ModelState)
     state.accum.broker_holdout_rmse = n_broker_evaluated > 0 ? broker_rmse_sum / n_broker_evaluated : NaN
 
     state.accum.roster_size = length(broker.roster)
+    state.accum.broker_access_size = broker_access_size(broker)
 
     # ══════════════════════════════════════════════════════════════════════
     # Step 5: Entry/exit
     # ══════════════════════════════════════════════════════════════════════
     process_entry_exit!(state, rng)
+    sync_broker_edges!(G, agents, broker)
 
     # ══════════════════════════════════════════════════════════════════════
     # Step 6: Recording and measurement

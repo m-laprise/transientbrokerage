@@ -129,6 +129,31 @@ function update_capture_confidence_mae!(broker::Broker,
 end
 
 """
+    mode_selected_broker_proposal(pm, agents, broker, params, cal) -> ProposedMatch
+
+Apply the principal-mode decision rule to one broker proposal, returning either
+the unchanged standard proposal or a principal-mode proposal with `ask_j`
+cached from the counterparty's reservation value.
+"""
+function mode_selected_broker_proposal(pm::ProposedMatch,
+                                       agents::Vector{Agent},
+                                       broker::Broker,
+                                       params::ModelParams,
+                                       cal::CalibrationConstants)::ProposedMatch
+    pm.channel == :broker || return pm
+    (params.enable_principal && broker.capture_confidence_ready) || return pm
+
+    ask_j = counterparty_ask(agents[pm.counterparty_id], cal.q_cal)
+    support_j = broker.counterparty_support[pm.counterparty_id]
+    if broker_mode_decision(pm.evaluation, ask_j, cal.phi,
+                            broker.capture_confidence_mae, support_j, params.K)
+        return ProposedMatch(pm.demander_id, pm.counterparty_id,
+                             pm.channel, pm.evaluation, true, ask_j)
+    end
+    return pm
+end
+
+"""
     apply_mode_selection!(proposals, agents, broker, params, cal)
 
 Mark broker proposals as principal-mode where profitable after the smooth
@@ -144,21 +169,8 @@ function apply_mode_selection!(proposals::Vector{ProposedMatch},
                                broker::Broker,
                                params::ModelParams,
                                cal::CalibrationConstants)
-    (params.enable_principal && broker.capture_confidence_ready) || return proposals
-
     for idx in eachindex(proposals)
-        pm = proposals[idx]
-        pm.channel == :broker || continue
-
-        ask_j = counterparty_ask(agents[pm.counterparty_id], cal.q_cal)
-        support_j = broker.counterparty_support[pm.counterparty_id]
-        if broker_mode_decision(pm.evaluation, ask_j, cal.phi,
-                                broker.capture_confidence_mae, support_j, params.K)
-            proposals[idx] = ProposedMatch(
-                pm.demander_id, pm.counterparty_id,
-                pm.channel, pm.evaluation, true, ask_j
-            )
-        end
+        proposals[idx] = mode_selected_broker_proposal(proposals[idx], agents, broker, params, cal)
     end
 
     return proposals

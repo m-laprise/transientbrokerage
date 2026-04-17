@@ -108,10 +108,6 @@ Base.@kwdef mutable struct Agent
     satisfaction_broker::Float64 = 0.0
     tried_broker::Bool = false
 
-    # Roster membership: period of last outsourcing decision (0 = never outsourced).
-    # Agent stays on roster for ROSTER_LAG periods after last outsourcing.
-    last_outsource_period::Int = 0
-
     # Tenure
     periods_alive::Int = 0
 
@@ -129,9 +125,8 @@ effective_history_size(agent::Agent) = agent.history_count
 """Available capacity: K minus active matches."""
 available_capacity(agent::Agent, K::Int) = K - length(agent.active_matches)
 
-"""Is the agent on the broker's roster? True if outsourced within ROSTER_LAG periods."""
-is_on_roster(agent::Agent, current_period::Int) = agent.last_outsource_period > 0 &&
-    (current_period - agent.last_outsource_period) <= ROSTER_LAG
+"""True if the agent currently participates in at least one broker-channel match."""
+has_active_broker_match(agent::Agent) = any(am -> am.channel == :broker, agent.active_matches)
 
 """Mean realized output with partner j, or NaN if no prior match."""
 function partner_mean(agent::Agent, j::Int)
@@ -199,10 +194,11 @@ const AcceptedMatch = NamedTuple{
 # Broker
 # ─────────────────────────────────────────────────────────────────────────────
 
-"""Single intermediary with a roster, cross-agent history, and prediction model."""
+"""Single intermediary with a standing roster, current clients, cross-agent history, and prediction model."""
 Base.@kwdef mutable struct Broker
     node_id::Int                              # permanent node in G (= N + 1)
     roster::Set{Int} = Set{Int}()             # agent IDs on the broker's roster
+    current_clients::Set{Int} = Set{Int}()    # agents outsourcing in the current period
 
     # Experience history: d x capacity matrices (column-major, doubling growth)
     history_Xi::Matrix{Float64}               # demander types
@@ -374,6 +370,7 @@ Base.@kwdef mutable struct PeriodAccumulators
 
     # Roster
     roster_size::Int = 0
+    broker_access_size::Int = 0
 end
 
 """Zero all per-period fields while preserving vector capacity for reuse."""
@@ -409,6 +406,7 @@ function reset_accumulators!(a::PeriodAccumulators)
     a.broker_holdout_rank = NaN
     a.broker_holdout_rmse = NaN
     a.roster_size = 0
+    a.broker_access_size = 0
     return nothing
 end
 
@@ -463,6 +461,7 @@ struct ModelParams
     # Search
     n_strangers::Int             # max strangers in self-search (default 5)
     eta::Float64                 # agent entry/exit rate (default 0.02)
+    roster_churn::Float64        # standing-roster exogenous churn probability (default 0.02)
 
     # Model 1 toggle
     enable_principal::Bool       # resource capture mode (default false)
@@ -502,7 +501,9 @@ Base.@kwdef mutable struct SimWorkspace
     demand_slots::Vector{Int} = Int[]
     roster_members::Vector{Int} = Int[]
     roster_capacity::Vector{Int} = Int[]
-    # Quality matrix Q[demander_idx, roster_idx] (unique demanders x roster)
+    access_seen::Vector{Bool} = Bool[]
+    access_touched::Vector{Int} = Int[]  # sparse-clear markers for broker access deduplication
+    # Quality matrix Q[demander_idx, access_idx] (unique demanders x broker access set)
     Q::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)
     z_buf::Vector{Float64} = Float64[]
     # Batched prediction scratch
@@ -522,6 +523,8 @@ Base.@kwdef mutable struct SimWorkspace
     demand_agent_ids::Vector{Int} = Int[]     # agents with demand
     demand_channels::Vector{Symbol} = Symbol[]  # channel per demander
     demand_counts::Vector{Int} = Int[]        # d_i per demander
+    demand_remaining::Vector{Int} = Int[]     # remaining slots by demander index during round matching
+    demand_failed::Vector{Bool} = Bool[]      # demander exhausted feasible set this period
     client_demands_ws::Vector{Tuple{Int, Int}} = Tuple{Int, Int}[]
     broker_clients_ws::Vector{Int} = Int[]
     was_connected_i::Vector{Int} = Int[]  # pre-formation edge snapshot
@@ -531,6 +534,21 @@ Base.@kwdef mutable struct SimWorkspace
     broker_standard_count::Vector{Int} = Int[]    # successful standard broker matches by demander id
     all_proposals::Vector{ProposedMatch} = ProposedMatch[]
     accepted_matches::Vector{AcceptedMatch} = AcceptedMatch[]
+    round_active_positions::Vector{Int} = Int[]
+    round_broker_positions::Vector{Int} = Int[]
+    round_broker_demanders::Vector{Int} = Int[]
+    round_pref_offsets::Vector{Int} = Int[]
+    round_next_pref::Vector{Int} = Int[]
+    round_pref_owner::Vector{Int} = Int[]
+    round_queue::Vector{Int} = Int[]
+    round_agent_to_active::Vector{Int} = Int[]
+    round_agent_touched::Vector{Int} = Int[]
+    round_outgoing_prop_idx::Vector{Int} = Int[]
+    round_hold_counts::Vector{Int} = Int[]
+    round_held_prop_idx::Matrix{Int} = Matrix{Int}(undef, 0, 0)
+    round_held_scores::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)
+    round_broker_pref_matches::Vector{ProposedMatch} = ProposedMatch[]
+    round_broker_pref_counts::Vector{Int} = Int[]
 
     # Holdout evaluation scratch (reused each period in step.jl)
     Ax_buf::Vector{Float64} = Float64[]

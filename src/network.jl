@@ -2,7 +2,9 @@
     network.jl
 
 Single undirected network G with N+1 nodes (N agents + 1 broker).
-Edges form from matches; the broker is a permanent node connected to all roster members.
+Edges form from matches; the broker is a permanent node connected to all standing
+roster members, current broker clients, and agents currently engaged in
+broker-channel matches.
 """
 
 using Graphs: SimpleGraph, watts_strogatz, add_edge!, neighbors, nv, rem_edge!, has_edge
@@ -40,13 +42,55 @@ end
 """
     add_broker_edge!(G, agent_id, broker_node)
 
-Connect an agent to the broker node when the agent joins the roster.
+Connect an agent to the broker node.
 """
 function add_broker_edge!(G::SimpleGraph, agent_id::Int, broker_node::Int)
     if !has_edge(G, agent_id, broker_node)
         add_edge!(G, agent_id, broker_node)
     end
     return nothing
+end
+
+"""
+    sync_broker_edges!(G, agents, broker) -> Nothing
+
+Synchronize broker-node edges to match the standing roster, current broker
+clients, and agents currently engaged in broker-channel matches. This keeps the
+broker's structural reach aligned with the maintained roster while also
+representing the current broker client base and active brokered relationships in
+the period graph.
+"""
+function sync_broker_edges!(G::SimpleGraph, agents::Vector{Agent}, broker::Broker)
+    broker_node = broker.node_id
+    N = length(agents)
+
+    @inbounds for i in 1:N
+        should_connect = (i in broker.roster) ||
+                         (i in broker.current_clients) ||
+                         has_active_broker_match(agents[i])
+        if should_connect
+            has_edge(G, i, broker_node) || add_edge!(G, i, broker_node)
+        else
+            has_edge(G, i, broker_node) && rem_edge!(G, i, broker_node)
+        end
+    end
+
+    return nothing
+end
+
+"""
+    broker_access_size(broker) -> Int
+
+Return the size of the broker's current hybrid access set, defined as the union
+of the standing roster and current-period broker clients.
+"""
+function broker_access_size(broker::Broker)::Int
+    n_access = length(broker.roster)
+    for agent_id in broker.current_clients
+        agent_id in broker.roster && continue
+        n_access += 1
+    end
+    return n_access
 end
 
 """

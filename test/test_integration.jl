@@ -41,11 +41,13 @@ using TransientBrokerage
         @test all(0.0 .<= df.outsourcing_rate .<= 1.0)
     end
 
-    @testset "Roster fluctuates (agents leave when choosing self-search)" begin
+    @testset "Roster size stays fixed below the full population" begin
         p = default_params(N=100, T=20, T_burn=5, seed=42, eta=0.0)
         _, df = run_simulation(p)
-        # Roster should not cover the entire population
-        @test df.roster_size[end] < p.N
+        target = TransientBrokerage.roster_target_size(p.N)
+        @test all(df.roster_size .== target)
+        @test all(df.broker_access_size .>= df.roster_size)
+        @test target < p.N
     end
 
     @testset "Principal mode simulation" begin

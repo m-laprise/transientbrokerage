@@ -14,6 +14,7 @@ using TransientBrokerage
         "max_agent_history",
         "broker_history_size",
         "broker_roster_size",
+        "broker_access_size",
         "broker_reputation",
         "broker_has_had_clients",
         "mean_satisfaction_self",
@@ -32,6 +33,7 @@ using TransientBrokerage
     @test summary["period"] == state.period
     @test summary["N"] == state.params.N
     @test summary["broker_roster_size"] == length(state.broker.roster)
+    @test summary["broker_access_size"] == TransientBrokerage.broker_access_size(state.broker)
     @test summary["n_on_roster"] == length(state.broker.roster)
     @test summary["period"] isa Int
     @test summary["broker_has_had_clients"] isa Bool

@@ -12,6 +12,69 @@ using StableRNGs: StableRNG
     cal = state.cal
     env = state.env
 
+    @testset "Round matching falls back within round after rejection" begin
+        p_round = default_params(N=12, T=5, T_burn=1, K=1, n_strangers=0, seed=123)
+        state_round = initialize_model(p_round)
+        agents_r = state_round.agents
+        G_r = state_round.G
+
+        for agent_id in 1:4
+            remove_agent_edges!(G_r, agent_id)
+        end
+        add_match_edge!(G_r, 1, 3)
+        add_match_edge!(G_r, 1, 4)
+        add_match_edge!(G_r, 2, 3)
+        add_match_edge!(G_r, 2, 4)
+
+        agents_r[1].partner_sum[3] = 10.0; agents_r[1].partner_count[3] = 1
+        agents_r[1].partner_sum[4] = 5.0;  agents_r[1].partner_count[4] = 1
+        agents_r[2].partner_sum[3] = 9.0;  agents_r[2].partner_count[3] = 1
+        agents_r[2].partner_sum[4] = 4.0;  agents_r[2].partner_count[4] = 1
+
+        agents_r[3].partner_sum[1] = 8.0; agents_r[3].partner_count[1] = 1
+        agents_r[3].partner_sum[2] = 6.0; agents_r[3].partner_count[2] = 1
+        agents_r[4].partner_sum[1] = 3.0; agents_r[4].partner_count[1] = 1
+        agents_r[4].partner_sum[2] = 7.0; agents_r[4].partner_count[2] = 1
+
+        accepted = TransientBrokerage.round_match_formation!(
+            [1, 2], [:self, :self], [1, 1],
+            agents_r, state_round.broker, state_round.env, G_r,
+            p_round, state_round.cal, StableRNG(17)
+        )
+
+        accepted_pairs = Set((m.demander_id, m.counterparty_id) for m in accepted)
+        @test length(accepted) == 2
+        @test accepted_pairs == Set([(1, 3), (2, 4)])
+    end
+
+    @testset "Round matching fills one slot per round" begin
+        p_round2 = default_params(N=12, T=5, T_burn=1, K=2, n_strangers=0, seed=321)
+        state_round2 = initialize_model(p_round2)
+        agents_r2 = state_round2.agents
+        G_r2 = state_round2.G
+
+        for agent_id in 1:3
+            remove_agent_edges!(G_r2, agent_id)
+        end
+        add_match_edge!(G_r2, 1, 2)
+        add_match_edge!(G_r2, 1, 3)
+
+        agents_r2[1].partner_sum[2] = 9.0; agents_r2[1].partner_count[2] = 1
+        agents_r2[1].partner_sum[3] = 8.0; agents_r2[1].partner_count[3] = 1
+        agents_r2[2].partner_sum[1] = 7.0; agents_r2[2].partner_count[1] = 1
+        agents_r2[3].partner_sum[1] = 6.0; agents_r2[3].partner_count[1] = 1
+
+        accepted = TransientBrokerage.round_match_formation!(
+            [1], [:self], [2],
+            agents_r2, state_round2.broker, state_round2.env, G_r2,
+            p_round2, state_round2.cal, StableRNG(23)
+        )
+
+        @test length(accepted) == 2
+        @test Set(m.counterparty_id for m in accepted) == Set([2, 3])
+        @test length(state_round2.agents[1].active_matches) == 2
+    end
+
     @testset "Sequential formation accepts valid proposals" begin
         # Seed partner history so counterparties can evaluate
         for i in 1:10, j in 11:20

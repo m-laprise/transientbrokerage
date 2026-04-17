@@ -16,8 +16,16 @@ const R_BASE_FRAC = 0.60
 const COST_LEVEL_MID = 0.15
 const COST_WEDGE_BASE = 0.10
 
-# Roster lag: agents stay on roster this many periods after last outsourcing
-const ROSTER_LAG = 4
+# Fixed roster target share: broker maintains this fraction of the population
+# on its standing roster.
+const ROSTER_TARGET_FRAC = 0.20
+
+"""
+    roster_target_size(N::Int) -> Int
+
+Fixed target roster size implied by the standing broker roster share.
+"""
+roster_target_size(N::Int) = min(N, ceil(Int, ROSTER_TARGET_FRAC * N))
 
 """
     default_params(; seed=42, kwargs...)::ModelParams
@@ -52,6 +60,7 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
         # Search
         :n_strangers => 5,
         :eta => 0.02,
+        :roster_churn => 0.02,
         # Model 1
         :enable_principal => false,
         # Simulation
@@ -84,6 +93,7 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
         defaults[:h_b],
         defaults[:n_strangers],
         defaults[:eta],
+        defaults[:roster_churn],
         defaults[:enable_principal],
         defaults[:network_measure_interval],
         defaults[:T],
@@ -134,6 +144,7 @@ function validate_params(p::ModelParams)
     # Search
     @assert p.n_strangers >= 0 "n_strangers must be >= 0, got $(p.n_strangers)"
     @assert 0.0 <= p.eta < 1.0 "eta must be in [0, 1), got $(p.eta)"
+    @assert 0.0 <= p.roster_churn <= 1.0 "roster_churn must be in [0, 1], got $(p.roster_churn)"
 
     # Simulation
     @assert p.network_measure_interval >= 1 "network_measure_interval must be >= 1"

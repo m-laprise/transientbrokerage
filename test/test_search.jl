@@ -89,6 +89,25 @@ using StableRNGs: StableRNG
         @test all(pm -> pm.demander_id != pm.counterparty_id, props)
     end
 
+    @testset "Broker allocation uses current clients as accessible counterparties" begin
+        p_client = default_params(N=20, T=5, T_burn=1, K=2, seed=17)
+        state_client = initialize_model(p_client)
+        broker_client = state_client.broker
+        agents_client = state_client.agents
+
+        empty!(broker_client.roster)
+        empty!(broker_client.current_clients)
+        push!(broker_client.current_clients, 2)
+        client_demands = [(1, 1)]
+
+        rng = StableRNG(12)
+        props = broker_allocate(broker_client, client_demands, agents_client, p_client, rng, -1e9)
+
+        @test length(props) == 1
+        @test props[1].demander_id == 1
+        @test props[1].counterparty_id == 2
+    end
+
     @testset "Broker allocation respects capacity" begin
         for _ in 1:p.K
             push!(agents[2].active_matches, ActiveMatch(3, false, :self))

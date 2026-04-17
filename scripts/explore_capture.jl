@@ -102,9 +102,13 @@ function plot_capture_ensemble(m1_mdfs::Vector{DataFrame},
     base_ref!(ax, mdf -> Float64.(mdf.n_total_matches))
     axislegend(ax; position=:rt, LEG_KW...)
 
-    ax = newax(fig[1, 4]; title="Available agents", ylabel="Count",
+    ax = newax(fig[1, 4]; title="Available agents & broker access", ylabel="Count",
               limits=(xlims, (0, nothing)), akw...)
-    pm!(ax, mdf -> Float64.(mdf.n_available); label="M1", color=COL_DIAG)
+    pm!(ax, mdf -> Float64.(mdf.n_available); label="Available (M1)", color=COL_DIAG)
+    pm!(ax, mdf -> Float64.(mdf.broker_access_size); label="Broker access set (M1)",
+        color=COL_BROKER)
+    pm!(ax, mdf -> Float64.(mdf.roster_size); label="Standing roster (M1)",
+        color=COL_BASE_REF, linestyle=:dash)
     base_ref!(ax, mdf -> Float64.(mdf.n_available))
     axislegend(ax; position=:rb, LEG_KW...)
 

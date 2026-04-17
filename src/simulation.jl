@@ -154,6 +154,7 @@ function collect_period_metrics(state::ModelState)
         # Broker state
         broker_reputation = broker.last_reputation,
         roster_size = a.roster_size,
+        broker_access_size = a.broker_access_size,
         broker_history_size = broker.history_count,
         # Capture metrics (Model 1)
         principal_mode_share = (a.n_broker_standard + a.n_broker_principal) > 0 ?

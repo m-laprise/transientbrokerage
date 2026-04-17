@@ -68,11 +68,22 @@ function verify_invariants(state::ModelState)
     end
     @assert 0 <= broker.history_count <= size(broker.history_Xi, 2) "Broker: history_count=$(broker.history_count) > capacity"
 
-    # ── Broker roster consistency ──
+    # ── Broker roster and client-overlay consistency ──
+    target_size = roster_target_size(N)
+    @assert length(broker.roster) <= target_size "Broker roster size $(length(broker.roster)) exceeds target $target_size"
     for rid in broker.roster
         @assert 1 <= rid <= N "Broker roster contains invalid id $rid"
-        @assert is_on_roster(agents[rid], state.period) "Agent $rid in broker roster but not on_roster"
         @assert has_edge(G, rid, broker.node_id) "Agent $rid on roster but no broker edge"
+    end
+    for cid in broker.current_clients
+        @assert 1 <= cid <= N "Broker current_clients contains invalid id $cid"
+        @assert has_edge(G, cid, broker.node_id) "Agent $cid is a current broker client but has no broker edge"
+    end
+    for i in 1:N
+        should_have_broker_edge = (i in broker.roster) ||
+                                  (i in broker.current_clients) ||
+                                  has_active_broker_match(agents[i])
+        @assert has_edge(G, i, broker.node_id) == should_have_broker_edge "Broker edge mismatch at agent $i"
     end
 
     # ── Finite satisfaction and NN weights ──

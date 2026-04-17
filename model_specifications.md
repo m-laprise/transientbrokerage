@@ -141,10 +141,11 @@ The parameter $s$ controls the complexity of the matching problem. When $s = d$,
 
 #### Broker
 
-A single broker serves the market. The broker is a permanent node in $G$, connected to all agents on its roster. The broker is characterized by:
+A single broker serves the market. The broker is a permanent node in $G$, connected to all agents on its standing roster, all current-period broker clients, and, within a period, agents currently engaged in broker-channel matches. The broker is characterized by:
 
 - **Experience history** $\mathcal{H}_b^t = \{(\mathbf{x}_i, \mathbf{x}_j, q_{ij})\}$: the set of (demander type, counterparty type, realized match output) triples from all matches the broker has mediated (§2c).
-- **Roster** $\text{Roster}^t$: the set of agents the broker knows and can propose as counterparties. Grows over time as agents outsource to the broker (§7).
+- **Roster** $\text{Roster}^t$: the set of agents the broker maintains as a standing access base. The roster is kept near a fixed target size through low exogenous churn and uniform replenishment (§7).
+- **Current clients** $D^t$: the agents who outsource to the broker in period $t$. These current clients augment the broker's accessible counterparties for that period but do not persist as a lagged state variable (§5b, §7).
 - **Reputation** $\text{rep}^t$: the average satisfaction of current client agents (§6).
 
 ### 1. The Matching Problem
@@ -348,7 +349,7 @@ Agents interact through a single undirected network $G$ that determines each age
 
 $G$ is initialized as a small-world graph (Watts & Strogatz, 1998). Agents are arranged on a ring in random order, each connected to its $k = 6$ nearest neighbors on the ring, and each edge is rewired with probability $p_{\text{rewire}} = 0.1$. This produces the high clustering and short path lengths characteristic of small-world graphs. Agents are placed on the ring in random order (rather than, e.g., sorted by type) so that the initial network is not type-assortative: neighbors at $t = 0$ are representative of the broader population, which avoids inflating baseline match quality through an artificially favorable neighborhood structure. An optional PC1-sorted variant is retained for robustness checks.
 
-The broker is a permanent node in $G$, connected to all roster members (edges added as agents join the roster, §7). The broker node has no type vector and is excluded from matching candidate pools, but is included in network measure computations (§10).
+The broker is a permanent node in $G$, connected to all standing roster members, all current-period broker clients, and agents currently engaged in broker-channel matches (§7). The broker node has no type vector and is excluded from matching candidate pools, but is included in network measure computations (§10).
 
 #### 4b. Match tie formation
 
@@ -364,29 +365,61 @@ The entrant is added to $G$ with $\lfloor k/2 \rfloor$ edges to agents sampled f
 
 ### 5. Search
 
-At the start of each period, all $K$ slots are open. Each slot independently generates demand with probability $p_{\text{demand}}$ (default 0.50), so agent $i$ draws demand $d_i \sim \text{Binomial}(K,\; p_{\text{demand}})$. If $d_i > 0$, the agent chooses **one channel for the batch** of current-period demand (§6): self-search or broker. Conditional on that batch decision, the chosen channel attempts to fill up to $d_i$ slots. The same counterparty may be selected for multiple slots in the same period if it remains the highest-valued feasible candidate and both parties retain capacity.
+At the start of each period, all $K$ slots are open. Each slot independently generates demand with probability $p_{\text{demand}}$ (default 0.50), so agent $i$ draws demand $d_i \sim \text{Binomial}(K,\; p_{\text{demand}})$. If $d_i > 0$, the agent chooses **one channel for the batch** of current-period demand (§6): self-search or broker. Conditional on that batch decision, the chosen channel attempts to fill the batch through a finite sequence of within-period rounds rather than through a single pooled proposal pass.
+
+Let $u_i^0 = d_i$ denote agent $i$'s remaining unfilled demand at the start of within-period matching. Round $\ell$ gives every still-active demander with $u_i^{\ell-1} > 0$ one opportunity to fill **one** additional slot through its chosen channel. If agent $i$ secures a match in round $\ell$, then $u_i^\ell = u_i^{\ell-1} - 1$; otherwise $i$ either continues to its next feasible candidate within the same round or, if it exhausts that list, exits matching for the rest of the period with remaining demand unfilled.
 
 #### 5a. Self-search
 
-Agent $i$'s candidate pool has two components:
+In each round, agent $i$'s self-search candidate pool has two components, evaluated using current capacities after all previously accepted rounds have been finalized:
 
-**Known neighbors.** Direct network neighbors in $G$ with available capacity ($K - |M_j^t| > 0$). The agent has matched with these agents before (every edge in $G$ comes from a prior match or from initialization). For each known neighbor $j$, the agent evaluates quality using the **average of realized outcomes** from prior matches with $j$: $\bar{q}_{ij} = \frac{1}{n_{ij}} \sum q_{ij}^{(m)}$, where $n_{ij}$ is the number of times $i$ and $j$ have matched. This is a direct empirical estimate, not a model prediction.
+**Known neighbors.** Direct network neighbors in $G$ with available capacity. The agent has matched with these agents before (every edge in $G$ comes from a prior match or from initialization). For each known neighbor $j$, the agent evaluates quality using the **average of realized outcomes** from prior matches with $j$: $\bar{q}_{ij} = \frac{1}{n_{ij}} \sum q_{ij}^{(m)}$, where $n_{ij}$ is the number of times $i$ and $j$ have matched. This is a direct empirical estimate, not a model prediction.
 
-**Strangers.** $\min(n_s, |\text{eligible}|)$ agents sampled uniformly from the population (excluding current neighbors, current matches, and the broker node), where $n_s = 5$ (default) and eligible agents are those with available capacity. The agent has no prior history with these candidates and evaluates them using its **prediction model**: $\hat{q}_i(\mathbf{x}_j)$ (§2b). Strangers represent cold outreach: attending trade events, browsing listings, or following up on indirect referrals.
+**Strangers.** $\min(n_s, |\text{eligible}|)$ agents sampled uniformly from the population (excluding current neighbors and the broker node), where $n_s = 5$ (default) and eligible agents are those with available capacity. The agent has no prior history with these candidates and evaluates them using its **prediction model**: $\hat{q}_i(\mathbf{x}_j)$ (§2b). Strangers represent cold outreach: attending trade events, browsing listings, or following up on indirect referrals.
 
-The candidate pool is built once per agent-period and then reused across that agent's requested slots. Within the batch, self-search tracks temporary remaining capacities for candidate counterparties: after a candidate is selected for one slot, its available capacity for that agent's remaining slots falls by one. The agent selects the feasible candidate with the highest evaluated quality (whether from history or prediction), provided the participation constraint is satisfied: the evaluation exceeds $r$ (§3b). If no feasible candidate clears the threshold, no proposal is recorded for that slot. Because this temporary capacity accounting is local to agent $i$'s batch, the agent does **not** internalize competing proposals from other agents until the global match-formation step.
-
-The proposal enters the match formation step (§9, Step 3), where all proposals from both channels are processed sequentially in random order. The counterparty evaluates the proposal using its own model (for strangers) or historical average (for known neighbors), accepting if the evaluation exceeds $r$ (§3b) and it has not already been matched this period.
+Within a round, agent $i$ orders all feasible self-search candidates by this demander-side evaluation, dropping any candidate whose evaluation fails the demand-side participation constraint $\hat{q}_i(\mathbf{x}_j) \le r$ (§3b). If the agent is rejected by the highest-ranked candidate, it immediately tries the next-best candidate in the same round, and so on until it either secures a tentative hold or exhausts its round-specific candidate list.
 
 #### 5b. Broker-mediated search
 
-When agent $i$ outsources to the broker, the broker includes agent $i$ in its allocation for the current period. Agent $i$ is also added to the broker's roster if not already a member (§7).
+When agent $i$ outsources to the broker, the broker includes agent $i$ in its client list for the current period. Outsourcing does not alter standing roster membership (§7), but current broker clients are added to the broker's one-period access overlay. The broker therefore allocates over a hybrid access set rather than over the standing roster alone.
 
-At the end of Step 1 (after all outsourcing decisions), the broker observes its full client list $D^t$ (the set of demanders who outsourced this period) and the available roster members $\text{Roster}^t \cap \{\text{agents with available capacity}\}$. The broker computes predicted match quality $\hat{q}_b([\mathbf{x}_i; \mathbf{x}_j])$ for every (demander, available roster member) pair and assigns matches using a greedy best-pair heuristic (§9, Step 2.3): iteratively select the highest-quality feasible pair, propose that match, and decrement the remaining demand of $i$ and the remaining capacity of $j$. If both remain positive, the same pair can be selected again on a later iteration. This continues until all outsourced demand is exhausted, the roster is exhausted, or no remaining pair has positive predicted surplus ($\hat{q}_b > r$). The broker applies the same participation constraint as self-search: it does not propose matches with non-positive predicted surplus.
+At the end of Step 1 (after all outsourcing decisions), the broker observes its full client list $D^t$ (the set of demanders who outsourced this period) and forms its accessible counterparty set
 
-Proposals enter the match formation step (§9, Step 3) alongside self-search proposals. The counterparty evaluates using its own model (§3b).
+$$A^t = \text{Roster}^t \cup D^t.$$
 
-Agents whose demand is not filled (because the roster was exhausted, no candidate cleared the surplus threshold, or the counterparty rejected) receive no proposal. The agent's broker satisfaction decays toward zero (§6a).
+In each round, the broker considers the currently available accessible counterparties
+
+$$A^t \cap \{\text{agents with available capacity after earlier accepted rounds}\}.$$
+
+For every active broker-client demander $i$ in the round and every accessible counterparty $j \in A^t$ with current capacity, the broker computes predicted match quality $\hat{q}_b([\mathbf{x}_i; \mathbf{x}_j])$. It then constructs an ordered list of feasible candidates for each outsourced demander, ranked by the broker's prediction, dropping any candidate with non-positive predicted surplus $\hat{q}_b([\mathbf{x}_i; \mathbf{x}_j]) \le r$. If the broker's top candidate for demander $i$ is rejected within the round, the broker immediately tries the next-best candidate for the same demander in that round, and so on until demander $i$ either secures a tentative hold or exhausts its feasible list.
+
+Agents already on the standing roster remain on it whether or not they outsource in the current period; current clients expand access only for the current period and do not become lagged standing members for that reason.
+
+#### 5c. Within-round proposal and acceptance
+
+Within a round, all still-active demanders attempt to fill one slot through a decentralized deferred-acceptance protocol with capacity.
+
+1. Each active demander proposes to its highest-ranked not-yet-rejected feasible candidate under its chosen channel.
+2. Each counterparty $j$ evaluates the offers it receives that round:
+   - for **standard** matches, $j$ uses its own evaluation rule, $\bar{q}_{ji}$ for known partners and $\hat{q}_j(\mathbf{x}_i)$ for strangers, and rejects any offer with evaluation $\le r$;
+   - for **principal-mode** broker proposals (§12), the counterparty-side participation constraint is bypassed, because the broker acquires the counterparty's position automatically at reservation $\bar{q}_j$.
+3. Counterparty $j$ tentatively holds up to its remaining capacity's worth of incoming offers, ranked by its counterparty-side evaluation for standard offers and by the broker's predicted value for principal-mode offers. Lower-ranked incoming offers are rejected.
+4. Any rejected demander immediately proposes to its next-best feasible candidate in the same round.
+5. Steps 2-4 repeat until no rejected demander has any feasible candidate left to try.
+
+Two capacity rules matter. First, a counterparty can hold only up to its current spare capacity. Second, an agent can be both a demander and a counterparty in the same round, but both roles use the same total capacity $K$. Accordingly, if agent $i$ secures a tentative demander-side match while already tentatively holding incoming counterparty offers up to capacity, the lowest-ranked incoming counterparty hold is released so that total tentative commitments for $i$ do not exceed its current spare capacity.
+
+A demander **fails in the round** if it exhausts its feasible candidate list without securing a tentative hold. Failure is terminal for the rest of the period: because previously accepted rounds only reduce capacities, no later round can create a newly feasible opportunity that was absent when the demander exhausted its current round-specific list.
+
+At the end of the round, all tentative holds are finalized as accepted matches. Realized outputs are drawn, histories and partner means are updated immediately, and any standard match adds an edge in $G$. These updates feed into later rounds in the same period.
+
+The within-period process stops when all demand is filled, when a round produces no accepted matches, or when no still-unfilled demander has any feasible candidate left. Because a demander can fill at most one slot per round, the maximum number of rounds in a period is
+
+$$
+R_{\max} = \max_i d_i \le K.
+$$
+
+Under the baseline $K = 5$, a period therefore contains at most 5 within-period matching rounds.
 
 ### 6. The Outsourcing Decision
 
@@ -442,25 +475,35 @@ where $D_b^t$ is the set of agents who outsourced to the broker this period. Whe
 
 The broker maintains a **roster** of agents it knows and can propose as counterparties when mediating matches.
 
-**Initialization.** The roster is seeded with $\lceil 0.20 \cdot N \rceil$ agents (default 200 at $N = 1000$) chosen uniformly at random from the population. This ensures the broker can serve early outsourcers without frequent no-match failures that would drive broker satisfaction down before the broker has a chance to demonstrate value. The broker's history is seeded with observations from random roster member pairs in $G$ (§11c).
+**Initialization.** The roster is seeded with a fixed target size
 
-**Roster membership with lag.** Each agent $i$ records $t_i^{\text{out}}$, the most recent period in which it outsourced to the broker. At the start of each period (after outsourcing decisions are taken, §9, Step 1.3), the roster is rebuilt as
+$$R^* = \lceil \alpha_R N \rceil, \qquad \alpha_R = 0.20,$$
 
-$$\text{Roster}^t = \{i : t_i^{\text{out}} > 0 \text{ and } t - t_i^{\text{out}} \leq L\},$$
+by drawing $R^*$ agents uniformly at random from the population (default 200 at $N = 1000$). This ensures the broker can serve early outsourcers without frequent no-match failures that would drive broker satisfaction down before the broker has a chance to demonstrate value. The broker's history is seeded with observations from random roster member pairs in $G$ (§11c).
 
-where $L$ is the **roster lag** (structural constant, default $L = 4$). Broker edges in $G$ are added and removed to mirror this set. An agent that outsources in period $t$ is placed on the roster immediately; an agent that last outsourced more than $L$ periods ago drops off. This rule decouples roster membership from the current-period outsourcing decision: a recent broker client remains on the roster for a few periods even if it self-searches or has no demand in the interim, smoothing "dry periods" when a known client has no new demand, and retaining recent contacts as available counterparties. Because $L$ is finite, the roster does not accumulate monotonically: inactive agents age out automatically.
+**Standing roster with replenishment.** The broker maintains this roster as a standing access base. At the start of each period, after prior-period active matches are cleared and before current-period demand is realized (§9, Step 0.2), each current roster member independently exits the roster with exogenous probability $p_{\text{roster}}$ (default $0.02$). The broker then replenishes uniformly at random from agents not currently on the roster until the target size $R^*$ is restored. Formally, if $\widetilde{\text{Roster}}^t$ is the post-churn roster,
+
+$$\widetilde{\text{Roster}}^t = \{i \in \text{Roster}^{t-1} : u_i^t > p_{\text{roster}}\}, \qquad u_i^t \overset{iid}{\sim} U[0,1],$$
+
+then the broker samples without replacement from $\{1,\ldots,N\}\setminus \widetilde{\text{Roster}}^t$ until $|\text{Roster}^t| = R^*$, or until the population is exhausted. Standing-roster membership is therefore independent of current outsourcing decisions: outsourcing does not place an agent onto the standing roster, and being matched through the broker does not remove the agent from it.
+
+**Current-client overlay.** In each period, the broker also maintains the one-period client set $D^t$ of agents who outsourced in that period. The broker's effective counterparty access set for period $t$ is therefore $A^t = \text{Roster}^t \cup D^t$. This restores an endogenous access channel, because current outsourcing expands the set of agents the broker can use as counterparties in that period without requiring a lagged client-memory mechanism.
+
+**Broker edges in $G$.** Broker-node edges are synchronized to the standing roster, the current client set, and agents currently engaged in broker-channel matches. This means the broker is always adjacent in $G$ to its maintained access base and its current broker clients, while current broker-mediated relationships are also represented in the period graph even when the matched agents were not already on the standing roster. Because turnover removes exiting agents immediately but replenishment occurs at the next period start, the internal standing roster can temporarily fall below $R^*$ between the exit step and the next refresh.
 
 **Availability.** A roster member is available as a counterparty in a given period if it has spare capacity ($|M_j^t| < K$). An agent may act as both a demander (seeking matches for its own slots) and a counterparty (being matched with other demanders) in the same period, provided it still has open slots. Self-matches are excluded: the broker never matches an agent with itself.
 
 ### 8. Match Lifecycle
 
-Matches are transactional within a period. Once a match forms, it occupies one slot for each side for the remainder of that period, both parties observe the realized match output immediately, and all slots reopen before the next period begins.
+Matches are transactional within a period. Once a match is finalized in a within-period round, it occupies one slot for each side for the remainder of that period, both parties observe the realized match output immediately, and all slots reopen before the next period begins.
 
-**At match formation:**
+**At round finalization, for each accepted match:**
 1. Realized output is drawn: $q_{ij} = Q + f(\mathbf{x}_i, \mathbf{x}_j) + \varepsilon_{ij}$.
 2. Both parties add the observation to their histories: the demander adds $(\mathbf{x}_j, q_{ij})$ to $\mathcal{H}_{i}$; the counterparty adds $(\mathbf{x}_i, q_{ij})$ to $\mathcal{H}_{j}$.
 3. If brokered, the broker adds $(\mathbf{x}_i, \mathbf{x}_j, q_{ij})$ to $\mathcal{H}_b$.
 4. An edge is added between $i$ and $j$ in $G$ (if not already present).
+
+These updates take effect immediately and therefore influence feasible capacities, known-neighbor sets, and learned partner means in later rounds of the same period.
 
 **Before the next period begins:** clear the current-period match lists $M_i^t$ and $M_j^t$. Both sides regain the slot, so all $K$ slots are open again at the start of the next period.
 
@@ -484,7 +527,7 @@ At the start of the simulation, the state of the world must be initialized.
 > I.7. &emsp;Build $G$: Watts–Strogatz with $N$ nodes, degree $k$, rewiring $p_{\text{rewire}}$. Node order is random (non-assortative initial network).
 >
 > *Broker.*
-> I.8. &emsp;Seed broker roster with $\lceil 0.20 \cdot N \rceil$ randomly chosen agents. Set $t_i^{\text{out}} \leftarrow 1$ for each seed roster member so they are eligible for the lag-based rebuild during the first few periods (§7). Non-roster agents are initialized with a non-positive sentinel (the roster test $t_i^{\text{out}} > 0$ treats any such value as "never outsourced"; the implementation uses $-1000$ at initialization and resets to $0$ on exit). Add broker-agent edges to $G$ for each roster member.
+> I.8. &emsp;Seed broker roster with $R^* = \lceil 0.20 \cdot N \rceil$ randomly chosen agents (§7). Add broker-agent edges to $G$ for each roster member.
 > I.9. &emsp;Seed broker history $\mathcal{H}_b$ with 100 observations drawn from random pairs of distinct roster members (sampling from the roster directly, not from pre-existing edges in $G$). For each sampled pair $(i, j)$, realize $q_{ij}$, append $(\mathbf{x}_i, \mathbf{x}_j, q_{ij})$ to $\mathcal{H}_b$, and add the edge $(i, j)$ to $G$ (the broker's seed placement creates the tie, mirroring the regular match flow in §4b).
 >
 > *State variables.*
@@ -501,15 +544,14 @@ Each period proceeds through six steps (plus recording).
 >
 > **0. CURRENT-PERIOD MATCH RESET**
 > 0.1. &emsp;For each agent $i$: set $M_i^t \leftarrow \emptyset$, so all $K$ slots are open at the start of period $t$.
+> 0.2. &emsp;Clear the prior period's client overlay $D^{t-1}$. Refresh standing broker roster (§7): each current roster member exits independently with probability $p_{\text{roster}}$; then replenish uniformly without replacement from non-roster agents until the target size $R^* = \lceil 0.20 \cdot N \rceil$ is restored. Synchronize broker-agent edges in $G$ to the refreshed standing roster.
 >
 > **1. DEMAND GENERATION AND OUTSOURCING DECISIONS**
 > 1.1. &emsp;For each agent $i$: draw demand count $d_i \sim \text{Binomial}(K,\; p_{\text{demand}})$.
 > 1.2. &emsp;For each agent $i$ with $d_i > 0$:
 > &emsp;&emsp;Compute $\text{score}_{\text{self}}, \text{score}_{\text{known}}, \text{score}_{\text{broker}}$ as in §6b.
 > &emsp;&emsp;$\text{decision}_i \leftarrow \text{broker}$ if $\text{score}_{\text{broker}} > \max(\text{score}_{\text{self}},\; \text{score}_{\text{known}})$; else $\text{self}$. Ties broken uniformly at random. (Channel choice applies to all $d_i$ slots.)
-> &emsp;&emsp;If $\text{decision}_i = \text{broker}$: set $t_i^{\text{out}} \leftarrow t$ (§7).
-> 1.3. &emsp;Rebuild broker roster: $\text{Roster}^t \leftarrow \{i : t_i^{\text{out}} > 0 \text{ and } t - t_i^{\text{out}} \leq L\}$ (§7). Add broker-agent edges in $G$ for new roster members; remove edges for agents that aged out.
-> &emsp;Output: for each demander, channel choice and demand count $d_i$. Broker client list $D^t$ with per-agent demand counts. Current roster $\text{Roster}^t$.
+> 1.3. &emsp;Form the current broker client set $D^t = \{i : \text{decision}_i = \text{broker}\}$. Synchronize broker-agent edges in $G$ so the broker is connected to the standing roster and all current clients. Output: for each demander, channel choice and demand count $d_i$. Broker client list $D^t$ with per-agent demand counts. Current standing roster $\text{Roster}^t$.
 >
 > **2. CANDIDATE EVALUATION**
 >
@@ -517,47 +559,56 @@ Each period proceeds through six steps (plus recording).
 > 2.1.1. &emsp;For each agent $i$ whose parity matches the current period ($i \bmod 2 = t \bmod 2$): update neural network on $\mathcal{H}_{i}^t$ (§2b). Warm start; $E_t = \max(50, \lceil E_{\text{init}} \cdot n_{\text{new}} / n_i \rceil)$ GD steps on the sliding window of the most recent $W = 500$ observations. No regularization. Agents not selected in period $t$ keep accumulating $n_{\text{new}}$ observations and retrain the next period.
 > 2.1.2. &emsp;Update broker's neural network on $\mathcal{H}_b^t$ with symmetry-augmented data (§2c). Same adaptive schedule and window. No regularization. In the implementation, the broker reuses a preallocated symmetry-augmented training buffer and trains on its active prefix directly.
 >
-> &emsp;**2.2. Self-searches:**
-> 2.2.1. &emsp;For each agent $i$ with $\text{decision}_i = \text{self}$:
-> &emsp;&emsp;Build candidate pool (once per agent, shared across all $d_i$ slots):
-> &emsp;&emsp;&emsp;**Known neighbors:** direct neighbors of $i$ in $G$ with available capacity. Evaluate each using average of realized outcomes: $\bar{q}_{ij}$.
-> &emsp;&emsp;&emsp;**Strangers:** sample $\min(n_s, |\text{eligible}|)$ agents uniformly from non-neighbors with available capacity (excluding broker node). Evaluate each using prediction model: $\hat{q}_i(\mathbf{x}_j)$.
-> &emsp;&emsp;Initialize temporary remaining capacity for each candidate from its current-period free slots.
-> &emsp;&emsp;For each of $i$'s $d_i$ demand slots: select the feasible $j^* = \arg\max$ over the candidate pool (ties broken randomly); if best evaluation $\leq r$, skip this slot; else record proposed match $(i, j^*)$ and decrement $j^*$'s temporary remaining capacity by one. The same $j^*$ may be selected for multiple slots if it remains feasible and best-valued.
+> &emsp;**2.2. Round initialization:**
+> 2.2.1. &emsp;Set remaining demander loads $u_i^0 \leftarrow d_i$ for all agents with demand.
+> 2.2.2. &emsp;Set round index $\ell \leftarrow 1$.
 >
-> &emsp;**2.3. Broker proposals:**
-> 2.3.1. &emsp;Collect client list: $D^t = \{i : \text{decision}_i = \text{broker}\}$.
-> 2.3.2. &emsp;$\text{available\_roster} \leftarrow \text{Roster}^t \cap \{\text{agents with available capacity}\}$.
-> 2.3.3. &emsp;Compute quality matrix: $\hat{Q}[i,j] = \hat{q}_b([\mathbf{x}_i; \mathbf{x}_j])$ for all $i \in D^t$, $j \in \text{available\_roster}$, $i \neq j$ (self-matches excluded).
-> 2.3.4. &emsp;While $D^t$ non-empty AND available\_roster non-empty:
-> &emsp;&emsp;$(i^*, j^*) = \arg\max \hat{Q}[i,j]$ &ensp;(implementation sorts $(-\hat{Q}[i,j], \text{flat index})$ once and iterates in that order; ties in $\hat{Q}$ are broken deterministically by flat index to keep runs reproducible under seed)
-> &emsp;&emsp;If $\hat{Q}[i^*, j^*] \leq r$: break (no remaining pair has positive surplus)
-> &emsp;&emsp;Record proposed match $(i^*, j^*)$
-> &emsp;&emsp;Decrement $i^*$'s remaining demand by one. Decrement $j^*$'s available capacity by one. If both remain positive, the pair may be selected again on a later iteration.
-> 2.3.5. &emsp;If $D^t$ non-empty (roster exhausted or no surplus-positive pair): for each remaining $i \in D^t$, mark as no-proposal.
+> **3. WITHIN-PERIOD MATCHING ROUNDS**
 >
-> **3. MATCH FORMATION**
+> 3.1. &emsp;Form the current active demander set $U^\ell = \{i : u_i^{\ell-1} > 0 \text{ and } i \text{ still has spare capacity}\}$.
+> 3.2. &emsp;If $U^\ell = \emptyset$: terminate within-period matching.
 >
-> &emsp;**3.1. Sequential acceptance:**
-> 3.1.1. &emsp;Shuffle all proposed matches (from both self-search and broker) into random order.
-> 3.1.2. &emsp;For each proposed match $(i, j)$ in order:
-> &emsp;&emsp;If demander $i$ has no available capacity: skip (capacity consumed by earlier accepted proposals, including proposals where $i$ was a counterparty).
-> &emsp;&emsp;If counterparty $j$ has no available capacity: skip.
-> &emsp;&emsp;Counterparty $j$ evaluates: $\bar{q}_{ji}$ (historical average) if $i$ is a neighbor of $j$, else $\hat{q}_{j}(\mathbf{x}_i)$ (prediction model).
-> &emsp;&emsp;If evaluation $\leq r$: reject.
-> &emsp;&emsp;Else: accept. Decrement both $i$'s and $j$'s available capacity by one.
+> &emsp;**3.3. Build round-specific candidate rankings**
 >
-> &emsp;**3.2. Finalization** (for each accepted match $(i, j)$):
-> 3.2.1. &emsp;Realize output: $q_{ij} = Q + f(\mathbf{x}_i, \mathbf{x}_j) + \varepsilon_{ij}$.
-> 3.2.2. &emsp;Add match to active match lists: append $j$ to $M_i^{t+1}$; append $i$ to $M_j^{t+1}$. (The same pair may appear multiple times if they have concurrent matches.)
-> 3.2.3. &emsp;Add edge $(i, j)$ to $G$ if not already present.
-> 3.2.4. &emsp;Record: channel (self/broker), $q_{ij}$, predictions used, whether $j$ was a direct neighbor of $i$ in $G$.
+> 3.3.1. &emsp;For each $i \in U^\ell$ with $\text{decision}_i = \text{self}$:
+> &emsp;&emsp;Construct the current self-search candidate pool from:
+> &emsp;&emsp;&emsp;known neighbors of $i$ in $G$ with spare capacity, evaluated by realized partner means $\bar{q}_{ij}$;
+> &emsp;&emsp;&emsp;up to $n_s$ sampled strangers with spare capacity, evaluated by $\hat{q}_i(\mathbf{x}_j)$.
+> &emsp;&emsp;Drop any candidate whose demander-side evaluation is $\le r$, and order the remaining feasible candidates from best to worst.
+>
+> 3.3.2. &emsp;For each $i \in U^\ell$ with $\text{decision}_i = \text{broker}$:
+> &emsp;&emsp;Form broker access set $A^t \leftarrow \text{Roster}^t \cup D^t$.
+> &emsp;&emsp;Restrict to currently available accessible counterparties.
+> &emsp;&emsp;Compute broker predictions $\hat{q}_b([\mathbf{x}_i; \mathbf{x}_j])$ for all feasible $j \in A^t$, $j \neq i$.
+> &emsp;&emsp;Drop any candidate with $\hat{q}_b([\mathbf{x}_i; \mathbf{x}_j]) \le r$, and order the remaining feasible candidates from best to worst.
+>
+> &emsp;**3.4. Within-round deferred acceptance**
+>
+> 3.4.1. &emsp;Each active demander proposes to its highest-ranked not-yet-rejected candidate.
+> 3.4.2. &emsp;Each counterparty $j$ tentatively holds up to its current spare capacity's worth of incoming offers:
+> &emsp;&emsp;For standard offers, rank by the counterparty's own evaluation, $\bar{q}_{ji}$ for known partners and $\hat{q}_j(\mathbf{x}_i)$ for strangers; reject any offer with evaluation $\le r$.
+> &emsp;&emsp;For principal-mode broker offers (§12), bypass the counterparty-side participation rule and rank by the broker's predicted value.
+> 3.4.3. &emsp;If a demander is rejected, it immediately proposes to its next-best feasible candidate in the same round.
+> 3.4.4. &emsp;If an agent secures a tentative demander-side match while also holding incoming counterparty offers, release the lowest-ranked incoming hold as needed so that total tentative commitments do not exceed that agent's current spare capacity.
+> 3.4.5. &emsp;Repeat 3.4.2-3.4.4 until no rejected demander has any feasible candidate left to try.
+> 3.4.6. &emsp;Any demander that exhausts its ranked list without being held fails for the remainder of the period: it makes no further proposals in later rounds.
+>
+> &emsp;**3.5. Finalize accepted round matches**
+>
+> 3.5.1. &emsp;Finalize all tentatively held offers as accepted matches.
+> 3.5.2. &emsp;For each accepted match $(i, j)$:
+> &emsp;&emsp;Realize output: $q_{ij} = Q + f(\mathbf{x}_i, \mathbf{x}_j) + \varepsilon_{ij}$.
+> &emsp;&emsp;Update histories immediately: add $(\mathbf{x}_j, q_{ij})$ to $\mathcal{H}_{i}$; add $(\mathbf{x}_i, q_{ij})$ to $\mathcal{H}_{j}$; if brokered, add $(\mathbf{x}_i, \mathbf{x}_j, q_{ij})$ to $\mathcal{H}_b$.
+> &emsp;&emsp;Add match to active match lists: append $j$ to $M_i^{t+1}$; append $i$ to $M_j^{t+1}$.
+> &emsp;&emsp;If standard (non-principal): add edge $(i, j)$ to $G$ if not already present.
+> &emsp;&emsp;Record channel, realized output, predictions used, and whether $j$ was already a direct neighbor of $i$ before the round finalized.
+> &emsp;&emsp;Set $u_i^\ell \leftarrow u_i^{\ell-1} - 1$.
+> 3.5.3. &emsp;Synchronize broker-agent edges in $G$ so the broker remains connected to the standing roster, the current client set, and any agents currently engaged in broker-channel matches (§7).
+> 3.5.4. &emsp;If the round produced zero accepted matches: terminate within-period matching.
+> 3.5.5. &emsp;Else increment round index $\ell \leftarrow \ell + 1$ and return to 3.1.
 >
 > **4. LEARNING AND STATE UPDATES**
-> 4.1. &emsp;For each finalized match $(i, j)$:
-> &emsp;&emsp;Add $(\mathbf{x}_j, q_{ij})$ to $\mathcal{H}_{i}$ (demander's history).
-> &emsp;&emsp;Add $(\mathbf{x}_i, q_{ij})$ to $\mathcal{H}_{j}$ (counterparty's history).
-> &emsp;&emsp;If brokered: add $(\mathbf{x}_i, \mathbf{x}_j, q_{ij})$ to $\mathcal{H}_b$.
+> 4.1. &emsp;Histories have already been updated during round finalization (Step 3.5.2), so no additional learning pass is needed here.
 >
 > 4.2. &emsp;Update satisfaction indices (§6a):
 > &emsp;&emsp;For each agent $i$ with $d_i > 0$, let $c$ be $i$'s chosen channel:
@@ -575,7 +626,7 @@ Each period proceeds through six steps (plus recording).
 > &emsp;&emsp;With probability $\eta$: agent exits.
 > &emsp;&emsp;&emsp;Remove $i$ from $G$ (node and all edges).
 > &emsp;&emsp;&emsp;Terminate all active matches involving $i$; counterparties regain capacity.
-> &emsp;&emsp;&emsp;Remove $i$ from broker roster (if present); reset $t_i^{\text{out}} \leftarrow 0$ so the entrant will not be treated as a recent broker client.
+> &emsp;&emsp;&emsp;Remove $i$ from the broker's standing roster and from the current client set (if present). Broker-agent edges are then synchronized so the broker remains connected to the surviving standing roster, surviving current clients, and any surviving active broker-channel participants; replenishment of vacated standing-roster spots occurs at the next period start.
 > &emsp;&emsp;&emsp;Replace with entrant $i'$: fresh type from curve + noise; empty histories; added to $G$ with $\lfloor k/2 \rfloor$ edges to type-similar agents ($\propto \exp(-\|\mathbf{x}_{i'} - \mathbf{x}_j\|^2)$). Self-satisfaction $\leftarrow$ mean of new neighbors' self-satisfaction; broker-satisfaction $\leftarrow$ current broker reputation (§6a).
 >
 > **6. RECORDING AND MEASUREMENT**
@@ -586,7 +637,7 @@ Each period proceeds through six steps (plus recording).
 
 #### Parallelism summary
 
-Steps 0 and 1 are embarrassingly parallel across agents. Step 2.2 (self-searches) is parallel across agents. Step 3 requires a conflict resolution pass but per-match computations are parallel. Steps 4–5 involve writes to shared state that require synchronization, but writes are non-overlapping (each match writes to distinct agent records). Network measures are the most expensive single computation; they read the full state but write nothing and can be offloaded to a separate thread or deferred to a coarser schedule.
+Steps 0 and 1 are embarrassingly parallel across agents. Step 2.1 (model fitting) remains the dominant parallel workload. Within Step 3, the self-search ranking stage is parallel across active demanders and the broker's round-level quality matrix is batch-computed across current broker clients, but the within-round deferred-acceptance pass is a conflict-resolution stage that is processed sequentially because tentative holds and rejections depend on shared capacities. Step 4 is lightweight because histories were already updated during round finalization; Step 5 still involves shared-state writes but on non-overlapping agent records. Network measures remain the most expensive standalone diagnostic computation; they read the full state but write nothing and can be offloaded to a separate thread or deferred to a coarser schedule.
 
 ### 10. Performance Measures
 
@@ -643,7 +694,9 @@ The broker-agent gap in holdout $R^2$ is the purest measure of the informational
 
 **Outsourcing rate.** Fraction of demand slots that are outsourced to the broker: outsourced slots / total demand slots. A demander-level outsourcing share (fraction of demanders choosing the broker channel) is retained as a secondary diagnostic in the code, but the slot share is the primary quantity because the model's demand object is the slot.
 
-**Roster size.** Number of agents currently on the broker's roster (§7). Reflects the flow of recent broker clients: it rises with outsourcing activity and decays as agents age out after $L$ periods without outsourcing.
+**Standing roster size.** Number of agents currently on the broker's standing roster (§7). In the recorded period outputs, this is the maintained roster size after the start-of-period refresh and therefore typically equals the target $R^*$. Internally, the roster can dip below target immediately after exits and is replenished at the next period start.
+
+**Broker access size.** Number of distinct agents in the broker's within-period access set, $|A^t| = |\text{Roster}^t \cup D^t|$, where $D^t$ is the set of current-period broker clients. This is the meaningful quantity for how many agents the broker can search over in period $t$. Because some current clients can already be on the standing roster, broker access size is generally smaller than standing roster size plus the number of current broker clients.
 
 **Available agents.** Number of agents with spare capacity at the time metrics are recorded, equivalently those with $|M_i^t| < K$. This is a capacity-based availability count, not merely a count of fully idle agents.
 
@@ -666,7 +719,7 @@ Parameters are organized into four categories reflecting their role in the analy
 | $p_{\text{demand}}$ | Per-slot demand probability | 0.50 | All $K$ slots are open at period start; $d_i \sim \text{Binomial}(K, p_{\text{demand}})$ |
 | $n_s$ | Max strangers in self-search | 5 | Sampled uniformly from non-neighbors with capacity |
 | $\sigma_x$ | Type noise scale | 0.5 | Expected distance from agent to curve position |
-| $L$ | Roster lag (§7) | 4 | Agent stays on broker roster this many periods after last outsourcing |
+| $\alpha_R$ | Target roster share (§7) | 0.20 | Standing roster target size is $R^* = \lceil \alpha_R N \rceil$ |
 
 **Calibration parameters.** Set during model development. Constant in production runs.
 
@@ -682,6 +735,7 @@ Parameters are organized into four categories reflecting their role in the analy
 | $\sigma_\varepsilon$ | Match output noise SD | 0.10 | |
 | $\delta$ | Regime gain strength (§1c) | 0.5 | $\delta = 0$: no regime effect; $\delta = 1$: maximum gain contrast |
 | $\Delta_c$ | Broker-minus-self cost wedge | 0.10 | $\phi = (0.15 + \Delta_c/2)\cdot(\bar{q}_{\text{cal}} - r)$, $c_s = (0.15 - \Delta_c/2)\cdot(\bar{q}_{\text{cal}} - r)$; $c_s$ is a self-search cost per demanded slot, $\phi$ a successful standard-placement fee; §11b |
+| $p_{\text{roster}}$ | Standing-roster churn probability (§7) | 0.02 | Each roster member is dropped independently at the start of a period, before uniform replenishment back to $R^*$ |
 
 **Phase diagram axes.** Primary parameters of interest.
 
@@ -741,12 +795,12 @@ The initialization procedure is specified in the pseudocode (§9, steps I.1–I.
 - The matching function parameters ($\mathbf{c}$, $\mathbf{A}$, $\mathbf{B}$) are drawn once and held fixed (§1).
 - Calibration quantities ($\bar{q}_{\text{cal}}$, $r$, $\phi$, $c_s$) are computed from 10,000 random agent pairs (§11b).
 - Each agent's history is seeded with 5 pairings from its neighbors in $G$, ensuring initial predictions reflect the local network.
-- The broker's roster is seeded at $\lceil 0.20 \cdot N \rceil$ agents, and its history is seeded from 100 random roster member pairs.
+- The broker's roster is seeded at the fixed target size $R^* = \lceil 0.20 \cdot N \rceil$, and its history is seeded from 100 random roster member pairs.
 - All neural networks are trained from random weights for $E_{\text{init}}$ steps on their seed histories before the first period (§2a). These seed histories initialize predictive capability, but under Model 1 they do **not** initialize principal-mode confidence: principal mode is disabled until the broker has observed live brokered outcomes in the simulation (§12c).
 
 #### 11d. Reproducibility
 
-All randomness flows from a single integer seed. The seed determines: type draws, the realization of $G$, matching function parameters ($\mathbf{c}$, $\mathbf{A}$, $\mathbf{B}$), broker seed roster, and all subsequent random events. Simulations are fully reproducible given (parameter dictionary, seed).
+All randomness flows from a single integer seed. The seed determines: type draws, the realization of $G$, matching function parameters ($\mathbf{c}$, $\mathbf{A}$, $\mathbf{B}$), broker seed roster, standing-roster churn and replenishment draws, and all subsequent random events. Simulations are fully reproducible given (parameter dictionary, seed).
 
 ## Part III. Model Variant: Resource Capture
 
@@ -764,7 +818,7 @@ Under resource capture, the broker transitions from intermediary to principal. I
 
 When the broker operates in principal mode for demander $i$:
 
-1. The broker identifies the best counterparty $j$ using its model (same allocation as the base model, §9 Step 2.3).
+1. The broker identifies the best counterparty $j$ using the same round-specific broker ranking logic as in the base model (§5b, §9 Step 3.3.2).
 2. **The broker acquires $j$'s position** against an acquisition reservation $\bar{q}_j$ (the mean of all outputs in $j$'s history, or $\bar{q}_{\text{cal}}$ if $j$ has no history). This reservation is $j$'s self-assessed value of its position based on its own experience and serves as the broker's ex-ante benchmark. Agent $j$'s capacity slot is consumed for the period, but $j$'s history and satisfaction are unaffected (satisfaction is updated only for the demander role, §6a); $j$ does not observe who the end-use counterparty is.
 3. **The broker matches with demander $i$** as the counterparty, stepping into $j$'s role. Match output is realized: $q_{ij} = Q + f(\mathbf{x}_i, \mathbf{x}_j) + \varepsilon_{ij}$, determined by the underlying pairing $(i, j)$ even though $i$ deals only with the broker.
 4. **Both the demander and the broker experience $q_{ij}$** (the joint match output, as in any match). The **capture surplus** of the match is $\Delta q_{ij} = q_{ij} - \bar{q}_j$: the realized match output net of the counterparty's reservation. $\Delta q_{ij}$ can be negative when the acquired position underperforms the reservation; this is the broker's **capture risk**.
@@ -780,7 +834,7 @@ If the broker repeatedly acquires positions from the same high-value agents, tho
 
 #### 12c. Broker's decision: standard vs. principal
 
-Each time the broker fills a match for demander $i$ with counterparty $j$, it first identifies the specific pairing $(i, j)$ using the same broker-allocation logic as in the base model (§9 Step 2.3), and then chooses between standard placement and principal mode using the smooth threshold
+Each time the broker fills a match for demander $i$ with counterparty $j$, it first identifies the specific pairing $(i, j)$ using the same round-specific broker ranking logic as in the base model (§5b, §9 Step 3.3.2), and then chooses between standard placement and principal mode using the smooth threshold
 
 $$
 \hat{q}_b([\mathbf{x}_i; \mathbf{x}_j]) - \bar{q}_j > \phi + \frac{\kappa_b^t}{\sqrt{1 + s_j^t / K}}.
@@ -905,11 +959,11 @@ Steps not listed are identical to the base model pseudocode (§9).
 
 > **2. CANDIDATE EVALUATION** (principal-mode branch added)
 >
-> &emsp;**2.3. Broker proposals** (unchanged from base):
-> 2.3.1–2.3.5: as in §9.
+> &emsp;**3.3. Broker rankings within each round** (unchanged from base except for the principal-mode flag):
+> 3.3.2: as in §9 for broker demanders active in the current round.
 >
-> &emsp;**2.4. Broker mode selection** (new):
-> 2.4.1. &emsp;for each proposed brokered match $(i, j)$:
+> &emsp;**3.3.3. Broker mode selection** (new):
+> 3.3.3.1. &emsp;for each broker-generated candidate pair $(i, j)$ in the round:
 > &emsp;&emsp;If $\kappa_b^t$ is not yet available: mark match as standard
 > &emsp;&emsp;Compute acquisition reservation: $\bar{q}_j$ = mean of agent $j$'s realized match history (or $\bar{q}_{\text{cal}}$ if empty)
 > &emsp;&emsp;Read current counterparty support: $s_j^t$ = number of distinct demanders previously matched with $j$ through accepted broker matches
@@ -920,20 +974,17 @@ Steps not listed are identical to the base model pseudocode (§9).
 > &emsp;&emsp;If $\Pi^{\text{principal}} > \Pi^{\text{standard}}$: mark match as principal
 > &emsp;&emsp;Else: mark match as standard
 >
-> **3. MATCH FORMATION** (principal-mode branch added)
+> **3. WITHIN-PERIOD MATCHING ROUNDS** (principal-mode branch added)
 >
-> &emsp;**3.1. Sequential acceptance** (as in base, §9 Step 3, with principal-mode additions):
-> 3.1.1. &emsp;Shuffle all proposals (standard and principal-mode) into random order.
-> 3.1.2. &emsp;For each proposed match $(i, j)$ in order:
-> &emsp;&emsp;If demander $i$ has no available capacity: skip.
-> &emsp;&emsp;If counterparty $j$ has no available capacity: skip.
-> &emsp;&emsp;**If standard:** counterparty $j$ evaluates as in base (§9 Step 3.1.2).
-> &emsp;&emsp;**If principal mode:** broker acquires $j$'s position at price $\bar{q}_j$ (automatic acceptance). Demander's participation constraint was applied by the broker during allocation ($\hat{q}_b > r$, §9 Step 2.3.4).
-> &emsp;&emsp;If accepted: decrement both $i$'s and $j$'s available capacity by one.
+> &emsp;**3.4. Within-round deferred acceptance** (as in base, §9 Step 3.4, with principal-mode additions):
+> 3.4.1–3.4.4. &emsp;As in §9, except:
+> &emsp;&emsp;**If standard:** counterparty $j$ evaluates as in base (§9 Step 3.4.2).
+> &emsp;&emsp;**If principal mode:** the broker acquires $j$'s position at reservation $\bar{q}_j$, so the counterparty-side participation test is bypassed; the offer is ranked using the broker's predicted value for the pairing.
+> &emsp;&emsp;Demand-side participation was already applied by the broker during ranking construction ($\hat{q}_b > r$, §9 Step 3.3.2).
 
 > **4. OUTCOME REALIZATION AND LEARNING** (principal-mode branch added)
 >
-> 4.1. &emsp;for each accepted match $(i, j)$:
+> 4.1. &emsp;for each accepted match $(i, j)$ finalized in Step 3.5:
 > &emsp;&emsp;Realize output: $q_{ij} = Q + f(\mathbf{x}_i, \mathbf{x}_j) + \varepsilon_{ij}$
 > &emsp;&emsp;Increment $n_{\text{matches},i}$ and $n_{\text{matches},j}$ (cumulative match counters, any role, any channel — used for broker dependency $D_j$, §12i).
 > &emsp;&emsp;If brokered and demander $i$ has not previously been broker-matched with counterparty $j$: mark that support link and increment $s_j$
@@ -955,7 +1006,7 @@ Steps not listed are identical to the base model pseudocode (§9).
 > &emsp;&emsp;&emsp;Update: $s_{i,\text{broker}}^{t+1} = (1 - \omega)\, s_{i,\text{broker}}^t + \omega \cdot \tilde{q}$.
 >
 > 4.3. &emsp;Capture surplus recording (principal-mode matches):
-> &emsp;&emsp;for each accepted principal-mode match $(i, j)$, record the triple $(q_{ij}, \bar{q}_j, \hat{q}_b)$ in the period's principal-mode ledger, where $\bar{q}_j$ is the acquisition reservation used at mode-selection time (§2.4) and $\hat{q}_b$ is the broker's ex-ante predicted match output. The capture surplus is $\Delta q_{ij} = q_{ij} - \bar{q}_j$; the broker's ex-ante expected surplus was $\hat{q}_b - \bar{q}_j$. These per-match quantities feed the capture measures in §12i.
+> &emsp;&emsp;for each accepted principal-mode match $(i, j)$, record the triple $(q_{ij}, \bar{q}_j, \hat{q}_b)$ in the period's principal-mode ledger, where $\bar{q}_j$ is the acquisition reservation used at mode-selection time (§3.3.3) and $\hat{q}_b$ is the broker's ex-ante predicted match output. The capture surplus is $\Delta q_{ij} = q_{ij} - \bar{q}_j$; the broker's ex-ante expected surplus was $\hat{q}_b - \bar{q}_j$. These per-match quantities feed the capture measures in §12i.
 >
 > 4.4. &emsp;Broker confidence update:
 > &emsp;&emsp;Collect all accepted broker matches in period $t$ (standard and principal)
