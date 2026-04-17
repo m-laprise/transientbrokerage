@@ -4,7 +4,7 @@ using StableRNGs: StableRNG
 
 @testset "Initialization" begin
     using Graphs: nv, ne, degree, has_edge, neighbors
-    using LinearAlgebra: norm, issymmetric, isposdef, tr
+    using LinearAlgebra: norm, issymmetric, isposdef, tr, eigvals
     using Statistics: mean
 
     p = default_params(N=100, seed=42)
@@ -43,17 +43,19 @@ using StableRNGs: StableRNG
         @test all(state.agents[i].id == i for i in 1:N)
     end
 
-    @testset "matching environment matrices are SPD with correct normalization" begin
+    @testset "matching environment matrices have the intended geometry" begin
         env = state.env
         @test size(env.A) == (d, d)
         @test size(env.B) == (d, d)
         @test issymmetric(env.A)
         @test issymmetric(env.B)
         @test isposdef(env.A)
-        @test isposdef(env.B)
         # Trace normalization: tr(A) ≈ d (so E[x'Ax] ≈ 1 for unit vectors)
         @test isapprox(tr(env.A), Float64(d); atol=1e-10)
-        @test isapprox(tr(env.B), Float64(d); atol=1e-10)
+        @test minimum(eigvals(env.B)) < 0.0
+        @test maximum(eigvals(env.B)) > 0.0
+        types = [agent.type for agent in state.agents]
+        @test TransientBrokerage.weighted_regime_overlap(env.A, env.B, types) ≈ 0.0 atol=1e-12
         @test length(env.c) == d
         @test all(isfinite, env.c)
     end

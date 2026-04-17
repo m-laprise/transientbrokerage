@@ -7,7 +7,7 @@ Under principal mode (Model 1), the broker's compensation is the spread q_ij - a
 """
 
 using Random: AbstractRNG, shuffle!
-using Graphs: has_edge, neighbors, SimpleGraph
+using Graphs: has_edge, SimpleGraph
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Match formation helpers
@@ -550,49 +550,25 @@ end
 """
     outsourcing_decision(agent, agents, G, broker_node, broker_rep, d_i, c_s, K, rng) -> Symbol
 
-Agent chooses :self or :broker. Compares three scores:
-- score_self: EWMA satisfaction from past self-search outcomes
-- score_known: average of the best d_i known partners' quality, net of the
-  per-slot self-search cost c_s
+Agent chooses :self or :broker. Compares two reduced-form channel scores:
+- score_self: EWMA satisfaction from past self-search outcomes. This stands in
+  for the full internal-search option, including reuse of known partners under
+  the self-search channel.
 - score_broker: EWMA broker satisfaction, or broker reputation if untried
 
-The agent outsources only if the broker beats both historical self-search
-satisfaction and the value of directly reaching known good partners.
+The agent outsources only if the broker beats the self-search channel's current
+reduced-form value.
 """
-function outsourcing_decision(agent::Agent, agents::Vector{Agent},
-                              G::SimpleGraph, broker_node::Int,
-                              broker_rep::Float64, d_i::Int, c_s::Float64,
-                              K::Int, rng::AbstractRNG)::Symbol
+function outsourcing_decision(agent::Agent, _agents::Vector{Agent},
+                              _G::SimpleGraph, _broker_node::Int,
+                              broker_rep::Float64, _d_i::Int, _c_s::Float64,
+                              _K::Int, rng::AbstractRNG)::Symbol
     score_self = agent.satisfaction_self
     score_broker = agent.tried_broker ? agent.satisfaction_broker : broker_rep
 
-    # Opportunity cost: best known partners the agent could reach directly.
-    # Collect partner_means for neighbors with capacity, take top d_i, average,
-    # and deduct the per-slot self-search cost.
-    nbr_vals = Float64[]
-    for nbr in neighbors(G, agent.id)
-        nbr == broker_node && continue
-        (nbr < 1 || nbr > length(agents)) && continue
-        available_capacity(agents[nbr], K) <= 0 && continue
-        m = partner_mean(agent, nbr)
-        isnan(m) || push!(nbr_vals, m)
-    end
-
-    score_known = if isempty(nbr_vals)
-        -Inf  # no known partners with capacity
-    else
-        sort!(nbr_vals; rev=true)
-        n_use = min(d_i, length(nbr_vals))
-        sum(nbr_vals[k] for k in 1:n_use) / d_i - c_s
-        # Dividing by d_i (not n_use): if agent needs 3 slots but only knows 1
-        # good partner, the average is diluted by zeros for unfilled slots.
-    end
-
-    score_floor = max(score_self, score_known)
-
-    if score_floor > score_broker
+    if score_self > score_broker
         return :self
-    elseif score_broker > score_floor
+    elseif score_broker > score_self
         return :broker
     else
         return rand(rng) < 0.5 ? :self : :broker

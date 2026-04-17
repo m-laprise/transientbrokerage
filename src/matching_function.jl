@@ -5,18 +5,94 @@ Gain-modulated matching function:
     f(x_i, x_j) = ρ · ½(x_i'c + x_j'c) + (1-ρ) · g(x_i,x_j) · x_i'Ax_j
     g(x_i, x_j) = 1 + δ · sign(x_i'Bx_j)
 
-A and B are symmetric positive definite (SPD) matrices drawn at initialization.
-All types are on the unit sphere. Quality is a dot product with ideal type c.
-Interaction is a bilinear form through A, modulated by a regime-dependent gain
-determined by B. The gain creates two regimes (high-gain 1+δ, low-gain 1-δ)
-that produce a genuine informational gap between single-agent and cross-agent data.
+A is a symmetric positive definite (SPD) interaction matrix drawn at
+initialization. B is a symmetric regime operator constructed to be weakly
+aligned with A under the realized type distribution. All types are on the unit
+sphere. Quality is a dot product with ideal type c. Interaction is a bilinear
+form through A, modulated by a regime-dependent gain determined by B. The gain
+creates two regimes (high-gain 1+δ, low-gain 1-δ) that produce a genuine
+informational gap between single-agent and cross-agent data.
 
 Observable output: q = Q + f(x_i, x_j) + ε, where Q is a constant offset and
 ε ~ N(0, σ_ε²) is match noise.
 """
 
-using LinearAlgebra: dot, mul!, norm, normalize, eigvals, tr
+using LinearAlgebra: dot, mul!, norm, tr
 using Random: AbstractRNG
+
+"""
+    type_second_moment(agent_types) -> Matrix{Float64}
+
+Empirical second-moment matrix S = N^{-1} Σ_i x_i x_i' for the realized type
+draws. Used to define the weighted overlap between the payoff geometry A and
+the regime operator B under the realized type distribution.
+"""
+function type_second_moment(agent_types::Vector{Vector{Float64}})::Matrix{Float64}
+    d = length(agent_types[1])
+    S = zeros(d, d)
+    n = length(agent_types)
+    @inbounds for x in agent_types
+        for j in 1:d, i in 1:d
+            S[i, j] += x[i] * x[j]
+        end
+    end
+    S ./= n
+    return S
+end
+
+"""Weighted matrix inner product tr(S M S N)."""
+weighted_matrix_inner(M::AbstractMatrix, N::AbstractMatrix, S::AbstractMatrix) = tr(S * M * S * N)
+
+"""
+    weighted_regime_overlap(A, B, agent_types) -> Float64
+
+Normalized weighted overlap between payoff matrix A and regime operator B under
+the empirical type second moment S. Returns 0 when the two are orthogonal in
+the weighted metric.
+"""
+function weighted_regime_overlap(A::AbstractMatrix, B::AbstractMatrix,
+                                 agent_types::Vector{Vector{Float64}})::Float64
+    S = type_second_moment(agent_types)
+    denom = sqrt(weighted_matrix_inner(A, A, S) * weighted_matrix_inner(B, B, S))
+    denom <= 0.0 && return 0.0
+    return weighted_matrix_inner(A, B, S) / denom
+end
+
+"""
+    construct_regime_operator(A, agent_types, rng) -> Matrix{Float64}
+
+Draw a symmetric Gaussian regime operator H, remove its weighted projection onto
+A under the empirical second moment of realized types, then normalize the
+result to unit Frobenius norm. The sign of x_i' B x_j determines the latent
+regime, so only the orientation of B matters.
+"""
+function construct_regime_operator(A::Matrix{Float64},
+                                   agent_types::Vector{Vector{Float64}},
+                                   rng::AbstractRNG)::Matrix{Float64}
+    d = size(A, 1)
+    S = type_second_moment(agent_types)
+    denom = weighted_matrix_inner(A, A, S)
+    denom > 0.0 || error("Weighted overlap denominator must be positive")
+
+    for _ in 1:16
+        G = randn(rng, d, d)
+        H = 0.5 .* (G .+ G')
+        shift = tr(H) / d
+        @inbounds for k in 1:d
+            H[k, k] -= shift
+        end
+
+        α = weighted_matrix_inner(H, A, S) / denom
+        B = H .- α .* A
+        B = 0.5 .* (B .+ B')
+        nrm = norm(B)
+        nrm <= sqrt(eps(Float64)) && continue
+        B ./= nrm
+        return B
+    end
+
+    error("Could not construct a nondegenerate regime operator after repeated draws")
+end
 
 """
     generate_matching_env(d, rho, delta, sigma_eps, agent_types, rng; sigma_x, curve_geo) -> MatchingEnv
@@ -27,7 +103,8 @@ Build the matching environment:
 - Otherwise, for callers that only have realized agent types, fall back to a
   perturbation of a sampled realized type
 - A = M_A'M_A (SPD interaction matrix)
-- B = M_B'M_B (SPD regime matrix)
+- B = symmetric regime operator, orthogonalized against A under the empirical
+  type second moment
 """
 function generate_matching_env(d::Int, rho::Float64, delta::Float64, sigma_eps::Float64,
                                 agent_types::Vector{Vector{Float64}},
@@ -53,10 +130,10 @@ function generate_matching_env(d::Int, rho::Float64, delta::Float64, sigma_eps::
     A_raw = M_A' * M_A
     A = A_raw .* (d / tr(A_raw))
 
-    # SPD regime matrix: B = M_B'M_B, same normalization
-    M_B = randn(rng, d, d)
-    B_raw = M_B' * M_B
-    B = B_raw .* (d / tr(B_raw))
+    # Symmetric regime operator: draw H, then remove its weighted projection
+    # onto A under the realized type distribution. This keeps the regime
+    # boundary weakly aligned with the payoff geometry by construction.
+    B = construct_regime_operator(A, agent_types, rng)
 
     return MatchingEnv(d, rho, c, A, B, delta, sigma_eps)
 end
@@ -159,9 +236,7 @@ function calibrate(env::MatchingEnv,
     q_cal = total / n_samples
     r = R_BASE_FRAC * q_cal
     surplus_scale = q_cal - r
-    fee_rate = COST_LEVEL_MID + 0.5 * params.cost_wedge
-    self_rate = COST_LEVEL_MID - 0.5 * params.cost_wedge
-    phi = fee_rate * surplus_scale
-    c_s = self_rate * surplus_scale
+    phi = params.search_cost_rate * surplus_scale
+    c_s = params.search_cost_rate * surplus_scale
     return CalibrationConstants(q_cal, r, phi, c_s)
 end

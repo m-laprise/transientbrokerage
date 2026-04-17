@@ -6,7 +6,7 @@ Main simulation loop: one period of the model (§9, Steps 0-6).
 Step 0: Current-period match reset
 Step 1: Demand generation and outsourcing decisions
 Step 2: Candidate evaluation (train NNs, self-search, broker allocation, mode selection)
-Step 3: Match formation (sequential acceptance)
+Step 3: Within-period round-based match formation
 Step 4: Learning updates (histories already recorded in Step 3; satisfaction, reputation)
 Step 5: Entry/exit
 Step 6: Recording and measurement
@@ -169,7 +169,7 @@ function step_period!(state::ModelState)
     # Step 4: Learning and state updates
     # ══════════════════════════════════════════════════════════════════════
 
-    # 4.1: Histories already recorded in sequential_match_formation!
+    # 4.1: Histories already recorded during round_match_formation!
 
     # 4.2: Satisfaction update
     update_satisfaction!(agents, accepted, demand_agent_ids, demand_channels, demand_counts, cal, p;

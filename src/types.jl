@@ -272,13 +272,14 @@ end
 # Matching environment and calibration
 # ─────────────────────────────────────────────────────────────────────────────
 
-"""Matching environment: ideal type c, interaction matrix A, regime matrix B, and noise scale."""
+"""Matching environment: ideal type c, SPD interaction matrix A, symmetric regime
+operator B, and noise scale."""
 struct MatchingEnv
     d::Int
     rho::Float64
     c::Vector{Float64}       # ideal type vector
     A::Matrix{Float64}       # SPD interaction matrix (M_A'M_A)
-    B::Matrix{Float64}       # SPD regime matrix (M_B'M_B)
+    B::Matrix{Float64}       # symmetric regime operator, weighted-orthogonalized against A
     delta::Float64            # gain strength
     sigma_eps::Float64        # match output noise SD
 end
@@ -449,8 +450,8 @@ struct ModelParams
     p_rewire::Float64            # rewiring probability (default 0.1)
 
     # Economics
-    omega::Float64               # satisfaction recency weight (default 0.3)
-    cost_wedge::Float64          # broker-minus-self cost wedge on the surplus scale (default 0.10)
+    omega::Float64               # satisfaction recency weight (default 0.2)
+    search_cost_rate::Float64    # shared search-cost rate on the surplus scale (default 0.15)
 
     # Neural network
     eta_lr::Float64              # learning rate (default 0.03)

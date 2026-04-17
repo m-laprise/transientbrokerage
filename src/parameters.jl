@@ -10,11 +10,11 @@ const Q_OFFSET = 1.0
 # Calibration fraction: r = R_BASE_FRAC * q_cal
 const R_BASE_FRAC = 0.60
 
-# Fixed midpoint of the two search-channel costs, expressed as a share of the
-# calibration surplus scale (q_cal - r). The single free parameter is the cost
-# wedge around this midpoint.
-const COST_LEVEL_MID = 0.15
-const COST_WEDGE_BASE = 0.10
+# Shared search-cost rate, expressed as a share of the calibration surplus
+# scale (q_cal - r). Both channels use the same level, but the self-search cost
+# remains per demanded slot while the broker fee remains contingent on realized
+# standard placements.
+const SEARCH_COST_RATE_BASE = 0.15
 
 # Fixed roster target share: broker maintains this fraction of the population
 # on its standing roster.
@@ -50,8 +50,8 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
         :k => 6,
         :p_rewire => 0.1,
         # Economics
-        :omega => 0.3,
-        :cost_wedge => COST_WEDGE_BASE,
+        :omega => 0.2,
+        :search_cost_rate => SEARCH_COST_RATE_BASE,
         # Neural network
         :eta_lr => 0.03,
         :E_init => 200,
@@ -86,7 +86,7 @@ function default_params(; seed::Int = 42, kwargs...)::ModelParams
         defaults[:k],
         defaults[:p_rewire],
         defaults[:omega],
-        defaults[:cost_wedge],
+        defaults[:search_cost_rate],
         defaults[:eta_lr],
         defaults[:E_init],
         defaults[:h_a],
@@ -133,7 +133,7 @@ function validate_params(p::ModelParams)
 
     # Economics
     @assert 0.0 < p.omega < 1.0 "omega must be in (0, 1), got $(p.omega)"
-    @assert 0.0 <= p.cost_wedge <= 2.0 * COST_LEVEL_MID "cost_wedge must be in [0, $(2.0 * COST_LEVEL_MID)], got $(p.cost_wedge)"
+    @assert 0.0 <= p.search_cost_rate <= 1.0 "search_cost_rate must be in [0, 1], got $(p.search_cost_rate)"
 
     # Neural network
     @assert p.eta_lr > 0.0 "eta_lr must be > 0, got $(p.eta_lr)"

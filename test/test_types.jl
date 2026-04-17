@@ -12,7 +12,8 @@ using LinearAlgebra: norm
         @test p.d == 8
         @test p.K == 5
         @test p.p_demand == 0.50
-        @test p.cost_wedge == 0.10
+        @test p.omega == 0.20
+        @test p.search_cost_rate == 0.15
         @test p.n_strangers == 5
         @test p.roster_churn == 0.02
         @test p.network_measure_interval == 20
@@ -38,8 +39,8 @@ using LinearAlgebra: norm
         @test_throws AssertionError default_params(rho=-0.1)
         @test_throws AssertionError default_params(rho=1.5)
         @test_throws AssertionError default_params(K=0)
-        @test_throws AssertionError default_params(cost_wedge=-0.01)
-        @test_throws AssertionError default_params(cost_wedge=0.31)
+        @test_throws AssertionError default_params(search_cost_rate=-0.01)
+        @test_throws AssertionError default_params(search_cost_rate=1.01)
         @test_throws AssertionError default_params(eta=-0.1)
         @test_throws AssertionError default_params(roster_churn=-0.1)
         @test_throws AssertionError default_params(roster_churn=1.1)

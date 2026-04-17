@@ -176,7 +176,7 @@ The deterministic matching function has two components, the first relating to ea
 
 $$f(\mathbf{x}_i, \mathbf{x}_j) = \rho \cdot \frac{1}{2}\!\left[\mathbf{x}_i^\top \mathbf{c} + \mathbf{x}_j^\top \mathbf{c}\right] + (1 - \rho) \cdot g(\mathbf{x}_i, \mathbf{x}_j) \cdot \mathbf{x}_i^\top \mathbf{A} \mathbf{x}_j$$
 
-where $\mathbf{c} \in \mathbb{R}^d$ is an ideal type vector (§1b), $\mathbf{A} \in \mathbb{R}^{d \times d}$ is a symmetric random interaction matrix (§1c), and $g(\mathbf{x}_i, \mathbf{x}_j)$ is a **regime-dependent gain** that modulates the interaction strength (§1c). The gain $g$ depends on a second symmetric random matrix $\mathbf{B}$ that determines whether a pairing is in a high-gain or low-gain regime. Because $\mathbf{A}$ and $\mathbf{B}$ are symmetric, $\mathbf{x}_i^\top \mathbf{A} \mathbf{x}_j = \mathbf{x}_j^\top \mathbf{A} \mathbf{x}_i$ and $g(\mathbf{x}_i, \mathbf{x}_j) = g(\mathbf{x}_j, \mathbf{x}_i)$, so $f(\mathbf{x}_i, \mathbf{x}_j) = f(\mathbf{x}_j, \mathbf{x}_i)$.
+where $\mathbf{c} \in \mathbb{R}^d$ is an ideal type vector (§1b), $\mathbf{A} \in \mathbb{R}^{d \times d}$ is a symmetric random interaction matrix (§1c), and $g(\mathbf{x}_i, \mathbf{x}_j)$ is a **regime-dependent gain** that modulates the interaction strength (§1c). The gain $g$ depends on a second symmetric operator $\mathbf{B}$ that determines whether a pairing is in a high-gain or low-gain regime. Because $\mathbf{A}$ and $\mathbf{B}$ are symmetric, $\mathbf{x}_i^\top \mathbf{A} \mathbf{x}_j = \mathbf{x}_j^\top \mathbf{A} \mathbf{x}_i$ and $g(\mathbf{x}_i, \mathbf{x}_j) = g(\mathbf{x}_j, \mathbf{x}_i)$, so $f(\mathbf{x}_i, \mathbf{x}_j) = f(\mathbf{x}_j, \mathbf{x}_i)$.
 
 The mixing weight $\rho$ (§1d) controls how much the general quality component contributes to total match output compared to the interaction component.
 
@@ -196,11 +196,25 @@ The match-specific interaction combines a base interaction with a regime-depende
 
 Because $\mathbf{A}$ is symmetric, $\mathbf{x}_i^\top \mathbf{A} \mathbf{x}_j = \mathbf{x}_j^\top \mathbf{A} \mathbf{x}_i$, so the base interaction is symmetric without explicit symmetrization. Positive definiteness ensures $\mathbf{A}$ has full rank and well-conditioned eigenvalues, so the interaction structure spans all $d$ dimensions without degenerate directions. The interaction depends on all $d(d+1)/2$ distinct cross-dimensional products $x_{i,k} \cdot x_{j,l}$ (for $k \leq l$).
 
-**Regime-dependent gain.** A second SPD matrix $\mathbf{B} \in \mathbb{R}^{d \times d}$ (independent of $\mathbf{A}$, same construction including trace normalization) determines a gain that amplifies or attenuates the base interaction:
+**Regime-dependent gain.** A second symmetric matrix $\mathbf{B} \in \mathbb{R}^{d \times d}$ determines a gain that amplifies or attenuates the base interaction:
 
 $$g(\mathbf{x}_i, \mathbf{x}_j) = 1 + \delta \cdot \text{sign}(\mathbf{x}_i^\top \mathbf{B} \mathbf{x}_j)$$
 
 where $\delta \in (0, 1)$ (default 0.5) controls the gain strength. Because $\mathbf{B}$ is symmetric, $g(\mathbf{x}_i, \mathbf{x}_j) = g(\mathbf{x}_j, \mathbf{x}_i)$. Pairings divide into two regimes: when $\mathbf{x}_i^\top \mathbf{B} \mathbf{x}_j > 0$, the gain is $(1 + \delta)$ (high-gain regime); when $\mathbf{x}_i^\top \mathbf{B} \mathbf{x}_j < 0$, the gain is $(1 - \delta)$ (low-gain regime). At $\delta = 0.5$, the high-gain interaction is three times the low-gain interaction.
+
+The implementation uses the approved `cov_full` construction. Let
+
+$$\mathbf{S}_x = \frac{1}{N} \sum_{i=1}^N \mathbf{x}_i \mathbf{x}_i^\top$$
+
+be the empirical second-moment matrix of realized agent types. First draw a symmetric Gaussian matrix $\mathbf{H}$ and recenter it to zero trace, then remove its weighted projection onto $\mathbf{A}$ under the inner product
+
+$$\langle \mathbf{M}, \mathbf{N} \rangle_{\mathbf{S}_x} = \operatorname{tr}(\mathbf{S}_x \mathbf{M} \mathbf{S}_x \mathbf{N}).$$
+
+Specifically,
+
+$$\mathbf{B}_{\text{raw}} = \mathbf{H} - \frac{\operatorname{tr}(\mathbf{S}_x \mathbf{H} \mathbf{S}_x \mathbf{A})}{\operatorname{tr}(\mathbf{S}_x \mathbf{A} \mathbf{S}_x \mathbf{A})} \mathbf{A}, \qquad \mathbf{B} = \frac{\mathbf{B}_{\text{raw}}}{\lVert \mathbf{B}_{\text{raw}} \rVert_F}.$$
+
+This construction makes $\mathbf{B}$ weighted-orthogonal to $\mathbf{A}$ under the realized type distribution, $\operatorname{tr}(\mathbf{S}_x \mathbf{B} \mathbf{S}_x \mathbf{A}) = 0$, while preserving symmetry. $\mathbf{B}$ is generally indefinite, not SPD. This is intentional: only the sign of $\mathbf{x}_i^\top \mathbf{B} \mathbf{x}_j$ matters for regime assignment, so the orientation of the separating operator matters, not positive definiteness or trace normalization.
 
 The gain modulates the *strength* of the base interaction without changing its sign. Among pairings with similar base interactions $\mathbf{x}_i^\top \mathbf{A} \mathbf{x}_j$, those in the high-gain regime are worth substantially more than those in the low-gain regime. This difference is the source of the broker's informational advantage (§1e).
 
@@ -212,7 +226,7 @@ The gain modulates the *strength* of the base interaction without changing its s
 
 - **$\delta$ (gain strength).** Controls the magnitude of the regime effect. At $\delta = 0$, the gain is 1 for all pairings and the DGP reduces to a simple interaction without regimes. At $\delta > 0$, the true interaction results from a mixture of two regimes. Larger $\delta$ produces a larger gap between high-gain and low-gain pairings, making the regime more consequential for match rankings.
 
-- **$\mathbf{A}$ and $\mathbf{B}$ (interaction and regime matrices).** $\mathbf{A}$ determines the base interaction structure; $\mathbf{B}$ determines the regime boundary. Both are symmetric positive definite $d \times d$ matrices drawn independently at initialization. For a fixed agent $i$, the base interaction $\mathbf{x}_i^\top \mathbf{A} \mathbf{x}_j = \mathbf{a}_i^\top \mathbf{x}_j$ (where $\mathbf{a}_i = \mathbf{A} \mathbf{x}_i$) is linear in $\mathbf{x}_j$. The regime boundary ($\mathbf{b}_i^\top \mathbf{x}_j = 0$, where $\mathbf{b}_i = \mathbf{B} \mathbf{x}_i$) is along a *different direction* than the interaction.
+- **$\mathbf{A}$ and $\mathbf{B}$ (interaction and regime operators).** $\mathbf{A}$ determines the base interaction structure; $\mathbf{B}$ determines the regime boundary. $\mathbf{A}$ is SPD. $\mathbf{B}$ is symmetric and constructed to be weighted-orthogonal to $\mathbf{A}$ under the realized type second moment $\mathbf{S}_x$. For a fixed agent $i$, the base interaction $\mathbf{x}_i^\top \mathbf{A} \mathbf{x}_j = \mathbf{a}_i^\top \mathbf{x}_j$ (where $\mathbf{a}_i = \mathbf{A} \mathbf{x}_i$) is linear in $\mathbf{x}_j$. The regime boundary ($\mathbf{b}_i^\top \mathbf{x}_j = 0$, where $\mathbf{b}_i = \mathbf{B} \mathbf{x}_i$) is forced away from the payoff direction in the weighted geometry induced by realized types, reducing accidental alignment between payoff ranking and regime assignment.
 
 - **$\sigma_\varepsilon$ (noise scale).** The match-level noise $\sigma_\varepsilon = 0.10$ should be interpreted relative to the actual variance of $f$, which depends on the parameter configuration. The typical magnitude of dot products on the unit sphere in $\mathbb{R}^d$ is $O(1/\sqrt{d})$. The effective signal-to-noise ratio should be measured empirically at initialization.
 
@@ -328,18 +342,18 @@ When the broker proposes a match, it applies the constraint using its own predic
 
 #### 3c. Search costs
 
-The model includes two channel frictions with an intentional asymmetry. **Self-search** incurs a per-demand-slot search-effort cost $c_s$: each slot the agent attempts to fill through self-search bears that cost whether or not it is successfully matched. **Standard brokerage** instead incurs a contingent placement fee $\phi$: the fee is paid only on brokered matches that actually clear. Rather than calibrating the broker fee and self-search cost separately, the model uses a single **cost wedge** parameter $\Delta_c$ on the surplus scale $(\bar{q}_{\text{cal}} - r)$ and derives both channel costs from it:
+The model includes two channel frictions with an intentional asymmetry. **Self-search** incurs a per-demand-slot search-effort cost $c_s$: each slot the agent attempts to fill through self-search bears that cost whether or not it is successfully matched. **Standard brokerage** instead incurs a contingent placement fee $\phi$: the fee is paid only on brokered matches that actually clear. The two channels share a single **search-cost rate** $\lambda_c$ on the surplus scale $(\bar{q}_{\text{cal}} - r)$:
 
 $$
-\phi = (0.15 + \Delta_c / 2)\cdot(\bar{q}_{\text{cal}} - r), \qquad
-c_s = (0.15 - \Delta_c / 2)\cdot(\bar{q}_{\text{cal}} - r).
+\phi = \lambda_c \cdot (\bar{q}_{\text{cal}} - r), \qquad
+c_s = \lambda_c \cdot (\bar{q}_{\text{cal}} - r).
 $$
 
-The midpoint `0.15` is fixed, so the average channel cost is held constant while $\Delta_c$ controls the economically relevant difference $\phi - c_s$. At $\Delta_c = 0$, both frictions have the same scale. At the baseline $\Delta_c = 0.10$, the model uses $\phi = 0.20\cdot(\bar{q}_{\text{cal}} - r)$ and $c_s = 0.10\cdot(\bar{q}_{\text{cal}} - r)$. Larger $\Delta_c$ makes brokerage more expensive relative to self-search; at the upper bound $\Delta_c = 0.30$, self-search is free and the broker fee is $0.30\cdot(\bar{q}_{\text{cal}} - r)$.
+At the baseline $\lambda_c = 0.15$, both frictions have the same level, $0.15\cdot(\bar{q}_{\text{cal}} - r)$. The channels still differ economically because the payment timing differs: self-search pays this cost on each demanded slot, while brokerage pays it only on successful standard placements.
 
 The two frictions are independent of realized match quality. The self-search cost $c_s$ is charged on each demanded slot routed through self-search, whether or not that slot is filled. The broker fee $\phi$ is charged on each successful **standard** brokered placement. Under principal mode (§12), no $\phi$ is charged to the demander because the broker is no longer acting as a pure intermediary.
 
-An economically important asymmetry in the illustrative markets is **search-risk transfer**. Self-search typically requires the agent to incur time, attention, or internal business-development costs for each sought transaction slot whether or not the search succeeds: calling dealers, screening counterparties, traveling to trade events, preparing offers, or canvassing foreign buyers. By contrast, broker compensation is often at least partly contingent on success: a broker or intermediary is usually paid when a transaction clears, not merely for having searched. In that sense, outsourcing shifts part of the risk of failed search from the agent to the intermediary. This creates a motive for brokerage that is distinct from pure informational superiority. Even when the broker and the agent were equally good at ranking counterparties, the broker could still be valuable by absorbing failed-search risk.
+An economically important asymmetry in the illustrative markets is **search-risk transfer**. Self-search typically requires the agent to incur time, attention, or internal business-development costs for each sought transaction slot whether or not the search succeeds: calling dealers, screening counterparties, traveling to trade events, preparing offers, or canvassing foreign buyers. By contrast, broker compensation is often at least partly contingent on success: a broker or intermediary is usually paid when a transaction clears, not merely for having searched. In that sense, outsourcing shifts part of the risk of failed search from the agent to the intermediary. This creates a motive for brokerage that is distinct from pure informational superiority. Even when the broker and the agent faced the same cost level $\lambda_c$, the broker could still be valuable by absorbing failed-search risk.
 
 ### 4. Network Structure and Turnover
 
@@ -429,7 +443,7 @@ A **calibration reference** $\bar{q}_{\text{cal}} = E[q]$ is computed once at in
 
 Each agent $i$ maintains a satisfaction index $s_{i,c}^t$ for each search channel $c \in \{\text{self}, \text{broker}\}$. These scores summarize past matching outcomes and drive the outsourcing decision.
 
-The index is an exponentially weighted moving average (recency weight $\omega = 0.3$) of realized match value, net of search costs:
+The index is an exponentially weighted moving average (recency weight $\omega = 0.2$) of realized match value, net of search costs:
 
 $$s_{i,c}^{t+1} = (1 - \omega)\,s_{i,c}^t + \omega \cdot \tilde{q}$$
 
@@ -443,6 +457,8 @@ where $\tilde{q}$ is the satisfaction input for the period. The averaging unit i
 
 This implies an intentional asymmetry in total-failure episodes. If a brokered batch fails completely, then $\tilde{q}=0$ and broker satisfaction decays toward zero. If a self-search batch fails completely, then $\tilde{q}=-c_s$ because the per-slot search effort was paid despite filling no slot. Satisfaction indices are not floored: they can go negative. The EWMA's recency weighting ensures recovery from negative values within a few good observations.
 
+Under the approved simplification, $s_{i,\text{self}}^t$ is interpreted as the reduced-form value of the entire internal-search channel. It summarizes realized self-search outcomes, including cases where the agent reused known partners directly, rather than separating out a distinct contemporaneous "known partners" score at decision time.
+
 **Initialization from seed data.** At initialization, each agent's self-satisfaction is set to the mean of its seed match outcomes (§11c, step I.10), not to an arbitrary constant. Each agent's broker-satisfaction is set to the broker's seed-data reputation (§6c). This grounds the initial outsourcing decision in actual data: agents with good neighbors start with high self-satisfaction and are harder for the broker to recruit, while agents with poor neighbors are more open to outsourcing.
 
 **Fresh entrants.** New agents entering via turnover (§4) initialize self-satisfaction as the mean of their new neighbors' self-satisfaction (word-of-mouth: the entrant inherits the local opinion about self-search quality). Broker-satisfaction is set to the current broker reputation (the market's current opinion). The `tried_broker` flag is false, so the entrant uses broker reputation for its first outsourcing decision.
@@ -451,15 +467,14 @@ This implies an intentional asymmetry in total-failure episodes. If a brokered b
 
 #### 6b. Decision rule
 
-Each period, an agent with $d_i$ demand slots compares three scores:
+Each period, an agent with $d_i$ demand slots compares two scores:
 
-- **$\text{score}_{\text{self}}$** $= s_{i,\text{self}}^t$: the EWMA satisfaction from past self-search outcomes.
-- **$\text{score}_{\text{known}}$**: the net value of directly using the agent's best known partners under the self-search channel. Computed as: sort all neighbors $j$ in $G$ that have capacity and a known `partner_mean`, take the top $d_i$ values, average them using denominator $d_i$ (so missing slots dilute the score), and subtract the per-slot self-search cost $c_s$. This preserves the same slot-weighted scale as §6a: if the agent needs 3 slots but only knows 1 good partner, the missing slots dilute the average.
+- **$\text{score}_{\text{self}}$** $= s_{i,\text{self}}^t$: the EWMA satisfaction from past self-search outcomes. This is a reduced-form internal-search score and is interpreted as already incorporating the value of exploiting known partners under the self-search channel.
 - **$\text{score}_{\text{broker}}$** $= s_{i,\text{broker}}^t$ if the agent has tried the broker, otherwise the broker's reputation $\text{rep}_b^t$.
 
-The agent outsources if $\text{score}_{\text{broker}} > \max(\text{score}_{\text{self}}, \text{score}_{\text{known}})$; it self-searches if $\text{score}_{\text{broker}} < \max(\text{score}_{\text{self}}, \text{score}_{\text{known}})$. At the boundary $\text{score}_{\text{broker}} = \max(\text{score}_{\text{self}}, \text{score}_{\text{known}})$, the channel is chosen by a uniform coin flip between self-search and broker (a tie between $\text{score}_{\text{self}}$ and $\text{score}_{\text{known}}$ alone does not require resolution, as both map to the self-search channel).
+The agent outsources if $\text{score}_{\text{broker}} > \text{score}_{\text{self}}$; it self-searches if $\text{score}_{\text{broker}} < \text{score}_{\text{self}}$. At the boundary $\text{score}_{\text{broker}} = \text{score}_{\text{self}}$, the channel is chosen by a uniform coin flip between self-search and broker.
 
-The $\text{score}_{\text{known}}$ term ensures that agents who have discovered good partners (including through prior broker introductions) recognize they can reach those partners directly, but must still bear the per-slot cost of doing so. The broker must offer value beyond what the agent's known partners provide: either finding better counterparties, filling demand slots that known partners cannot, or absorbing failed-search risk that self-search leaves with the agent.
+This simplification treats the self-search channel as a single reduced-form outside option. Agents do not separately compute a contemporaneous "best known partners" score at decision time; instead, the value of having discovered good partners is assumed to be reflected over time in realized self-search outcomes and therefore in $s_{i,\text{self}}^t$.
 
 The search-risk-transfer asymmetry sharpens this comparison. Self-search exposes the agent to the risk of paying for effort on requested slots that yield no placement, whereas standard brokerage shifts more of that downside onto the intermediary because compensation is tied more closely to successful matching. As a result, outsourcing can be attractive not only because the broker has better information or broader access, but also because it converts some search cost from a non-contingent expenditure into a contingent payment. This mechanism is especially relevant for agents facing uncertain fill rates, sparse networks, or highly lumpy demand.
 
@@ -517,11 +532,11 @@ At the start of the simulation, the state of the world must be initialized.
 > I.1. &emsp;Generate random frequencies $f_k$ and phases $\theta_k$ for the sinusoidal curve (§0).
 > I.2. &emsp;Draw $N$ agent types: each at a random position $t_i \sim U[0,1]$ on the curve, perturbed by noise, and projected to the unit sphere.
 > I.3. &emsp;Draw ideal type $\mathbf{c}$ (perturbation of a random curve position).
-> I.4. &emsp;Draw SPD interaction matrix $\mathbf{A} = \mathbf{M}_A^\top \mathbf{M}_A \cdot (d / \text{tr}(\mathbf{M}_A^\top \mathbf{M}_A))$ and SPD regime matrix $\mathbf{B}$ (same construction), where $\mathbf{M}_A, \mathbf{M}_B \in \mathbb{R}^{d \times d}$ have iid $N(0,1)$ entries. Trace normalization ensures unit-scale bilinear forms. Drawn independently.
+> I.4. &emsp;Draw SPD interaction matrix $\mathbf{A} = \mathbf{M}_A^\top \mathbf{M}_A \cdot (d / \text{tr}(\mathbf{M}_A^\top \mathbf{M}_A))$, where $\mathbf{M}_A \in \mathbb{R}^{d \times d}$ has iid $N(0,1)$ entries. Compute the empirical type second moment $\mathbf{S}_x = N^{-1} \sum_i \mathbf{x}_i \mathbf{x}_i^\top$. Then draw a symmetric Gaussian matrix $\mathbf{H}$, recenter it to zero trace, remove its weighted projection onto $\mathbf{A}$ under $\langle \mathbf{M}, \mathbf{N} \rangle_{\mathbf{S}_x} = \operatorname{tr}(\mathbf{S}_x \mathbf{M} \mathbf{S}_x \mathbf{N})$, and normalize the result to unit Frobenius norm: $\mathbf{B}_{\text{raw}} = \mathbf{H} - \frac{\operatorname{tr}(\mathbf{S}_x \mathbf{H} \mathbf{S}_x \mathbf{A})}{\operatorname{tr}(\mathbf{S}_x \mathbf{A} \mathbf{S}_x \mathbf{A})} \mathbf{A}$, $\mathbf{B} = \mathbf{B}_{\text{raw}} / \lVert \mathbf{B}_{\text{raw}} \rVert_F$. This makes the regime operator symmetric and weighted-orthogonal to $\mathbf{A}$ under the realized type distribution.
 >
 > *Calibration.*
 > I.5. &emsp;Compute $\bar{q}_{\text{cal}} = E[q]$ from 10,000 random agent pairs $(i, j)$ with $i, j$ drawn independently and uniformly from $\{1, \ldots, N\}$ (self-pairs $i = j$ are not filtered; at $N = 1000$ the resulting bias is $O(1/N)$ and negligible). Set $r \leftarrow 0.60 \cdot \bar{q}_{\text{cal}}$.
-> I.6. &emsp;Set channel costs from the cost wedge $\Delta_c$: $\phi \leftarrow (0.15 + \Delta_c / 2)\cdot(\bar{q}_{\text{cal}} - r)$ and $c_s \leftarrow (0.15 - \Delta_c / 2)\cdot(\bar{q}_{\text{cal}} - r)$ (§11b).
+> I.6. &emsp;Set channel costs from the shared search-cost rate $\lambda_c$: $\phi \leftarrow \lambda_c \cdot (\bar{q}_{\text{cal}} - r)$ and $c_s \leftarrow \lambda_c \cdot (\bar{q}_{\text{cal}} - r)$ (§11b).
 >
 > *Network.*
 > I.7. &emsp;Build $G$: Watts–Strogatz with $N$ nodes, degree $k$, rewiring $p_{\text{rewire}}$. Node order is random (non-assortative initial network).
@@ -549,8 +564,8 @@ Each period proceeds through six steps (plus recording).
 > **1. DEMAND GENERATION AND OUTSOURCING DECISIONS**
 > 1.1. &emsp;For each agent $i$: draw demand count $d_i \sim \text{Binomial}(K,\; p_{\text{demand}})$.
 > 1.2. &emsp;For each agent $i$ with $d_i > 0$:
-> &emsp;&emsp;Compute $\text{score}_{\text{self}}, \text{score}_{\text{known}}, \text{score}_{\text{broker}}$ as in §6b.
-> &emsp;&emsp;$\text{decision}_i \leftarrow \text{broker}$ if $\text{score}_{\text{broker}} > \max(\text{score}_{\text{self}},\; \text{score}_{\text{known}})$; else $\text{self}$. Ties broken uniformly at random. (Channel choice applies to all $d_i$ slots.)
+> &emsp;&emsp;Compute $\text{score}_{\text{self}}, \text{score}_{\text{broker}}$ as in §6b.
+> &emsp;&emsp;$\text{decision}_i \leftarrow \text{broker}$ if $\text{score}_{\text{broker}} > \text{score}_{\text{self}}$; else $\text{self}$. Ties broken uniformly at random. (Channel choice applies to all $d_i$ slots.)
 > 1.3. &emsp;Form the current broker client set $D^t = \{i : \text{decision}_i = \text{broker}\}$. Synchronize broker-agent edges in $G$ so the broker is connected to the standing roster and all current clients. Output: for each demander, channel choice and demand count $d_i$. Broker client list $D^t$ with per-agent demand counts. Current standing roster $\text{Roster}^t$.
 >
 > **2. CANDIDATE EVALUATION**
@@ -599,7 +614,7 @@ Each period proceeds through six steps (plus recording).
 > 3.5.2. &emsp;For each accepted match $(i, j)$:
 > &emsp;&emsp;Realize output: $q_{ij} = Q + f(\mathbf{x}_i, \mathbf{x}_j) + \varepsilon_{ij}$.
 > &emsp;&emsp;Update histories immediately: add $(\mathbf{x}_j, q_{ij})$ to $\mathcal{H}_{i}$; add $(\mathbf{x}_i, q_{ij})$ to $\mathcal{H}_{j}$; if brokered, add $(\mathbf{x}_i, \mathbf{x}_j, q_{ij})$ to $\mathcal{H}_b$.
-> &emsp;&emsp;Add match to active match lists: append $j$ to $M_i^{t+1}$; append $i$ to $M_j^{t+1}$.
+> &emsp;&emsp;Add match to current-period match lists: append $j$ to $M_i^t$; append $i$ to $M_j^t$.
 > &emsp;&emsp;If standard (non-principal): add edge $(i, j)$ to $G$ if not already present.
 > &emsp;&emsp;Record channel, realized output, predictions used, and whether $j$ was already a direct neighbor of $i$ before the round finalized.
 > &emsp;&emsp;Set $u_i^\ell \leftarrow u_i^{\ell-1} - 1$.
@@ -630,8 +645,8 @@ Each period proceeds through six steps (plus recording).
 > &emsp;&emsp;&emsp;Replace with entrant $i'$: fresh type from curve + noise; empty histories; added to $G$ with $\lfloor k/2 \rfloor$ edges to type-similar agents ($\propto \exp(-\|\mathbf{x}_{i'} - \mathbf{x}_j\|^2)$). Self-satisfaction $\leftarrow$ mean of new neighbors' self-satisfaction; broker-satisfaction $\leftarrow$ current broker reputation (§6a).
 >
 > **6. RECORDING AND MEASUREMENT**
-> 6.1. &emsp;Record period aggregates: match quality by channel; outsourcing rate (outsourced slots / total demand slots); roster size.
-> 6.2. &emsp;Record broker state: reputation $\text{rep}^t$; roster size; $|\mathcal{H}_b^t|$.
+> 6.1. &emsp;Record period aggregates: match quality by channel; outsourcing rate (outsourced slots / total demand slots); mean self- and broker-satisfaction across agents; available-agent count.
+> 6.2. &emsp;Record broker state: reputation $\text{rep}^t$; standing roster size; broker access size; $|\mathcal{H}_b^t|$.
 > 6.3. &emsp;Compute per-agent averaged holdout prediction quality ($R^2$, bias, rank correlation) for broker and agents (§10), excluding fresh entrants with no match history. This runs every period because the cost is small (≈4,000 NN forward passes) and finer time resolution benefits the headline figures that track the informational gap over time.
 > 6.4. &emsp;Every $M$ periods (default $M = 20$): compute network measures on $G$ (§10): betweenness centrality $C_B(b)$; Burt's constraint (broker's ego network); effective size (broker's ego network). The $M$-period cadence reflects the cost of Brandes BFS on the full graph, not a conceptual alignment with holdout measurement.
 
@@ -692,11 +707,13 @@ The broker-agent gap in holdout $R^2$ is the purest measure of the informational
 
 **Match quality by channel.** Average realized match output $\bar{q}_c^t$ per period, where $c \in \{\text{self}, \text{brokered}\}$.
 
+**Mean channel satisfaction.** Cross-agent means of the two satisfaction states, $N^{-1}\sum_i s_{i,\text{self}}^t$ and $N^{-1}\sum_i s_{i,\text{broker}}^t$. These summarize how the market's recent realized experience with each channel evolves over time.
+
 **Outsourcing rate.** Fraction of demand slots that are outsourced to the broker: outsourced slots / total demand slots. A demander-level outsourcing share (fraction of demanders choosing the broker channel) is retained as a secondary diagnostic in the code, but the slot share is the primary quantity because the model's demand object is the slot.
 
-**Standing roster size.** Number of agents currently on the broker's standing roster (§7). In the recorded period outputs, this is the maintained roster size after the start-of-period refresh and therefore typically equals the target $R^*$. Internally, the roster can dip below target immediately after exits and is replenished at the next period start.
+**Standing roster size.** Number of agents currently on the broker's standing roster (§7). In the recorded period outputs, this is measured after the start-of-period refresh and before Step 5 entry/exit, so it typically equals the target $R^*$. Internally, the roster can dip below target immediately after exits and is replenished at the next period start.
 
-**Broker access size.** Number of distinct agents in the broker's within-period access set, $|A^t| = |\text{Roster}^t \cup D^t|$, where $D^t$ is the set of current-period broker clients. This is the meaningful quantity for how many agents the broker can search over in period $t$. Because some current clients can already be on the standing roster, broker access size is generally smaller than standing roster size plus the number of current broker clients.
+**Broker access size.** Number of distinct agents in the broker's within-period access set, $|A^t| = |\text{Roster}^t \cup D^t|$, where $D^t$ is the set of current-period broker clients. In the recorded period outputs, this is measured after current outsourcing decisions have formed $D^t$ and before Step 5 entry/exit. This is the meaningful quantity for how many agents the broker can search over in period $t$. Because some current clients can already be on the standing roster, broker access size is generally smaller than standing roster size plus the number of current broker clients.
 
 **Available agents.** Number of agents with spare capacity at the time metrics are recorded, equivalently those with $|M_i^t| < K$. This is a capacity-based availability count, not merely a count of fully idle agents.
 
@@ -715,7 +732,7 @@ Parameters are organized into four categories reflecting their role in the analy
 | $d$ | Type dimensionality | 8 | Fixed |
 | $k$ | Network mean degree | 6 | Watts-Strogatz ring lattice degree |
 | $p_{\text{rewire}}$ | Network rewiring probability | 0.1 | Watts-Strogatz rewiring |
-| $\omega$ | Satisfaction recency weight (§6a) | 0.3 | EWMA weight |
+| $\omega$ | Satisfaction recency weight (§6a) | 0.2 | EWMA weight |
 | $p_{\text{demand}}$ | Per-slot demand probability | 0.50 | All $K$ slots are open at period start; $d_i \sim \text{Binomial}(K, p_{\text{demand}})$ |
 | $n_s$ | Max strangers in self-search | 5 | Sampled uniformly from non-neighbors with capacity |
 | $\sigma_x$ | Type noise scale | 0.5 | Expected distance from agent to curve position |
@@ -734,7 +751,7 @@ Parameters are organized into four categories reflecting their role in the analy
 | $b_2^{(0)}$ | Initial output bias | $Q$ | Untrained networks predict population-mean quality rather than zero |
 | $\sigma_\varepsilon$ | Match output noise SD | 0.10 | |
 | $\delta$ | Regime gain strength (§1c) | 0.5 | $\delta = 0$: no regime effect; $\delta = 1$: maximum gain contrast |
-| $\Delta_c$ | Broker-minus-self cost wedge | 0.10 | $\phi = (0.15 + \Delta_c/2)\cdot(\bar{q}_{\text{cal}} - r)$, $c_s = (0.15 - \Delta_c/2)\cdot(\bar{q}_{\text{cal}} - r)$; $c_s$ is a self-search cost per demanded slot, $\phi$ a successful standard-placement fee; §11b |
+| $\lambda_c$ | Shared search-cost rate | 0.15 | $\phi = \lambda_c\cdot(\bar{q}_{\text{cal}} - r)$, $c_s = \lambda_c\cdot(\bar{q}_{\text{cal}} - r)$; $c_s$ is a self-search cost per demanded slot, $\phi$ a successful standard-placement fee; §11b |
 | $p_{\text{roster}}$ | Standing-roster churn probability (§7) | 0.02 | Each roster member is dropped independently at the start of a period, before uniform replenishment back to $R^*$ |
 
 **Phase diagram axes.** Primary parameters of interest.
@@ -778,14 +795,14 @@ The activity parameters $p_{\text{demand}}$ and $K$ jointly determine the market
 
 #### 11b. Search-cost calibration
 
-The two channel costs are calibrated jointly from the average match surplus scale $(\bar{q}_{\text{cal}} - r)$ using a single cost-wedge parameter $\Delta_c$:
+The two channel costs are calibrated jointly from the average match surplus scale $(\bar{q}_{\text{cal}} - r)$ using a shared search-cost rate $\lambda_c$:
 
 $$
-\phi = (0.15 + \Delta_c / 2)\cdot(\bar{q}_{\text{cal}} - r), \qquad
-c_s = (0.15 - \Delta_c / 2)\cdot(\bar{q}_{\text{cal}} - r).
+\phi = \lambda_c \cdot (\bar{q}_{\text{cal}} - r), \qquad
+c_s = \lambda_c \cdot (\bar{q}_{\text{cal}} - r).
 $$
 
-This keeps the average friction scale fixed at $0.15\cdot(\bar{q}_{\text{cal}} - r)$ while letting the model vary the difference $\phi - c_s$ that matters directly for the outsourcing decision. In the default $\Delta_c = 0.10$, brokered search is more expensive than self-search but not prohibitively so. The two quantities are computed once at initialization and held constant thereafter, but they enter realized payoffs asymmetrically: $c_s$ is charged on each self-search demand slot regardless of fill, whereas $\phi$ is charged only on successful standard brokered placements.
+In the default $\lambda_c = 0.15$, both channels use the same friction level. The two quantities are computed once at initialization and held constant thereafter, but they enter realized payoffs asymmetrically: $c_s$ is charged on each self-search demand slot regardless of fill, whereas $\phi$ is charged only on successful standard brokered placements.
 
 #### 11c. Initial conditions
 

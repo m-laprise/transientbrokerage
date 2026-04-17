@@ -231,10 +231,25 @@ using StableRNGs: StableRNG
         agent.tried_broker = true
         @test outsourcing_decision(agent, state8.agents, G8, bn8, 0.0, 1, state8.cal.c_s, K8, StableRNG(1)) == :self
 
-        # Reverse: broker satisfaction much higher than self AND known partners
+        # Reverse: broker satisfaction much higher than self
         agent.satisfaction_self = 1.0
-        agent.satisfaction_broker = 50.0  # much higher than any known partner
+        agent.satisfaction_broker = 50.0
         @test outsourcing_decision(agent, state8.agents, G8, bn8, 0.0, 1, state8.cal.c_s, K8, StableRNG(1)) == :broker
+    end
+
+    @testset "Outsourcing ignores known-partner means as a separate hurdle" begin
+        state8b = initialize_model(p)
+        G8b = state8b.G; bn8b = state8b.broker.node_id; K8b = p.K
+        agent = state8b.agents[1]
+        nbr = first(filter(n -> n != bn8b, neighbors(G8b, agent.id)))
+
+        agent.satisfaction_self = 1.0
+        agent.satisfaction_broker = 10.0
+        agent.tried_broker = true
+        agent.partner_sum[nbr] = 100.0
+        agent.partner_count[nbr] = 1
+
+        @test outsourcing_decision(agent, state8b.agents, G8b, bn8b, 0.0, 1, state8b.cal.c_s, K8b, StableRNG(1)) == :broker
     end
 
     @testset "Untried broker uses reputation" begin
@@ -243,8 +258,6 @@ using StableRNGs: StableRNG
         agent = state9.agents[1]
         agent.tried_broker = false
         agent.satisfaction_self = 0.0
-        # Clear all partner means so score_known = -Inf
-        fill!(agent.partner_count, 0)
         # High broker reputation should make agent outsource
         @test outsourcing_decision(agent, state9.agents, G9, bn9, 10.0, 1, state9.cal.c_s, K9, StableRNG(1)) == :broker
     end

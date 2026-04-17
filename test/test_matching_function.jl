@@ -1,7 +1,7 @@
 using Test
 using TransientBrokerage
 using StableRNGs: StableRNG
-using LinearAlgebra: dot, norm, normalize, eigvals
+using LinearAlgebra: dot, norm, normalize, eigvals, issymmetric
 
 @testset "Matching Function" begin
     d = 8
@@ -22,7 +22,7 @@ using LinearAlgebra: dot, norm, normalize, eigvals
         @test size(env.B) == (d, d)
     end
 
-    @testset "curve_geo path decouples c from realized agent draws" begin
+    @testset "curve_geo path decouples c and A, while B depends on realized types" begin
         rng_geo = StableRNG(12)
         geo = TransientBrokerage.generate_curve_geometry(d, d, rng_geo)
         rng_types = StableRNG(13)
@@ -34,16 +34,20 @@ using LinearAlgebra: dot, norm, normalize, eigvals
 
         @test env_1.c == env_2.c
         @test env_1.A == env_2.A
-        @test env_1.B == env_2.B
+        @test env_1.B != env_2.B
+        @test TransientBrokerage.weighted_regime_overlap(env_1.A, env_1.B, types_1) ≈ 0.0 atol=1e-12
+        @test TransientBrokerage.weighted_regime_overlap(env_2.A, env_2.B, types_2) ≈ 0.0 atol=1e-12
     end
 
-    @testset "A and B are SPD" begin
+    @testset "A is SPD and B is weighted-orthogonalized" begin
         types = test_agent_types(d, 50, StableRNG(10))
         env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
         @test all(eigvals(env.A) .> 0)
-        @test all(eigvals(env.B) .> 0)
-        @test env.A ≈ env.A'
-        @test env.B ≈ env.B'
+        @test issymmetric(env.A)
+        @test issymmetric(env.B)
+        @test minimum(eigvals(env.B)) < 0.0
+        @test maximum(eigvals(env.B)) > 0.0
+        @test TransientBrokerage.weighted_regime_overlap(env.A, env.B, types) ≈ 0.0 atol=1e-12
     end
 
     @testset "Matching function symmetry: f(x_i, x_j) == f(x_j, x_i)" begin
@@ -158,21 +162,22 @@ using LinearAlgebra: dot, norm, normalize, eigvals
         @test cal.r > 0.0
         @test cal.r ≈ R_BASE_FRAC * cal.q_cal
         @test cal.phi > 0.0
-        @test cal.phi ≈ (0.15 + 0.5 * p.cost_wedge) * surplus_scale
-        @test cal.c_s ≈ (0.15 - 0.5 * p.cost_wedge) * surplus_scale
-        @test cal.c_s < cal.phi  # self-search cheaper than broker fee
+        @test cal.phi ≈ p.search_cost_rate * surplus_scale
+        @test cal.c_s ≈ p.search_cost_rate * surplus_scale
+        @test cal.c_s ≈ cal.phi
     end
 
-    @testset "Cost-wedge calibration edges behave as intended" begin
+    @testset "Shared-cost calibration responds to the common rate" begin
         types = test_agent_types(d, 100, StableRNG(10))
         env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
 
-        cal_equal = calibrate(env, types, default_params(cost_wedge=0.0), StableRNG(55))
-        @test cal_equal.phi ≈ cal_equal.c_s
+        cal_zero = calibrate(env, types, default_params(search_cost_rate=0.0), StableRNG(55))
+        @test cal_zero.phi ≈ 0.0 atol=1e-12
+        @test cal_zero.c_s ≈ 0.0 atol=1e-12
 
-        cal_max = calibrate(env, types, default_params(cost_wedge=0.30), StableRNG(55))
-        @test cal_max.c_s ≈ 0.0 atol=1e-12
-        @test cal_max.phi > cal_equal.phi
+        cal_high = calibrate(env, types, default_params(search_cost_rate=0.30), StableRNG(55))
+        @test cal_high.phi ≈ cal_high.c_s
+        @test cal_high.phi > cal_zero.phi
     end
 
     @testset "Two regimes produce different match qualities" begin
