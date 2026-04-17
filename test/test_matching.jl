@@ -1,17 +1,11 @@
 using Test
 using TransientBrokerage
-using Graphs: has_edge, neighbors
+using Graphs: has_edge
 using StableRNGs: StableRNG
 
 @testset "Match Formation and Outsourcing" begin
     p = default_params(N=30, T=5, T_burn=1, K=3, seed=42)
     state = initialize_model(p)
-    agents = state.agents
-    broker = state.broker
-    G = state.G
-    cal = state.cal
-    env = state.env
-
     @testset "Round matching falls back within round after rejection" begin
         p_round = default_params(N=12, T=5, T_burn=1, K=1, n_strangers=0, seed=123)
         state_round = initialize_model(p_round)
@@ -35,11 +29,13 @@ using StableRNGs: StableRNG
         agents_r[3].partner_sum[2] = 6.0; agents_r[3].partner_count[2] = 1
         agents_r[4].partner_sum[1] = 3.0; agents_r[4].partner_count[1] = 1
         agents_r[4].partner_sum[2] = 7.0; agents_r[4].partner_count[2] = 1
+        TransientBrokerage.reset_principal_inventory!(state_round.workspace, p_round.N)
 
         accepted = TransientBrokerage.round_match_formation!(
             [1, 2], [:self, :self], [1, 1],
             agents_r, state_round.broker, state_round.env, G_r,
-            p_round, state_round.cal, StableRNG(17)
+            p_round, state_round.cal, StableRNG(17);
+            ws=state_round.workspace
         )
 
         accepted_pairs = Set((m.demander_id, m.counterparty_id) for m in accepted)
@@ -63,11 +59,13 @@ using StableRNGs: StableRNG
         agents_r2[1].partner_sum[3] = 8.0; agents_r2[1].partner_count[3] = 1
         agents_r2[2].partner_sum[1] = 7.0; agents_r2[2].partner_count[1] = 1
         agents_r2[3].partner_sum[1] = 6.0; agents_r2[3].partner_count[1] = 1
+        TransientBrokerage.reset_principal_inventory!(state_round2.workspace, p_round2.N)
 
         accepted = TransientBrokerage.round_match_formation!(
             [1], [:self], [2],
             agents_r2, state_round2.broker, state_round2.env, G_r2,
-            p_round2, state_round2.cal, StableRNG(23)
+            p_round2, state_round2.cal, StableRNG(23);
+            ws=state_round2.workspace
         )
 
         @test length(accepted) == 2
@@ -75,136 +73,29 @@ using StableRNGs: StableRNG
         @test length(state_round2.agents[1].active_matches) == 2
     end
 
-    @testset "Broker round cache matches direct round preferences" begin
-        p_cache = default_params(N=18, T=5, T_burn=1, K=3, n_strangers=0, seed=404)
-        state_cache = initialize_model(p_cache)
-        ws_cache = state_cache.workspace
-        agents_c = state_cache.agents
-
-        empty!(state_cache.broker.roster)
-        union!(state_cache.broker.roster, [5, 6, 7, 8])
-        empty!(state_cache.broker.current_clients)
-        union!(state_cache.broker.current_clients, [1, 3, 4])
-
-        TransientBrokerage.reset_principal_inventory!(ws_cache, p_cache.N)
-        TransientBrokerage.reserve_principal_capacity!(ws_cache, 7, 1)
-        push!(agents_c[6].active_matches, ActiveMatch(9, false, :self))
-
-        demand_agent_ids = [1, 2, 3, 4]
-        demand_channels = [:broker, :self, :broker, :broker]
-        broker_demanders = [1, 3, 4]
-        demander_slots = [1, 0, 2]
-        reserved_capacity = ws_cache.principal_reserved_capacity
-
-        TransientBrokerage.prepare_period_broker_round_cache!(
-            state_cache.broker, demand_agent_ids, demand_channels, agents_c, p_cache;
-            ws=ws_cache, reserved_capacity=reserved_capacity
-        )
-
-        direct_out = ProposedMatch[]
-        direct_counts = Int[]
-        broker_matrix = TransientBrokerage.prepare_broker_round_matrix!(
-            state_cache.broker, broker_demanders, agents_c, p_cache;
-            reserved_capacity=reserved_capacity
-        )
-        TransientBrokerage.append_broker_round_preferences_from_matrix!(
-            direct_out, direct_counts, broker_matrix, broker_demanders,
-            agents_c, p_cache, state_cache.cal.r;
-            demander_slots=demander_slots, reserved_capacity=reserved_capacity
-        )
-
-        cached_out = ProposedMatch[]
-        cached_counts = Int[]
-        TransientBrokerage.append_broker_round_preferences_from_cache!(
-            cached_out, cached_counts, broker_demanders, agents_c,
-            p_cache, state_cache.cal.r;
-            ws=ws_cache, demander_slots=demander_slots,
-            reserved_capacity=reserved_capacity
-        )
-
-        @test cached_counts == direct_counts
-        @test cached_out == direct_out
-    end
-
-    @testset "Sequential formation accepts valid proposals" begin
-        # Seed partner history so counterparties can evaluate
-        for i in 1:10, j in 11:20
-            update_partner_mean!(agents[j], i, 2.0)
-            add_match_edge!(G, i, j)
-        end
-        proposals = [
-            ProposedMatch(1, 15, :self, 2.0, false, NaN, NaN),
-            ProposedMatch(2, 16, :broker, 2.0, false, NaN, NaN),
-        ]
-        rng = StableRNG(77)
-        accepted = sequential_match_formation!(proposals, agents, broker, env, G, p, cal, rng)
-        @test length(accepted) >= 1
-        for m in accepted
-            @test isfinite(m.q_realized)
-            @test 1 <= m.demander_id <= p.N
-            @test 1 <= m.counterparty_id <= p.N
-        end
-    end
-
-    @testset "Sequential formation checks capacity" begin
-        state2 = initialize_model(p)
-        # Fill agent 5's capacity
-        for _ in 1:p.K
-            push!(state2.agents[5].active_matches, ActiveMatch(10, false, :self))
-        end
-        proposals = [ProposedMatch(1, 5, :self, 10.0, false, NaN, NaN)]
-        for j in 1:30
-            update_partner_mean!(state2.agents[5], 1, 2.0)
-            update_partner_mean!(state2.agents[1], 5, 2.0)
-        end
-        add_match_edge!(state2.G, 1, 5)
-        rng = StableRNG(88)
-        accepted = sequential_match_formation!(proposals, state2.agents, state2.broker,
-                                                state2.env, state2.G, p, cal, rng)
-        # Agent 5 has no capacity, should be skipped
-        @test isempty(accepted)
-    end
-
-    @testset "Standard match creates edge and updates histories" begin
+    @testset "Round matching creates edges and updates histories for standard matches" begin
         state3 = initialize_model(p)
         a1, a2 = state3.agents[1], state3.agents[2]
         h1_before = a1.history_count
         h2_before = a2.history_count
 
-        # Seed partner history so counterparty evaluates positively
-        update_partner_mean!(a2, 1, 5.0)
+        remove_agent_edges!(state3.G, 1)
         add_match_edge!(state3.G, 1, 2)
+        update_partner_mean!(a1, 2, 6.0)
+        update_partner_mean!(a2, 1, 5.0)
+        TransientBrokerage.reset_principal_inventory!(state3.workspace, p.N)
 
-        proposals = [ProposedMatch(1, 2, :self, 5.0, false, NaN, NaN)]
-        rng = StableRNG(55)
-        accepted = sequential_match_formation!(proposals, state3.agents, state3.broker,
-                                                state3.env, state3.G, p, cal, rng)
+        accepted = TransientBrokerage.round_match_formation!(
+            [1], [:self], [1],
+            state3.agents, state3.broker, state3.env, state3.G,
+            p, state3.cal, StableRNG(55);
+            ws=state3.workspace
+        )
+
         @test length(accepted) == 1
         @test a1.history_count == h1_before + 1
         @test a2.history_count == h2_before + 1
         @test has_edge(state3.G, 1, 2)
-    end
-
-    @testset "Principal match does NOT update agent histories or create edges" begin
-        state4 = initialize_model(default_params(N=30, T=5, T_burn=1, K=3, seed=99, enable_principal=true))
-        a1, a2 = state4.agents[1], state4.agents[2]
-        h1_before = a1.history_count
-        h2_before = a2.history_count
-        broker_h_before = state4.broker.history_count
-
-        # Remove edge if exists so we can check it's not added
-        TransientBrokerage.remove_agent_edges!(state4.G, 1)
-
-        proposals = [ProposedMatch(1, 2, :broker, 5.0, true, 1.0, 5.0)]
-        rng = StableRNG(44)
-        accepted = sequential_match_formation!(proposals, state4.agents, state4.broker,
-                                                state4.env, state4.G,
-                                                state4.params, state4.cal, rng)
-        @test length(accepted) == 1
-        @test a1.history_count == h1_before       # NOT updated
-        @test a2.history_count == h2_before       # NOT updated
-        @test state4.broker.history_count == broker_h_before + 1  # broker learns
-        @test !has_edge(state4.G, 1, 2)           # no edge formed
     end
 
     @testset "Satisfaction EWMA update" begin

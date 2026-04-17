@@ -487,7 +487,7 @@ Pre-allocated per-step scratch buffers reused across agents and calls.
 Lives on ModelState; reset between uses via `empty!` on the vector fields.
 """
 Base.@kwdef mutable struct SimWorkspace
-    # self_search scratch
+    # Round-search scratch
     neighbor_ids::Vector{Int} = Int[]
     neighbor_evals::Vector{Float64} = Float64[]
     neighbor_caps::Vector{Int} = Int[]
@@ -495,22 +495,18 @@ Base.@kwdef mutable struct SimWorkspace
     stranger_evals::Vector{Float64} = Float64[]
     stranger_caps::Vector{Int} = Int[]
     eligible::Vector{Int} = Int[]
-    stranger_sample::Vector{Int} = Int[]
     # Neighbor bitset: nbr_mask[j] = true iff j is a neighbor of the current agent.
-    # Length N+1 (extra slot for the broker node). Reset after each self_search call.
+    # Length N+1 (extra slot for the broker node). Reset after each round-search call.
     nbr_mask::Vector{Bool} = Bool[]
     # Tracks which indices we set in nbr_mask this call, so we can clear only those.
     nbr_marked::Vector{Int} = Int[]
 
-    # broker_allocate scratch
-    demand_slots::Vector{Int} = Int[]
     roster_members::Vector{Int} = Int[]
     roster_capacity::Vector{Int} = Int[]
     access_seen::Vector{Bool} = Bool[]
     access_touched::Vector{Int} = Int[]  # sparse-clear markers for broker access deduplication
     # Quality matrix Q[demander_idx, access_idx] (unique demanders x broker access set)
     Q::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)
-    z_buf::Vector{Float64} = Float64[]
     # Batched prediction scratch
     Z_batch::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)  # 2d x n_pairs input
     H_batch::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)  # h x n_pairs hidden
@@ -530,7 +526,6 @@ Base.@kwdef mutable struct SimWorkspace
     demand_counts::Vector{Int} = Int[]        # d_i per demander
     demand_remaining::Vector{Int} = Int[]     # remaining slots by demander index during round matching
     demand_failed::Vector{Bool} = Bool[]      # demander exhausted feasible set this period
-    client_demands_ws::Vector{Tuple{Int, Int}} = Tuple{Int, Int}[]
     broker_clients_ws::Vector{Int} = Int[]
     was_connected_i::Vector{Int} = Int[]  # pre-formation edge snapshot
     was_connected_j::Vector{Int} = Int[]
@@ -546,7 +541,6 @@ Base.@kwdef mutable struct SimWorkspace
     principal_inventory_round_remaining::Vector{Int} = Int[]
     principal_round_taken::Vector{Bool} = Bool[]
     capture_plan_remaining::Vector{Int} = Int[]
-    capture_block_qhats::Vector{Float64} = Float64[]
     demander_q_sum::Vector{Float64} = Float64[]   # realized output by demander id
     broker_standard_count::Vector{Int} = Int[]    # successful standard broker matches by demander id
     all_proposals::Vector{ProposedMatch} = ProposedMatch[]

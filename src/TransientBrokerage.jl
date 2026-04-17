@@ -57,11 +57,8 @@ export compute_adaptive_steps, train_agent_nn!, train_broker_nn!
 export compute_prediction_quality, compute_betweenness
 export compute_burt_constraint, compute_effective_size, update_cached_network_measures!
 
-# Search
-export self_search, broker_allocate
-
 # Matching
-export sequential_match_formation!, update_satisfaction!
+export update_satisfaction!
 export outsourcing_decision, broker_reputation, update_broker_reputation!
 
 # Capture

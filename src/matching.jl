@@ -6,7 +6,7 @@ No wages in v0.2: match economics use fixed fees (phi, c_s) and the outside opti
 Under principal mode (Model 1), the broker's compensation is the spread q_ij - ask_j.
 """
 
-using Random: AbstractRNG, shuffle!
+using Random: AbstractRNG
 using Graphs: has_edge, SimpleGraph
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -93,92 +93,13 @@ function finalize_accepted_proposal!(accepted::Vector{AcceptedMatch},
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Sequential match formation (§9 Step 3, legacy helper)
-# ─────────────────────────────────────────────────────────────────────────────
-
-"""
-    sequential_match_formation!(proposals, agents, broker, env, G, params, cal, rng;
-                                remaining_cap=nothing, accepted_matches=nothing)
-
-Process all proposals in random order. Check both sides' capacity; counterparty
-evaluates independently (history average for known neighbors, NN prediction for
-strangers). Returns a vector of accepted match records.
-
-If `remaining_cap` is provided, it is reused as the mutable per-period capacity
-tracker instead of allocating a fresh vector.
-If `accepted_matches` is provided, it is emptied and reused as the output buffer.
-
-Each accepted match record is a NamedTuple with fields:
-  demander_id, counterparty_id, channel, is_principal, q_realized, q_predicted,
-  ask_j, capture_qhat
-"""
-function sequential_match_formation!(proposals::Vector{ProposedMatch},
-                                      agents::Vector{Agent},
-                                      broker::Broker,
-                                      env::MatchingEnv,
-                                      G::SimpleGraph,
-                                      params::ModelParams,
-                                      cal::CalibrationConstants,
-                                      rng::AbstractRNG;
-                                      remaining_cap::Union{Vector{Int}, Nothing} = nothing,
-                                      accepted_matches::Union{Vector{AcceptedMatch}, Nothing} = nothing)
-    accepted = if isnothing(accepted_matches)
-        AcceptedMatch[]
-    else
-        empty!(accepted_matches)
-    end
-    isempty(proposals) && return accepted
-
-    N = length(agents)
-    K = params.K
-    d = params.d
-    # Pre-allocated buffers for match_output! (avoid alloc per match)
-    Ax_buf = Vector{Float64}(undef, d)
-    Bx_buf = Vector{Float64}(undef, d)
-
-    # Mutable capacity counters (decremented on acceptance)
-    if isnothing(remaining_cap)
-        remaining_cap = Vector{Int}(undef, N)
-    elseif length(remaining_cap) != N
-        resize!(remaining_cap, N)
-    end
-    @inbounds for i in 1:N
-        remaining_cap[i] = available_capacity(agents[i], K)
-    end
-
-    # Shuffle proposals
-    shuffle!(rng, proposals)
-
-    for pm in proposals
-        i = pm.demander_id
-        j = pm.counterparty_id
-
-        # Check both sides have capacity
-        remaining_cap[i] <= 0 && continue
-        remaining_cap[j] <= 0 && continue
-
-        admissible, _ = counterparty_offer_score(pm, agents, G, cal.r)
-        admissible || continue
-
-        # Decrement capacity
-        remaining_cap[i] -= 1
-        remaining_cap[j] -= 1
-
-        finalize_accepted_proposal!(accepted, pm, agents, broker, env, G, rng;
-                                    Ax_buf=Ax_buf, Bx_buf=Bx_buf)
-    end
-
-    return accepted
-end
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Round-based concurrent match formation (§9 Step 3)
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
     round_match_formation!(demand_agent_ids, demand_channels, demand_counts,
                            agents, broker, env, G, params, cal, rng;
-                           ws=nothing, accepted_matches=nothing)
+                           ws, accepted_matches=nothing)
 
 Run the approved within-period round protocol. Each round lets every still-live
 demander attempt to fill one slot through its chosen channel. Demanders can
@@ -196,7 +117,7 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
                                 params::ModelParams,
                                 cal::CalibrationConstants,
                                 rng::AbstractRNG;
-                                ws::Union{SimWorkspace, Nothing} = nothing,
+                                ws::SimWorkspace,
                                 accepted_matches::Union{Vector{AcceptedMatch}, Nothing} = nothing)
     accepted = if isnothing(accepted_matches)
         AcceptedMatch[]
@@ -210,83 +131,54 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
     K = params.K
     d = params.d
     max_rounds = maximum(demand_counts)
-    reserved_capacity = ws === nothing ? nothing : ws.principal_reserved_capacity
+    reserved_capacity = ws.principal_reserved_capacity
 
-    if ws === nothing
-        remaining_demand = copy(demand_counts)
-        demand_failed = fill(false, n_demanders)
-        active_positions = Int[]
-        broker_indices = Int[]
-        broker_demanders = Int[]
-        pref_offsets = Int[]
-        next_pref = Int[]
-        pref_owner = Int[]
-        queue = Int[]
-        agent_to_active = zeros(Int, N)
-        agent_to_active_touched = Int[]
-        outgoing_prop_idx = Int[]
-        hold_counts = zeros(Int, N)
-        held_prop_idx = Matrix{Int}(undef, N, max(K, 1))
-        held_scores = Matrix{Float64}(undef, N, max(K, 1))
-        broker_slot_caps = Int[]
-        broker_pref_matches = ProposedMatch[]
-        broker_pref_counts = Int[]
-        pref_matches = ProposedMatch[]
-        round_capacity = Vector{Int}(undef, N)
-        wc_i = Int[]
-        wc_j = Int[]
-        Ax_buf = Vector{Float64}(undef, d)
-        Bx_buf = Vector{Float64}(undef, d)
-    else
-        remaining_demand = ws.demand_remaining; resize!(remaining_demand, n_demanders)
-        remaining_demand .= demand_counts
-        demand_failed = ws.demand_failed; resize!(demand_failed, n_demanders); fill!(demand_failed, false)
-        active_positions = ws.round_active_positions; empty!(active_positions)
-        broker_indices = ws.round_broker_indices; empty!(broker_indices)
-        broker_demanders = ws.round_broker_demanders; empty!(broker_demanders)
-        pref_offsets = ws.round_pref_offsets; empty!(pref_offsets)
-        next_pref = ws.round_next_pref; empty!(next_pref)
-        pref_owner = ws.round_pref_owner; empty!(pref_owner)
-        queue = ws.round_queue; empty!(queue)
-        if length(ws.round_agent_to_active) < N
-            old = length(ws.round_agent_to_active)
-            resize!(ws.round_agent_to_active, N)
-            @inbounds for i in (old + 1):N
-                ws.round_agent_to_active[i] = 0
-            end
+    remaining_demand = ws.demand_remaining; resize!(remaining_demand, n_demanders)
+    remaining_demand .= demand_counts
+    demand_failed = ws.demand_failed; resize!(demand_failed, n_demanders); fill!(demand_failed, false)
+    active_positions = ws.round_active_positions; empty!(active_positions)
+    broker_indices = ws.round_broker_indices; empty!(broker_indices)
+    broker_demanders = ws.round_broker_demanders; empty!(broker_demanders)
+    pref_offsets = ws.round_pref_offsets; empty!(pref_offsets)
+    next_pref = ws.round_next_pref; empty!(next_pref)
+    pref_owner = ws.round_pref_owner; empty!(pref_owner)
+    queue = ws.round_queue; empty!(queue)
+    if length(ws.round_agent_to_active) < N
+        old = length(ws.round_agent_to_active)
+        resize!(ws.round_agent_to_active, N)
+        @inbounds for i in (old + 1):N
+            ws.round_agent_to_active[i] = 0
         end
-        agent_to_active = ws.round_agent_to_active
-        agent_to_active_touched = ws.round_agent_touched; empty!(agent_to_active_touched)
-        outgoing_prop_idx = ws.round_outgoing_prop_idx; empty!(outgoing_prop_idx)
-        hold_counts = ws.round_hold_counts
-        resize!(hold_counts, N)
-        if size(ws.round_held_prop_idx, 1) != N || size(ws.round_held_prop_idx, 2) != K
-            ws.round_held_prop_idx = Matrix{Int}(undef, N, max(K, 1))
-            ws.round_held_scores = Matrix{Float64}(undef, N, max(K, 1))
-        end
-        held_prop_idx = ws.round_held_prop_idx
-        held_scores = ws.round_held_scores
-        broker_slot_caps = ws.demander_remaining; empty!(broker_slot_caps)
-        broker_pref_matches = ws.round_broker_pref_matches; empty!(broker_pref_matches)
-        broker_pref_counts = ws.round_broker_pref_counts; empty!(broker_pref_counts)
-        pref_matches = ws.all_proposals; empty!(pref_matches)
-        round_capacity = ws.remaining_cap
-        resize!(round_capacity, N)
-        wc_i = ws.was_connected_i; empty!(wc_i)
-        wc_j = ws.was_connected_j; empty!(wc_j)
-        if length(ws.Ax_buf) != d
-            ws.Ax_buf = Vector{Float64}(undef, d)
-            ws.Bx_buf = Vector{Float64}(undef, d)
-        end
-        Ax_buf = ws.Ax_buf
-        Bx_buf = ws.Bx_buf
     end
+    agent_to_active = ws.round_agent_to_active
+    agent_to_active_touched = ws.round_agent_touched; empty!(agent_to_active_touched)
+    outgoing_prop_idx = ws.round_outgoing_prop_idx; empty!(outgoing_prop_idx)
+    hold_counts = ws.round_hold_counts
+    resize!(hold_counts, N)
+    if size(ws.round_held_prop_idx, 1) != N || size(ws.round_held_prop_idx, 2) != K
+        ws.round_held_prop_idx = Matrix{Int}(undef, N, max(K, 1))
+        ws.round_held_scores = Matrix{Float64}(undef, N, max(K, 1))
+    end
+    held_prop_idx = ws.round_held_prop_idx
+    held_scores = ws.round_held_scores
+    broker_slot_caps = ws.demander_remaining; empty!(broker_slot_caps)
+    broker_pref_matches = ws.round_broker_pref_matches; empty!(broker_pref_matches)
+    broker_pref_counts = ws.round_broker_pref_counts; empty!(broker_pref_counts)
+    pref_matches = ws.all_proposals; empty!(pref_matches)
+    round_capacity = ws.remaining_cap
+    resize!(round_capacity, N)
+    wc_i = ws.was_connected_i; empty!(wc_i)
+    wc_j = ws.was_connected_j; empty!(wc_j)
+    if length(ws.Ax_buf) != d
+        ws.Ax_buf = Vector{Float64}(undef, d)
+        ws.Bx_buf = Vector{Float64}(undef, d)
+    end
+    Ax_buf = ws.Ax_buf
+    Bx_buf = ws.Bx_buf
 
-    if ws !== nothing
-        prepare_period_broker_round_cache!(broker, demand_agent_ids, demand_channels,
-                                           agents, params;
-                                           ws=ws, reserved_capacity=reserved_capacity)
-    end
+    prepare_period_broker_round_cache!(broker, demand_agent_ids, demand_channels,
+                                       agents, params;
+                                       ws=ws, reserved_capacity=reserved_capacity)
 
     @inline function requeue_or_fail!(pos::Int)
         idx = active_positions[pos]
@@ -353,22 +245,12 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
                 broker_slot_caps[di] = min(remaining_demand[demand_idx],
                                            current_open_capacity(agents, did, K, reserved_capacity))
             end
-            if ws === nothing
-                broker_matrix = prepare_broker_round_matrix!(broker, broker_demanders, agents, params;
-                                                             ws=ws, reserved_capacity=reserved_capacity)
-                append_broker_round_preferences_from_matrix!(
-                    broker_pref_matches, broker_pref_counts, broker_matrix,
-                    broker_demanders, agents, params, cal.r;
-                    demander_slots=broker_slot_caps, reserved_capacity=reserved_capacity
-                )
-            else
-                append_broker_round_preferences_from_cache!(
-                    broker_pref_matches, broker_pref_counts, broker_demanders,
-                    agents, params, cal.r;
-                    ws=ws, demander_slots=broker_slot_caps,
-                    reserved_capacity=reserved_capacity
-                )
-            end
+            append_broker_round_preferences_from_cache!(
+                broker_pref_matches, broker_pref_counts, broker_demanders,
+                agents, params, cal.r;
+                ws=ws, demander_slots=broker_slot_caps,
+                reserved_capacity=reserved_capacity
+            )
         else
             empty!(broker_pref_matches)
             resize!(broker_pref_counts, 0)

@@ -11,12 +11,10 @@ Usage: julia --project --threads=auto scripts/benchmark.jl
 
 using TransientBrokerage
 using TransientBrokerage: step_period!, train_agent_nn!, train_broker_nn!,
-                          self_search,
                           process_entry_exit!, update_cached_network_measures!,
                           predict_nn!, init_neural_net, NNGradBuffers,
-                          train_step!, train_nn!, compute_prediction_quality
+                          train_step!
 using BenchmarkTools
-using LinearAlgebra: normalize
 using StableRNGs: StableRNG
 using Profile
 using Printf

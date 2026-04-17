@@ -92,7 +92,6 @@ function reset_principal_inventory!(ws::SimWorkspace, N::Int)
     empty!(ws.principal_inventory_round_blocks)
     empty!(ws.principal_inventory_round_remaining)
     empty!(ws.capture_plan_remaining)
-    empty!(ws.capture_block_qhats)
     empty!(ws.principal_round_taken)
     return nothing
 end
@@ -287,9 +286,8 @@ function plan_period_capture!(demand_agent_ids::Vector{Int},
                               broker::Broker,
                               params::ModelParams,
                               cal::CalibrationConstants;
-                              ws::Union{SimWorkspace, Nothing} = nothing)::Int
+                              ws::SimWorkspace)::Int
     (!params.enable_principal || !broker.capture_confidence_ready) && return 0
-    ws === nothing && return 0
 
     N = length(agents)
     K = params.K
@@ -371,10 +369,9 @@ function execute_inventory_round!(accepted::Vector{AcceptedMatch},
                                   rng::AbstractRNG,
                                   was_connected_i::Vector{Int},
                                   was_connected_j::Vector{Int};
-                                  ws::Union{SimWorkspace, Nothing} = nothing,
+                                  ws::SimWorkspace,
                                   Ax_buf::Vector{Float64},
                                   Bx_buf::Vector{Float64})::Int
-    ws === nothing && return 0
     isempty(broker_demanders) && return 0
     isempty(ws.principal_inventory_ids) && return 0
 
