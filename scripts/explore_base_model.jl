@@ -3,7 +3,8 @@
 
 Run the base model (no capture) across parameter configurations that control
 matching difficulty (rho, delta, s, eta) with multiple seeds per config.
-Produces per-config 5x3 dynamics panels and DGP visualization (matrix, SVD).
+Produces per-config 5x4 dynamics panels, a network-statistics figure, and DGP
+visualization (matrix, SVD).
 
 Data is cached as JLD2; pass --rerun to force re-simulation.
 
@@ -28,6 +29,7 @@ include(joinpath(@__DIR__, "figure_style.jl"))
 
 const OUTDIR = joinpath(@__DIR__, "..", "data", "figures", "exploration")
 const DATADIR = joinpath(@__DIR__, "..", "data", "sims", "exploration")
+const NETWORK_DEGREE_STATS_VERSION = 2
 mkpath(OUTDIR)
 mkpath(DATADIR)
 
@@ -35,8 +37,18 @@ mkpath(DATADIR)
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+const NETWORK_DEGREE_FIELDS = (:mean_degree, :median_degree, :min_degree, :max_degree)
+
+function has_network_degree_stats(mdfs::Vector{DataFrame})
+    isempty(mdfs) && return false
+    cols = Set(Symbol.(names(mdfs[1])))
+    return all(field -> field in cols, NETWORK_DEGREE_FIELDS)
+end
+
+cache_degree_stats_version(saved) = get(saved, "network_degree_stats_version", 0)
+
 # ─────────────────────────────────────────────────────────────────────────────
-# Dynamics figure (5×3 panel, matching v0.1 quality)
+# Dynamics figure (5×4 panel, matching v0.1 quality)
 # ─────────────────────────────────────────────────────────────────────────────
 
 function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::String;
@@ -211,6 +223,53 @@ function plot_ensemble(mdfs::Vector{DataFrame}, suptitle::String, filename::Stri
     println("  Saved dynamics: $filename")
 end
 
+function plot_network_stats(mdfs::Vector{DataFrame}, suptitle::String, filename::String;
+                            T_burn::Int=30, window::Int=20)
+    n_seeds = length(mdfs)
+    periods = mdfs[1].period
+    T = last(periods)
+    xlims = (first(periods), T)
+    akw = ax_kw(T)
+    pm!(ax, fn; kw...) = plot_metric!(ax, periods, mdfs, fn; window=window, kw...)
+
+    fig = Figure(; size=(1500, 360), figure_padding=(5, 15, 5, 5))
+    all_axes = Axis[]
+    newax(pos; kw...) = (a = Axis(pos; kw...); push!(all_axes, a); a)
+
+    Label(fig[0, 1:4], "Agent network statistics: $suptitle"; fontsize=SUPTITLE_FS, font=:bold,
+          halign=:center, tellwidth=false)
+    Label(fig[1, 0], "Agents"; fontsize=ROW_LABEL_FS, font=:bold,
+          rotation=π/2, tellheight=false)
+
+    panels = [
+        (title="Mean degree", field=:mean_degree),
+        (title="Median degree", field=:median_degree),
+        (title="Min degree", field=:min_degree),
+        (title="Max degree", field=:max_degree),
+    ]
+
+    for (col, panel) in enumerate(panels)
+        ax = newax(fig[1, col];
+                   title=panel.title,
+                   xlabel="Period",
+                   ylabel="Degree",
+                   limits=(xlims, (0, nothing)),
+                   akw...,
+                   xlabelsize=LABEL_FS)
+        pm!(ax, mdf -> mdf[!, panel.field]; color=COL_DIAG)
+    end
+
+    for ax in all_axes
+        add_burnin!(ax, T_burn)
+    end
+
+    add_footer!(fig, 2, 1:4; n_seeds=n_seeds, window=window, T_burn=T_burn)
+    apply_layout!(fig; n_panel_rows=1, n_panel_cols=4, suptitle_row=0, footer_row=2)
+
+    save(joinpath(OUTDIR, filename), fig)
+    println("  Saved network stats: $filename")
+end
+
 # ─────────────────────────────────────────────────────────────────────────────
 # DGP figures (matrix heatmap + histogram, SVD spectrum)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -350,14 +409,24 @@ for (idx, c) in enumerate(configs)
         println("  Loading cached data: $datafile")
         saved = JLD2.load(datafile)
         mdfs = saved["mdfs"]
+        if cache_degree_stats_version(saved) != NETWORK_DEGREE_STATS_VERSION ||
+           !has_network_degree_stats(mdfs)
+            println("  Cache has stale degree summaries, re-simulating")
+            mdfs = run_ensemble(; base_kwargs=c.kwargs, T=T, N=N_SIM, n_seeds=N_SEEDS)
+            jldsave(datafile; mdfs=mdfs,
+                    network_degree_stats_version=NETWORK_DEGREE_STATS_VERSION)
+            println("  Saved data: $datafile")
+        end
     else
         mdfs = run_ensemble(; base_kwargs=c.kwargs, T=T, N=N_SIM, n_seeds=N_SEEDS)
-        jldsave(datafile; mdfs=mdfs)
+        jldsave(datafile; mdfs=mdfs,
+                network_degree_stats_version=NETWORK_DEGREE_STATS_VERSION)
         println("  Saved data: $datafile")
     end
 
     # Dynamics panel
     plot_ensemble(mdfs, "$(c.label) [N=$N_SIM, T=$T]", "$(c.tag)_dynamics.png")
+    plot_network_stats(mdfs, "$(c.label) [N=$N_SIM, T=$T]", "$(c.tag)_network_stats.png")
 
     # DGP figures
     p = default_params(; N=N_SIM, seed=42, c.kwargs...)

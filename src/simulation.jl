@@ -5,6 +5,7 @@ Simulation runner and per-period metric collection.
 """
 
 using DataFrames: DataFrame
+using Graphs: degree
 using Statistics: mean, quantile
 using StatsBase: corspearman
 
@@ -30,6 +31,23 @@ end
 
 """90th percentile of a non-empty vector; NaN if empty."""
 p90(v::AbstractVector{<:Real}) = isempty(v) ? NaN : quantile(v, 0.9)
+
+"""Agent-node degree summary statistics for the current graph `G`, excluding the broker."""
+function degree_summary(state::ModelState)
+    degrees = degree(state.G)[1:state.params.N]
+    sort!(degrees)
+    n = length(degrees)
+    mid = n ÷ 2
+    median_degree = isodd(n) ? Float64(degrees[mid + 1]) :
+        (degrees[mid] + degrees[mid + 1]) / 2
+
+    return (
+        mean_degree = mean(degrees),
+        median_degree = median_degree,
+        min_degree = Float64(first(degrees)),
+        max_degree = Float64(last(degrees)),
+    )
+end
 
 """
     collect_period_metrics(state) -> NamedTuple
@@ -107,6 +125,7 @@ function collect_period_metrics(state::ModelState)
     n_available = count(ag -> available_capacity(ag, p.K) > 0, agents)
     mean_sat_self = mean(ag.satisfaction_self for ag in agents)
     mean_sat_broker = mean(ag.satisfaction_broker for ag in agents)
+    degree_stats = degree_summary(state)
 
     return (
         period = state.period,
@@ -180,6 +199,11 @@ function collect_period_metrics(state::ModelState)
         mean_satisfaction_broker = mean_sat_broker,
         # Market state
         n_available = n_available,
+        # Whole-network degree summaries
+        mean_degree = degree_stats.mean_degree,
+        median_degree = degree_stats.median_degree,
+        min_degree = degree_stats.min_degree,
+        max_degree = degree_stats.max_degree,
         # Network measures
         betweenness = state.cached_network.betweenness,
         constraint = state.cached_network.constraint,

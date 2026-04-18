@@ -136,6 +136,23 @@ using Graphs: nv, degree, has_edge
         @test metrics.broker_access_size <= p.N
     end
 
+    @testset "collect_period_metrics reports agent-only degree summaries from G" begin
+        p = default_params(N=51, T=10, T_burn=2, seed=42)
+        state = initialize_model(p)
+        step_period!(state)
+        metrics = collect_period_metrics(state)
+
+        degrees = sort(degree(state.G)[1:p.N])
+        n = length(degrees)
+        expected_median = isodd(n) ? Float64(degrees[n ÷ 2 + 1]) :
+            (degrees[n ÷ 2] + degrees[n ÷ 2 + 1]) / 2
+
+        @test metrics.mean_degree ≈ sum(degrees) / n
+        @test metrics.median_degree ≈ expected_median
+        @test metrics.min_degree == first(degrees)
+        @test metrics.max_degree == last(degrees)
+    end
+
     @testset "Holdout metrics are populated after stepping" begin
         p = default_params(N=80, T=10, T_burn=2, seed=42, eta=0.0)
         state = initialize_model(p)

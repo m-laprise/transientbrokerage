@@ -117,7 +117,6 @@ Each agent $i$ is characterized by:
 - **Available capacity**: $K - |M_i^t|$, the number of additional matches the agent can enter.
 - **Experience history** $\mathcal{H}_{i}^t = \{(\mathbf{x}_j, q_{ij})\}$: the set of (other party's type, realized match output) pairs from all matches $i$ has participated in, regardless of whether $i$ was the demander or the counterparty (§2a). Because the matching function is symmetric (§1a), both roles produce the same prediction target.
 - **Satisfaction indices** $s_{i,c}^t$: one scalar per search channel $c \in \{\text{self}, \text{broker}\}$, tracking realized match value via an EWMA (§6a). Drives the outsourcing decision (§6).
-- **Outside option** $r$: the minimum match value any agent requires to participate in a match (§3). Constant across agents, calibrated at initialization.
 
 Agents exit independently each period with probability $\eta$ (default 0.02) and are replaced by new entrants with fresh types, empty histories, self-satisfaction initialized from neighbors' opinions, and broker-satisfaction set to the current broker reputation (§6a).
 
@@ -348,16 +347,18 @@ When the broker proposes a match, it applies the constraint using its own predic
 
 #### 3c. Search costs
 
-The model includes two channel frictions with an intentional asymmetry. **Self-search** incurs a per-demand-slot search-effort cost $c_s$: each slot the agent attempts to fill through self-search bears that cost whether or not it is successfully matched. **Standard brokerage** instead incurs a contingent placement fee $\phi$: the fee is paid only on brokered matches that actually clear. The two channels share a single **search-cost rate** $\lambda_c$ on the surplus scale $(\bar{q}_{\text{cal}} - r)$:
+The model uses a single calibrated friction level for both channels:
 
 $$
-\phi = \lambda_c \cdot (\bar{q}_{\text{cal}} - r), \qquad
-c_s = \lambda_c \cdot (\bar{q}_{\text{cal}} - r).
+\phi = c_s = \lambda_c \cdot (\bar{q}_{\text{cal}} - r).
 $$
 
-At the baseline $\lambda_c = 0.15$, both frictions have the same level, $0.15\cdot(\bar{q}_{\text{cal}} - r)$. The channels still differ economically because the payment timing differs: self-search pays this cost on each demanded slot, while brokerage pays it only on successful standard placements.
+At the baseline $\lambda_c = 0.15$, the common friction level is $0.15\cdot(\bar{q}_{\text{cal}} - r)$. The distinction between $\phi$ and $c_s$ is therefore not their magnitude, but how that same friction enters realized payoffs:
 
-The two frictions are independent of realized match quality. The self-search cost $c_s$ is charged on each demanded slot routed through self-search, whether or not that slot is filled. The broker fee $\phi$ is charged on each successful **standard** brokered placement. Under principal mode (§12), no $\phi$ is charged to the demander because the broker is no longer acting as a pure intermediary.
+- **Self-search** labels the common friction as $c_s$ and charges it on each demanded slot routed through self-search, whether or not that slot is filled.
+- **Standard brokerage** labels the same friction as $\phi$ and charges it only on successful **standard** brokered placements.
+
+The common friction is independent of realized match quality. Under principal mode (§12), no $\phi$ is charged to the demander because the broker is no longer acting as a pure intermediary.
 
 An economically important asymmetry in the illustrative markets is **search-risk transfer**. Self-search typically requires the agent to incur time, attention, or internal business-development costs for each sought transaction slot whether or not the search succeeds: calling dealers, screening counterparties, traveling to trade events, preparing offers, or canvassing foreign buyers. By contrast, broker compensation is often at least partly contingent on success: a broker or intermediary is usually paid when a transaction clears, not merely for having searched. In that sense, outsourcing shifts part of the risk of failed search from the agent to the intermediary. This creates a motive for brokerage that is distinct from pure informational superiority. Even when the broker and the agent faced the same cost level $\lambda_c$, the broker could still be valuable by absorbing failed-search risk.
 
@@ -1235,6 +1236,10 @@ The tradeoff is that the model would change meaning, not just notation. Match ou
 **Fig. S5.** Broker risk profile.
 - *Purpose:* Shows the frequency and magnitude of inventory losses the broker absorbs in principal mode.
 - *Content:* Time on the horizontal axis, distribution of $q_{ij} - r$ for principal-mode matches. Early: wider distribution with more losses. Late: concentrated in positive territory as predictions improve.
+
+**Fig. S6.** Network degree diagnostics in the base-model exploration.
+- *Purpose:* Tracks how the overall connectivity of $G$ evolves as the market densifies, complementing the broker-centered structural-hole measures.
+- *Content:* Four panels with time on the horizontal axis and agent-network degree statistics on the vertical axis: mean degree, median degree, minimum degree, and maximum degree (computed over agent nodes only, excluding the broker).
 
 ## References
 
