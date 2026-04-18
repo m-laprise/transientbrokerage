@@ -11,9 +11,17 @@ using LinearAlgebra: dot, norm, normalize, eigvals, issymmetric
         [normalize(randn(rng, d)) for _ in 1:n]
     end
 
+    function test_env(types; rho::Float64=rho, delta::Float64=0.5,
+                      sigma_eps::Float64=0.25, env_seed::Int=42,
+                      geo_seed::Int=11)
+        geo = TransientBrokerage.generate_curve_geometry(d, d, StableRNG(geo_seed))
+        return generate_matching_env(d, rho, delta, sigma_eps, types, StableRNG(env_seed);
+                                     curve_geo=geo)
+    end
+
     @testset "MatchingEnv construction" begin
         types = test_agent_types(d, 50, StableRNG(10))
-        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        env = test_env(types)
         @test env.d == d
         @test env.rho == rho
         @test env.delta == 0.5
@@ -41,7 +49,7 @@ using LinearAlgebra: dot, norm, normalize, eigvals, issymmetric
 
     @testset "A is SPD and B is weighted-orthogonalized" begin
         types = test_agent_types(d, 50, StableRNG(10))
-        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        env = test_env(types)
         @test all(eigvals(env.A) .> 0)
         @test issymmetric(env.A)
         @test issymmetric(env.B)
@@ -52,7 +60,7 @@ using LinearAlgebra: dot, norm, normalize, eigvals, issymmetric
 
     @testset "Matching function symmetry: f(x_i, x_j) == f(x_j, x_i)" begin
         types = test_agent_types(d, 20, StableRNG(10))
-        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        env = test_env(types)
         rng = StableRNG(99)
         @test all(1:100) do _
             i, j = rand(rng, 1:20), rand(rng, 1:20)
@@ -62,7 +70,7 @@ using LinearAlgebra: dot, norm, normalize, eigvals, issymmetric
 
     @testset "Regime gain values" begin
         types = test_agent_types(d, 20, StableRNG(10))
-        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        env = test_env(types)
         rng = StableRNG(77)
         gains = [regime_gain(types[rand(rng, 1:20)], types[rand(rng, 1:20)], env) for _ in 1:100]
         # All gains should be 1+delta or 1-delta
@@ -71,7 +79,7 @@ using LinearAlgebra: dot, norm, normalize, eigvals, issymmetric
 
     @testset "Regime gain symmetry: g(x_i, x_j) == g(x_j, x_i)" begin
         types = test_agent_types(d, 20, StableRNG(10))
-        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        env = test_env(types)
         rng = StableRNG(55)
         @test all(1:50) do _
             i, j = rand(rng, 1:20), rand(rng, 1:20)
@@ -81,7 +89,7 @@ using LinearAlgebra: dot, norm, normalize, eigvals, issymmetric
 
     @testset "In-place regime_gain! matches allocating version" begin
         types = test_agent_types(d, 20, StableRNG(10))
-        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        env = test_env(types)
         Bx = zeros(d)
         rng = StableRNG(556)
         @test all(1:30) do _
@@ -92,7 +100,7 @@ using LinearAlgebra: dot, norm, normalize, eigvals, issymmetric
 
     @testset "At delta=0, gain is always 1.0" begin
         types = test_agent_types(d, 20, StableRNG(10))
-        env0 = generate_matching_env(d, rho, 0.0, 0.25, types, StableRNG(42))
+        env0 = test_env(types; delta=0.0)
         rng = StableRNG(77)
         @test all(1:50) do _
             i, j = rand(rng, 1:20), rand(rng, 1:20)
@@ -103,13 +111,13 @@ using LinearAlgebra: dot, norm, normalize, eigvals, issymmetric
     @testset "Mixing weight rho" begin
         types = test_agent_types(d, 20, StableRNG(10))
         # At rho=1: pure quality, no interaction
-        env1 = generate_matching_env(d, 1.0, 0.5, 0.25, types, StableRNG(42))
+        env1 = test_env(types; rho=1.0)
         xi, xj = types[1], types[2]
         expected_q = 0.5 * (dot(xi, env1.c) + dot(xj, env1.c))
         @test match_signal(xi, xj, env1) ≈ expected_q
 
         # At rho=0: pure interaction, no quality
-        env0 = generate_matching_env(d, 0.0, 0.5, 0.25, types, StableRNG(42))
+        env0 = test_env(types; rho=0.0)
         g = regime_gain(xi, xj, env0)
         expected_int = g * dot(xi, env0.A * xj)
         @test match_signal(xi, xj, env0) ≈ expected_int
@@ -117,7 +125,7 @@ using LinearAlgebra: dot, norm, normalize, eigvals, issymmetric
 
     @testset "In-place match_signal! matches allocating version" begin
         types = test_agent_types(d, 20, StableRNG(10))
-        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        env = test_env(types)
         Ax = zeros(d)
         Bx = zeros(d)
         rng = StableRNG(33)
@@ -130,7 +138,7 @@ using LinearAlgebra: dot, norm, normalize, eigvals, issymmetric
 
     @testset "match_output includes Q_OFFSET and noise" begin
         types = test_agent_types(d, 20, StableRNG(10))
-        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        env = test_env(types)
         xi, xj = types[1], types[2]
         rng1 = StableRNG(99)
         q1 = match_output(xi, xj, env, rng1)
@@ -141,7 +149,7 @@ using LinearAlgebra: dot, norm, normalize, eigvals, issymmetric
 
     @testset "In-place match_output! matches allocating version" begin
         types = test_agent_types(d, 20, StableRNG(10))
-        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        env = test_env(types)
         xi, xj = types[3], types[9]
         Ax = zeros(d)
         Bx = zeros(d)
@@ -154,7 +162,7 @@ using LinearAlgebra: dot, norm, normalize, eigvals, issymmetric
 
     @testset "Calibration produces valid constants" begin
         types = test_agent_types(d, 100, StableRNG(10))
-        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        env = test_env(types)
         p = default_params()
         cal = calibrate(env, types, p, StableRNG(55))
         surplus_scale = cal.q_cal - cal.r
@@ -169,7 +177,7 @@ using LinearAlgebra: dot, norm, normalize, eigvals, issymmetric
 
     @testset "Shared-cost calibration responds to the common rate" begin
         types = test_agent_types(d, 100, StableRNG(10))
-        env = generate_matching_env(d, rho, 0.5, 0.25, types, StableRNG(42))
+        env = test_env(types)
 
         cal_zero = calibrate(env, types, default_params(search_cost_rate=0.0), StableRNG(55))
         @test cal_zero.phi ≈ 0.0 atol=1e-12
@@ -182,7 +190,7 @@ using LinearAlgebra: dot, norm, normalize, eigvals, issymmetric
 
     @testset "Two regimes produce different match qualities" begin
         types = test_agent_types(d, 50, StableRNG(10))
-        env = generate_matching_env(d, 0.0, 0.5, 0.0, types, StableRNG(42))  # pure interaction, no noise
+        env = test_env(types; rho=0.0, sigma_eps=0.0)  # pure interaction, no noise
         # Find pairs in each regime
         high_gain = Float64[]
         low_gain = Float64[]

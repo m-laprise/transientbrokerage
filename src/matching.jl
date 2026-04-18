@@ -484,7 +484,7 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    outsourcing_decision(agent, agents, G, broker_node, broker_rep, d_i, c_s, K, rng) -> Symbol
+    outsourcing_decision(agent, broker_rep, rng) -> Symbol
 
 Agent chooses :self or :broker. Compares two reduced-form channel scores:
 - score_self: EWMA satisfaction from past self-search outcomes. This stands in
@@ -495,10 +495,9 @@ Agent chooses :self or :broker. Compares two reduced-form channel scores:
 The agent outsources only if the broker beats the self-search channel's current
 reduced-form value.
 """
-function outsourcing_decision(agent::Agent, _agents::Vector{Agent},
-                              _G::SimpleGraph, _broker_node::Int,
-                              broker_rep::Float64, _d_i::Int, _c_s::Float64,
-                              _K::Int, rng::AbstractRNG)::Symbol
+function outsourcing_decision(agent::Agent,
+                              broker_rep::Float64,
+                              rng::AbstractRNG)::Symbol
     score_self = agent.satisfaction_self
     score_broker = agent.tried_broker ? agent.satisfaction_broker : broker_rep
 

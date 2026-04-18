@@ -16,12 +16,14 @@ Threads.nthreads() == 1 && @warn "Running single-threaded; start Julia with --th
 
 using TransientBrokerage
 using TransientBrokerage: generate_matching_env, generate_curve_geometry,
-                          generate_agent_types, match_signal, Q_OFFSET, regime_gain
+                          generate_agent_types
+using DataFrames: DataFrame
 using LinearAlgebra: svdvals
-using MultivariateStats: fit, predict, PCA
 using StableRNGs: StableRNG
 using JLD2
+using Statistics: mean
 
+include(joinpath(@__DIR__, "exploration_common.jl"))
 include(joinpath(@__DIR__, "figure_style.jl"))
 
 const OUTDIR = joinpath(@__DIR__, "..", "data", "figures", "exploration")
@@ -32,18 +34,6 @@ mkpath(DATADIR)
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
-
-"""Run n_seeds simulations, return vector of DataFrames."""
-function run_ensemble(; base_kwargs, T::Int, N::Int, n_seeds::Int)
-    mdfs = Vector{DataFrame}(undef, n_seeds)
-    for s in 1:n_seeds
-        p = default_params(; N=N, T=T, seed=s, base_kwargs...)
-        _, mdf = run_simulation(p)
-        mdf[!, :seed] .= s
-        mdfs[s] = mdf
-    end
-    return mdfs
-end
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dynamics figure (5×3 panel, matching v0.1 quality)
@@ -225,23 +215,6 @@ end
 # DGP figures (matrix heatmap + histogram, SVD spectrum)
 # ─────────────────────────────────────────────────────────────────────────────
 
-function build_ordered_output_matrix(types, env)
-    N = length(types)
-    type_matrix = reduce(hcat, types)
-    pca = fit(PCA, type_matrix; maxoutdim=1)
-    pc1 = vec(predict(pca, type_matrix))
-    order = sortperm(pc1)
-    sorted = types[order]
-    F = Matrix{Float64}(undef, N, N)
-    @inbounds for j in 1:N
-        xj = sorted[j]
-        for i in 1:N
-            F[i, j] = Q_OFFSET + match_signal(sorted[i], xj, env)
-        end
-    end
-    return F, pc1[order]
-end
-
 function plot_dgp_matrix(F; tag, rho, delta, s, N)
     crange = let m = maximum(abs, F .- mean(F)); (mean(F) - m, mean(F) + m) end
     fig = Figure(; size=(800, 650))
@@ -393,9 +366,9 @@ for (idx, c) in enumerate(configs)
     types, _ = generate_agent_types(p.N, geo, p.sigma_x, rng)
     env = generate_matching_env(p.d, p.rho, p.delta, p.sigma_eps, types, rng;
                                 sigma_x=p.sigma_x, curve_geo=geo)
-    F, _ = build_ordered_output_matrix(types, env)
-    plot_dgp_matrix(F; tag=c.tag, rho=p.rho, delta=p.delta, s=p.s, N=p.N)
-    plot_dgp_svd(F; tag=c.tag, rho=p.rho, delta=p.delta, s=p.s, N=p.N)
+    ordered = build_ordered_output_matrix(types, env)
+    plot_dgp_matrix(ordered.F; tag=c.tag, rho=p.rho, delta=p.delta, s=p.s, N=p.N)
+    plot_dgp_svd(ordered.F; tag=c.tag, rho=p.rho, delta=p.delta, s=p.s, N=p.N)
 
     # Summary stats
     tail_dfs = [mdf[max(1, end-49):end, :] for mdf in mdfs]

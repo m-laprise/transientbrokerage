@@ -2,7 +2,6 @@
     benchmark.jl
 
 Performance benchmarking and profiling for the v0.2 ABM.
-Reports median times per CLAUDE.md convention.
 Each benchmark sample uses fresh setup so mutating workloads do not decay into
 no-op timings across repetitions.
 

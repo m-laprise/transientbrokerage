@@ -120,8 +120,7 @@ function step_period!(state::ModelState)
         d_i = rand(rng, Binomial(avail_cap, p.p_demand))
         d_i <= 0 && continue
 
-        channel = outsourcing_decision(agents[i], agents, G, broker.node_id,
-                                       broker_rep, d_i, cal.c_s, K, rng)
+        channel = outsourcing_decision(agents[i], broker_rep, rng)
 
         push!(demand_agent_ids, i)
         push!(demand_channels, channel)

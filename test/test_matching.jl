@@ -1,6 +1,6 @@
 using Test
 using TransientBrokerage
-using Graphs: has_edge
+using Graphs: has_edge, neighbors
 using StableRNGs: StableRNG
 
 @testset "Match Formation and Outsourcing" begin
@@ -170,23 +170,23 @@ using StableRNGs: StableRNG
 
     @testset "Outsourcing decision follows satisfaction" begin
         state8 = initialize_model(p)
-        G8 = state8.G; bn8 = state8.broker.node_id; K8 = p.K
         agent = state8.agents[1]
         # High self-satisfaction, low broker satisfaction
         agent.satisfaction_self = 5.0
         agent.satisfaction_broker = 1.0
         agent.tried_broker = true
-        @test outsourcing_decision(agent, state8.agents, G8, bn8, 0.0, 1, state8.cal.c_s, K8, StableRNG(1)) == :self
+        @test outsourcing_decision(agent, 0.0, StableRNG(1)) == :self
 
         # Reverse: broker satisfaction much higher than self
         agent.satisfaction_self = 1.0
         agent.satisfaction_broker = 50.0
-        @test outsourcing_decision(agent, state8.agents, G8, bn8, 0.0, 1, state8.cal.c_s, K8, StableRNG(1)) == :broker
+        @test outsourcing_decision(agent, 0.0, StableRNG(1)) == :broker
     end
 
     @testset "Outsourcing ignores known-partner means as a separate hurdle" begin
         state8b = initialize_model(p)
-        G8b = state8b.G; bn8b = state8b.broker.node_id; K8b = p.K
+        G8b = state8b.G
+        bn8b = state8b.broker.node_id
         agent = state8b.agents[1]
         nbr = first(filter(n -> n != bn8b, neighbors(G8b, agent.id)))
 
@@ -196,17 +196,16 @@ using StableRNGs: StableRNG
         agent.partner_sum[nbr] = 100.0
         agent.partner_count[nbr] = 1
 
-        @test outsourcing_decision(agent, state8b.agents, G8b, bn8b, 0.0, 1, state8b.cal.c_s, K8b, StableRNG(1)) == :broker
+        @test outsourcing_decision(agent, 0.0, StableRNG(1)) == :broker
     end
 
     @testset "Untried broker uses reputation" begin
         state9 = initialize_model(p)
-        G9 = state9.G; bn9 = state9.broker.node_id; K9 = p.K
         agent = state9.agents[1]
         agent.tried_broker = false
         agent.satisfaction_self = 0.0
         # High broker reputation should make agent outsource
-        @test outsourcing_decision(agent, state9.agents, G9, bn9, 10.0, 1, state9.cal.c_s, K9, StableRNG(1)) == :broker
+        @test outsourcing_decision(agent, 10.0, StableRNG(1)) == :broker
     end
 
     @testset "Broker reputation update" begin

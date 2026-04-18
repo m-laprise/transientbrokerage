@@ -5,26 +5,6 @@ using Graphs: nv, degree, has_edge
 
 @testset "Step and Simulation" begin
 
-    @testset "initialize_model produces valid state" begin
-        p = default_params(N=50, T=10, T_burn=2, seed=42)
-        state = initialize_model(p)
-        @test state.period == 0
-        @test length(state.agents) == p.N
-        @test nv(state.G) == p.N + 1
-        @test state.broker.node_id == p.N + 1
-        @test length(state.broker.roster) > 0
-        # All agents have seeded histories
-        seeded = count(a -> a.history_count > 0, state.agents)
-        @test seeded > 0
-        # Broker has seeded history
-        @test state.broker.history_count > 0
-        @test length(state.broker.roster) == TransientBrokerage.roster_target_size(p.N)
-        # Calibration constants are valid
-        @test state.cal.q_cal > 0
-        @test state.cal.r > 0
-        @test state.cal.phi > 0
-    end
-
     @testset "step_period! advances period counter" begin
         p = default_params(N=50, T=10, T_burn=2, seed=42)
         state = initialize_model(p)

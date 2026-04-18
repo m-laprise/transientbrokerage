@@ -14,8 +14,11 @@ Usage: julia --project --threads=auto scripts/explore_capture.jl
 Threads.nthreads() == 1 && @warn "Running single-threaded; start Julia with --threads=auto"
 
 using TransientBrokerage
+using DataFrames: DataFrame, nrow
 using JLD2
+using Statistics: mean
 
+include(joinpath(@__DIR__, "exploration_common.jl"))
 include(joinpath(@__DIR__, "figure_style.jl"))
 
 const OUTDIR = joinpath(@__DIR__, "..", "data", "figures", "capture")
@@ -27,17 +30,6 @@ mkpath(DATADIR)
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
-
-function run_ensemble(; base_kwargs, T::Int, N::Int, n_seeds::Int)
-    mdfs = Vector{DataFrame}(undef, n_seeds)
-    for s in 1:n_seeds
-        p = default_params(; N=N, T=T, seed=s, enable_principal=true, base_kwargs...)
-        _, mdf = run_simulation(p)
-        mdf[!, :seed] .= s
-        mdfs[s] = mdf
-    end
-    return mdfs
-end
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dynamics figure: M1 (solid colors) + base (dashed gray reference)
@@ -446,7 +438,8 @@ for (idx, c) in enumerate(configs)
         saved = JLD2.load(datafile)
         m1_mdfs = saved["mdfs"]
     else
-        m1_mdfs = run_ensemble(; base_kwargs=c.kwargs, T=T, N=N_SIM, n_seeds=N_SEEDS)
+        m1_mdfs = run_ensemble(; base_kwargs=c.kwargs, T=T, N=N_SIM,
+                               n_seeds=N_SEEDS, enable_principal=true)
         jldsave(datafile; mdfs=m1_mdfs)
         println("  Saved M1 data")
     end

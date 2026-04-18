@@ -15,13 +15,14 @@ Usage: julia --project --threads=auto scripts/explore_dgp.jl
 
 using TransientBrokerage
 using TransientBrokerage: generate_matching_env, generate_curve_geometry,
-                          generate_agent_types, match_signal, Q_OFFSET, regime_gain
+                          generate_agent_types
 using CairoMakie
 using LinearAlgebra: svdvals, norm
 using Statistics: mean, std
 using StableRNGs: StableRNG
-using MultivariateStats: fit, predict, PCA
 using JLD2
+
+include(joinpath(@__DIR__, "exploration_common.jl"))
 
 const OUTDIR = joinpath(@__DIR__, "..", "data", "figures", "dgp")
 const DATADIR = joinpath(@__DIR__, "..", "data", "dgp")
@@ -49,39 +50,6 @@ configs = [
     (tag="s2_lowdim",              kwargs=(s=2,)),
     (tag="s4_middim",              kwargs=(s=4,)),
 ]
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Helper: build ordered output matrix
-# ─────────────────────────────────────────────────────────────────────────────
-
-"""
-Build the N x N noiseless output matrix with agents sorted by first principal
-component of their types (for interpretable block structure in the heatmap).
-Returns (F, G_regime, pc1_sorted, sorted_types).
-"""
-function build_ordered_output_matrix(types, env)
-    N = length(types)
-    d = length(types[1])
-
-    # Sort by PC1
-    type_matrix = reduce(hcat, types)  # d x N
-    pca = fit(PCA, type_matrix; maxoutdim=1)
-    pc1 = vec(predict(pca, type_matrix))
-    order = sortperm(pc1)
-    sorted = types[order]
-
-    F = Matrix{Float64}(undef, N, N)
-    G = Matrix{Float64}(undef, N, N)
-    @inbounds for j in 1:N
-        xj = sorted[j]
-        for i in 1:N
-            xi = sorted[i]
-            F[i, j] = Q_OFFSET + match_signal(xi, xj, env)
-            G[i, j] = regime_gain(xi, xj, env)
-        end
-    end
-    return F, G, pc1[order], sorted
-end
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Plotting helpers
@@ -173,7 +141,10 @@ for c in configs
                                 sigma_x=p.sigma_x, curve_geo=geo)
 
     print("  $(c.tag) (rho=$(p.rho), delta=$(p.delta), s=$(p.s)) ... ")
-    F, G, pc1, _ = build_ordered_output_matrix(types, env)
+    ordered = build_ordered_output_matrix(types, env; include_regime=true)
+    F = ordered.F
+    G = ordered.G_regime
+    pc1 = ordered.pc1_sorted
 
     # Save data
     jldsave(joinpath(DATADIR, "$(c.tag).jld2");
