@@ -40,6 +40,28 @@ end
     return ws.access_seen
 end
 
+@inline function ensure_period_open_mask!(ws::SimWorkspace, n_cols::Int)::Vector{Bool}
+    if length(ws.period_broker_open_mask) < n_cols
+        old_len = length(ws.period_broker_open_mask)
+        resize!(ws.period_broker_open_mask, n_cols)
+        @inbounds for col in (old_len + 1):n_cols
+            ws.period_broker_open_mask[col] = false
+        end
+    end
+    return ws.period_broker_open_mask
+end
+
+@inline function ensure_demander_idx!(ws::SimWorkspace, N::Int)::Vector{Int}
+    if length(ws.demander_idx) < N
+        old_len = length(ws.demander_idx)
+        resize!(ws.demander_idx, N)
+        @inbounds for i in (old_len + 1):N
+            ws.demander_idx[i] = 0
+        end
+    end
+    return ws.demander_idx
+end
+
 """
     append_self_round_preferences!(out, agent, agents, G, broker_node, params, rng, r; ws) -> Int
 
@@ -57,7 +79,8 @@ function append_self_round_preferences!(out::Vector{ProposedMatch},
                                         rng::AbstractRNG,
                                         r::Float64;
                                         ws::SimWorkspace,
-                                        reserved_capacity::Union{Vector{Int}, Nothing} = nothing)::Int
+                                        reserved_capacity::Union{Vector{Int}, Nothing} = nothing,
+                                        open_agents::Union{Vector{Int}, Nothing} = nothing)::Int
     K = params.K
     agent_id = agent.id
     N = length(agents)
@@ -84,11 +107,19 @@ function append_self_round_preferences!(out::Vector{ProposedMatch},
     end
 
     if params.n_strangers > 0
-        @inbounds for j in 1:N
-            j == agent_id && continue
-            nbr_mask[j] && continue
-            current_open_capacity(agents, j, K, reserved_capacity) > 0 || continue
-            push!(eligible, j)
+        if !isnothing(open_agents)
+            @inbounds for j in open_agents
+                j == agent_id && continue
+                nbr_mask[j] && continue
+                push!(eligible, j)
+            end
+        else
+            @inbounds for j in 1:N
+                j == agent_id && continue
+                nbr_mask[j] && continue
+                current_open_capacity(agents, j, K, reserved_capacity) > 0 || continue
+                push!(eligible, j)
+            end
         end
 
         n_sample = min(params.n_strangers, length(eligible))
@@ -281,6 +312,12 @@ function prepare_period_broker_round_cache!(broker::Broker,
                                             ws::SimWorkspace,
                                             reserved_capacity::Union{Vector{Int}, Nothing} = nothing)
     period_demanders = ws.period_broker_demanders; empty!(period_demanders)
+    demander_idx = ensure_demander_idx!(ws, length(agents))
+    @inbounds for aid in ws.demander_touched
+        demander_idx[aid] = 0
+    end
+    empty!(ws.demander_touched)
+
     @inbounds for idx in eachindex(demand_agent_ids)
         demand_channels[idx] == :broker || continue
         push!(period_demanders, demand_agent_ids[idx])
@@ -292,7 +329,34 @@ function prepare_period_broker_round_cache!(broker::Broker,
     collect_broker_access_ids!(period_access_ids, broker, agents, params.K,
                                reserved_capacity, ws) == 0 && return nothing
 
-    prepare_broker_quality_matrix!(broker, period_demanders, period_access_ids, agents, params; ws=ws)
+    broker_matrix = prepare_broker_quality_matrix!(broker, period_demanders, period_access_ids,
+                                                   agents, params; ws=ws)
+    n_rows = length(period_demanders)
+    n_cols = length(period_access_ids)
+    if size(ws.period_broker_ranked_cols, 1) < n_rows ||
+       size(ws.period_broker_ranked_cols, 2) < n_cols
+        ws.period_broker_ranked_cols = Matrix{Int}(undef,
+                                                   max(n_rows, size(ws.period_broker_ranked_cols, 1)),
+                                                   max(n_cols, size(ws.period_broker_ranked_cols, 2)))
+    end
+
+    ranked_cols = ws.period_broker_ranked_cols
+    sort_pairs = ws.sort_pairs
+    length(sort_pairs) < n_cols && resize!(sort_pairs, n_cols)
+    Q = broker_matrix.Q
+
+    @inbounds for row in 1:n_rows
+        did = period_demanders[row]
+        demander_idx[did] = row
+        push!(ws.demander_touched, did)
+        for col in 1:n_cols
+            sort_pairs[col] = (-Q[row, col], col)
+        end
+        sort!(view(sort_pairs, 1:n_cols), alg=QuickSort)
+        for rank_pos in 1:n_cols
+            ranked_cols[row, rank_pos] = sort_pairs[rank_pos][2]
+        end
+    end
     return nothing
 end
 
@@ -313,7 +377,8 @@ function append_broker_round_preferences_from_cache!(out::Vector{ProposedMatch},
                                                      r::Float64;
                                                      ws::SimWorkspace,
                                                      demander_slots::Union{Vector{Int}, Nothing} = nothing,
-                                                     reserved_capacity::Union{Vector{Int}, Nothing} = nothing)
+                                                     reserved_capacity::Union{Vector{Int}, Nothing} = nothing,
+                                                     round_capacity::Union{Vector{Int}, Nothing} = nothing)
     empty!(out)
     resize!(counts, length(demander_ids))
     fill!(counts, 0)
@@ -326,43 +391,44 @@ function append_broker_round_preferences_from_cache!(out::Vector{ProposedMatch},
 
     K = params.K
     Q = ws.Q
-    sort_pairs = ws.sort_pairs
-    open_cols = ws.period_broker_open_cols; empty!(open_cols)
+    ranked_cols = ws.period_broker_ranked_cols
+    open_mask = ensure_period_open_mask!(ws, length(period_access_ids))
+    open_touched = ws.period_broker_open_touched; empty!(open_touched)
 
     @inbounds for col in eachindex(period_access_ids)
         rid = period_access_ids[col]
-        current_open_capacity(agents, rid, K, reserved_capacity) > 0 || continue
-        push!(open_cols, col)
+        if isnothing(round_capacity)
+            current_open_capacity(agents, rid, K, reserved_capacity) > 0 || continue
+        else
+            round_capacity[rid] > 0 || continue
+        end
+        open_mask[col] = true
+        push!(open_touched, col)
     end
-    isempty(open_cols) && return out
+    isempty(open_touched) && return out
 
-    length(sort_pairs) < length(open_cols) && resize!(sort_pairs, length(open_cols))
-
-    row_cursor = 1
+    demander_idx = ws.demander_idx
     @inbounds for di in eachindex(demander_ids)
         !isnothing(demander_slots) && demander_slots[di] <= 0 && continue
         did = demander_ids[di]
-        while row_cursor <= length(period_demanders) && period_demanders[row_cursor] != did
-            row_cursor += 1
-        end
-        row_cursor > length(period_demanders) &&
+        row = demander_idx[did]
+        row == 0 &&
             error("Broker round cache desynchronized from current demander order")
 
-        for k in eachindex(open_cols)
-            col = open_cols[k]
-            sort_pairs[k] = (-Q[row_cursor, col], col)
-        end
-        sort!(view(sort_pairs, 1:length(open_cols)), alg=QuickSort)
-
-        for k in 1:length(open_cols)
-            neg_val, col = sort_pairs[k]
-            val = -neg_val
+        for rank_pos in 1:length(period_access_ids)
+            col = ranked_cols[row, rank_pos]
+            open_mask[col] || continue
+            val = Q[row, col]
             val <= r && break
             rid = period_access_ids[col]
             did == rid && continue
             push!(out, ProposedMatch(did, rid, :broker, val, false, NaN, NaN))
             counts[di] += 1
         end
+    end
+
+    @inbounds for col in open_touched
+        open_mask[col] = false
     end
 
     return out

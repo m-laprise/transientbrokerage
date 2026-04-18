@@ -64,6 +64,29 @@ using TransientBrokerage
         @test isnan(pq.r_squared)
     end
 
+    @testset "compute_prediction_quality_with_true_ranks! matches public API" begin
+        pred = [1.0, 2.5, 2.5, 4.0, 5.0, 6.5]
+        real = [1.5, 2.0, 2.0, 4.5, 5.5, 6.0]
+        pred_order = zeros(Int, length(pred))
+        true_order = zeros(Int, length(real))
+        pred_ranks = zeros(length(pred))
+        true_ranks = zeros(length(real))
+
+        TransientBrokerage.prepare_true_ranks!(real, length(real), true_order, true_ranks)
+        pq_prefix = TransientBrokerage.compute_prediction_quality_with_true_ranks!(
+            pred, real, length(pred);
+            sigma_eps=0.10,
+            pred_order=pred_order,
+            pred_ranks=pred_ranks,
+            true_ranks=true_ranks,
+        )
+        pq_public = compute_prediction_quality(pred, real; sigma_eps=0.10)
+
+        @test pq_prefix.r_squared ≈ pq_public.r_squared atol=1e-12
+        @test pq_prefix.bias ≈ pq_public.bias atol=1e-12
+        @test pq_prefix.rank_corr ≈ pq_public.rank_corr atol=1e-12
+    end
+
     # ─── Betweenness centrality ──────────────────────────────────────────
 
     @testset "betweenness on star graph: center node" begin

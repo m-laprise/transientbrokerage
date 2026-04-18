@@ -55,6 +55,137 @@ function compute_prediction_quality(predicted::AbstractVector{<:Real},
     return PredictionQuality(r_squared, bias, rank_corr)
 end
 
+@inline function prefix_corr(x::Vector{Float64},
+                             y::Vector{Float64},
+                             n::Int)::Float64
+    mean_x = 0.0
+    mean_y = 0.0
+    @inbounds for idx in 1:n
+        mean_x += x[idx]
+        mean_y += y[idx]
+    end
+    mean_x /= n
+    mean_y /= n
+
+    num = 0.0
+    den_x = 0.0
+    den_y = 0.0
+    @inbounds for idx in 1:n
+        dx = x[idx] - mean_x
+        dy = y[idx] - mean_y
+        num += dx * dy
+        den_x += dx * dx
+        den_y += dy * dy
+    end
+
+    denom = den_x * den_y
+    return denom > 0.0 ? num / sqrt(denom) : NaN
+end
+
+@inline function sort_index_prefix!(order::Vector{Int},
+                                    values::Vector{Float64},
+                                    n::Int)
+    @inbounds for idx in 1:n
+        order[idx] = idx
+    end
+    @inbounds for idx in 2:n
+        current = order[idx]
+        current_value = values[current]
+        pos = idx - 1
+        while pos >= 1 && values[order[pos]] > current_value
+            order[pos + 1] = order[pos]
+            pos -= 1
+        end
+        order[pos + 1] = current
+    end
+    return nothing
+end
+
+@inline function tied_ranks_prefix!(ranks::Vector{Float64},
+                                    order::Vector{Int},
+                                    values::Vector{Float64},
+                                    n::Int)
+    sort_index_prefix!(order, values, n)
+
+    idx = 1
+    @inbounds while idx <= n
+        stop = idx
+        value = values[order[idx]]
+        while stop < n && values[order[stop + 1]] == value
+            stop += 1
+        end
+        rank = 0.5 * (idx + stop)
+        for pos in idx:stop
+            ranks[order[pos]] = rank
+        end
+        idx = stop + 1
+    end
+    return nothing
+end
+
+@inline function prepare_true_ranks!(realized::Vector{Float64},
+                                     n::Int,
+                                     order::Vector{Int},
+                                     ranks::Vector{Float64})
+    tied_ranks_prefix!(ranks, order, realized, n)
+    return nothing
+end
+
+@inline function prefix_spearman_rank_corr!(predicted::Vector{Float64},
+                                            n::Int,
+                                            pred_order::Vector{Int},
+                                            pred_ranks::Vector{Float64},
+                                            true_ranks::Vector{Float64})::Float64
+    tied_ranks_prefix!(pred_ranks, pred_order, predicted, n)
+    return prefix_corr(pred_ranks, true_ranks, n)
+end
+
+"""
+    compute_prediction_quality_with_true_ranks!(predicted, realized, n;
+                                                sigma_eps, pred_order,
+                                                pred_ranks, true_ranks)
+
+Low-allocation prefix variant of `compute_prediction_quality` for repeated use on
+small fixed-length buffers where the realized ranks were already prepared.
+"""
+function compute_prediction_quality_with_true_ranks!(predicted::Vector{Float64},
+                                                     realized::Vector{Float64},
+                                                     n::Int;
+                                                     sigma_eps::Float64 = 0.10,
+                                                     pred_order::Vector{Int},
+                                                     pred_ranks::Vector{Float64},
+                                                     true_ranks::Vector{Float64})::PredictionQuality
+    n < 5 && return PredictionQuality(NaN, NaN, NaN)
+
+    mean_realized = 0.0
+    @inbounds for idx in 1:n
+        mean_realized += realized[idx]
+    end
+    mean_realized /= n
+
+    err_sum = 0.0
+    sq_err_sum = 0.0
+    var_sum = 0.0
+    @inbounds for idx in 1:n
+        real = realized[idx]
+        err = predicted[idx] - real
+        err_sum += err
+        sq_err_sum += err * err
+        centered = real - mean_realized
+        var_sum += centered * centered
+    end
+
+    var_realized = var_sum / n
+    var_realized < sigma_eps^2 / 6 && return PredictionQuality(NaN, NaN, NaN)
+
+    mse = sq_err_sum / n
+    r_squared = 1.0 - mse / var_realized
+    bias = err_sum / n
+    rank_corr = prefix_spearman_rank_corr!(predicted, n, pred_order, pred_ranks, true_ranks)
+
+    return PredictionQuality(r_squared, bias, rank_corr)
+end
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CSR adjacency structure (allocation-free neighbor iteration)
 # ─────────────────────────────────────────────────────────────────────────────

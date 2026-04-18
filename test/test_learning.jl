@@ -191,6 +191,58 @@ using LinearAlgebra: normalize
         @test agent.n_new_obs == 0
     end
 
+    @testset "train_agent_nn! matches contiguous copied training" begin
+        rng = StableRNG(314)
+        p = default_params(N=20, E_init=7)
+        history_X = randn(rng, p.d, 24)
+        history_q = randn(rng, 24)
+        nn0 = init_neural_net(p.d, p.h_a, rng)
+        nn_agent = NeuralNet(copy(nn0.W1), copy(nn0.b1), copy(nn0.w2), nn0.b2)
+        nn_ref = NeuralNet(copy(nn0.W1), copy(nn0.b1), copy(nn0.w2), nn0.b2)
+        grad_agent = NNGradBuffers(nn_agent)
+        grad_ref = NNGradBuffers(nn_ref)
+        n_new = 6
+        agent = Agent(
+            id=1, type=normalize(randn(rng, p.d)),
+            history_X=copy(history_X), history_q=copy(history_q),
+            history_count=24, n_new_obs=n_new,
+            nn=nn_agent, nn_grad=grad_agent, predict_buf=zeros(p.h_a),
+            partner_sum=zeros(20), partner_count=zeros(Int, 20),
+            train_X=Matrix{Float64}(undef, p.d, 8), train_q=Vector{Float64}(undef, 8),
+        )
+
+        n_steps = compute_adaptive_steps(p.E_init, n_new, agent.history_count)
+        train_agent_nn!(agent, p)
+        train_nn!(nn_ref, grad_ref,
+                  Matrix(history_X[:, 1:agent.history_count]),
+                  Vector(history_q[1:agent.history_count]),
+                  n_steps, p.eta_lr)
+
+        @test agent.nn.W1 == nn_ref.W1
+        @test agent.nn.b1 == nn_ref.b1
+        @test agent.nn.w2 == nn_ref.w2
+        @test agent.nn.b2 == nn_ref.b2
+    end
+
+    @testset "train_agent_nn! is allocation-light after warmup" begin
+        rng = StableRNG(315)
+        p = default_params(N=20, E_init=1)
+        nn = init_neural_net(p.d, p.h_a, rng)
+        agent = Agent(
+            id=1, type=normalize(randn(rng, p.d)),
+            history_X=randn(rng, p.d, 24), history_q=randn(rng, 24),
+            history_count=24, n_new_obs=1,
+            nn=nn, nn_grad=NNGradBuffers(nn), predict_buf=zeros(p.h_a),
+            partner_sum=zeros(20), partner_count=zeros(Int, 20),
+            train_X=Matrix{Float64}(undef, p.d, 4), train_q=Vector{Float64}(undef, 4),
+        )
+
+        train_agent_nn!(agent, p)
+        agent.n_new_obs = 1
+        alloc = @allocated train_agent_nn!(agent, p)
+        @test alloc == 0
+    end
+
     @testset "train_agent_nn! with empty history is no-op" begin
         rng = StableRNG(42)
         p = default_params(N=20)

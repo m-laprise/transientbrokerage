@@ -159,6 +159,7 @@ function initialize_model(params::ModelParams; sort_by_pc1::Bool = false)::Model
 
     # ── Create agents ──
     initial_hist_cap = 16
+    initial_train_cap = 16
     agents = Vector{Agent}(undef, N)
     for i in 1:N
         nn = init_neural_net(d, p.h_a, rng)
@@ -173,6 +174,8 @@ function initialize_model(params::ModelParams; sort_by_pc1::Bool = false)::Model
             nn_grad = NNGradBuffers(nn),
             predict_buf = zeros(p.h_a),
             n_new_obs = 0,
+            train_X = Matrix{Float64}(undef, d, initial_train_cap),
+            train_q = Vector{Float64}(undef, initial_train_cap),
             partner_sum = zeros(N),
             partner_count = zeros(Int, N),
             satisfaction_self = 0.0,   # set from seed data in step I.11 below
@@ -251,7 +254,7 @@ function initialize_model(params::ModelParams; sort_by_pc1::Bool = false)::Model
     for agent in agents
         if agent.history_count > 0
             agent.n_new_obs = agent.history_count  # treat all seed data as new
-            train_agent_nn!(agent, p)
+            train_agent_nn_impl!(agent, p, true)
         end
     end
     if broker.history_count > 0

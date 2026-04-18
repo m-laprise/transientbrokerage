@@ -101,6 +101,8 @@ using StableRNGs: StableRNG
             @test length(a.nn.w2) == p.h_a
             @test isfinite(a.nn.b2)
             @test all(isfinite, a.nn.W1)
+            @test size(a.train_X, 1) == d
+            @test length(a.train_q) == size(a.train_X, 2)
         end
         @test size(state.broker.nn.W1) == (p.h_b, 2 * d)
         @test isfinite(state.broker.nn.b2)
@@ -164,6 +166,7 @@ using StableRNGs: StableRNG
         @test s1.env.c == s2.env.c
         @test s1.cal.q_cal == s2.cal.q_cal
         @test s1.broker.history_count == s2.broker.history_count
+        @test s1.agents[1].nn.W1 == s2.agents[1].nn.W1
     end
 
     @testset "different seeds produce different states" begin

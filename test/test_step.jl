@@ -135,4 +135,16 @@ using Graphs: nv, degree, has_edge
         @test metrics.broker_access_size >= metrics.roster_size
         @test metrics.broker_access_size <= p.N
     end
+
+    @testset "Holdout metrics are populated after stepping" begin
+        p = default_params(N=80, T=10, T_burn=2, seed=42, eta=0.0)
+        state = initialize_model(p)
+        for _ in 1:3
+            step_period!(state)
+        end
+        @test isfinite(state.accum.agent_holdout_rank)
+        @test isfinite(state.accum.broker_holdout_rank)
+        @test isfinite(state.accum.agent_holdout_rmse)
+        @test isfinite(state.accum.broker_holdout_rmse)
+    end
 end

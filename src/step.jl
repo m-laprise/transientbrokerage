@@ -265,10 +265,18 @@ function step_period!(state::ModelState)
     length(ws.holdout_agent_preds) == n_partners || resize!(ws.holdout_agent_preds, n_partners)
     length(ws.holdout_agent_trues) == n_partners || resize!(ws.holdout_agent_trues, n_partners)
     length(ws.holdout_broker_preds) == n_partners || resize!(ws.holdout_broker_preds, n_partners)
+    length(ws.holdout_pred_order) == n_partners || resize!(ws.holdout_pred_order, n_partners)
+    length(ws.holdout_true_order) == n_partners || resize!(ws.holdout_true_order, n_partners)
+    length(ws.holdout_pred_ranks) == n_partners || resize!(ws.holdout_pred_ranks, n_partners)
+    length(ws.holdout_true_ranks) == n_partners || resize!(ws.holdout_true_ranks, n_partners)
     Ax_buf = ws.Ax_buf; Bx_buf = ws.Bx_buf; z_buf = ws.holdout_z_buf
     agent_preds = ws.holdout_agent_preds
     agent_trues = ws.holdout_agent_trues
     broker_preds = ws.holdout_broker_preds
+    pred_order = ws.holdout_pred_order
+    true_order = ws.holdout_true_order
+    pred_ranks = ws.holdout_pred_ranks
+    true_ranks = ws.holdout_true_ranks
 
     agent_r2_sum = 0.0; agent_bias_sum = 0.0; agent_rank_sum = 0.0; agent_rmse_sum = 0.0
     broker_r2_sum = 0.0; broker_bias_sum = 0.0; broker_rank_sum = 0.0; broker_rmse_sum = 0.0
@@ -296,12 +304,16 @@ function step_period!(state::ModelState)
         end
 
         if n_valid >= 5
-            preds_v = @view agent_preds[1:n_valid]
-            trues_v = @view agent_trues[1:n_valid]
-            broker_v = @view broker_preds[1:n_valid]
             se = env.sigma_eps
+            prepare_true_ranks!(agent_trues, n_valid, true_order, true_ranks)
 
-            pq_agent = compute_prediction_quality(preds_v, trues_v; sigma_eps=se)
+            pq_agent = compute_prediction_quality_with_true_ranks!(
+                agent_preds, agent_trues, n_valid;
+                sigma_eps=se,
+                pred_order=pred_order,
+                pred_ranks=pred_ranks,
+                true_ranks=true_ranks,
+            )
             if !isnan(pq_agent.r_squared)
                 agent_r2_sum += pq_agent.r_squared
                 agent_bias_sum += pq_agent.bias
@@ -310,7 +322,13 @@ function step_period!(state::ModelState)
                 n_agents_evaluated += 1
             end
 
-            pq_broker = compute_prediction_quality(broker_v, trues_v; sigma_eps=se)
+            pq_broker = compute_prediction_quality_with_true_ranks!(
+                broker_preds, agent_trues, n_valid;
+                sigma_eps=se,
+                pred_order=pred_order,
+                pred_ranks=pred_ranks,
+                true_ranks=true_ranks,
+            )
             if !isnan(pq_broker.r_squared)
                 broker_r2_sum += pq_broker.r_squared
                 broker_bias_sum += pq_broker.bias

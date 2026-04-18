@@ -415,6 +415,8 @@ For every active broker-client demander $i$ in the round and every accessible co
 
 Agents already on the standing roster remain on it whether or not they outsource in the current period; current clients expand access only for the current period and do not become lagged standing members for that reason.
 
+**Implementation note (exact-preserving).** The code may realize these same rules with performance-oriented scratch buffers and caches, provided the stochastic object is unchanged: self-search strangers are still sampled uniformly without replacement from the current eligible set, broker-side candidate rankings still reflect the same round-specific ordering implied by $\hat{q}_b$, and neural-network training still uses the same data windows and gradient steps. These implementation details are not separate model assumptions.
+
 #### 5c. Within-round proposal and acceptance
 
 Within a round, all still-active demanders attempt to fill one slot through a decentralized deferred-acceptance protocol with capacity.

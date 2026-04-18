@@ -309,12 +309,27 @@ end
 # Agent training
 # ─────────────────────────────────────────────────────────────────────────────
 
+"""Ensure the agent's contiguous training scratch can hold `n` observations."""
+function ensure_agent_train_buffers!(agent::Agent, d::Int, n::Int)
+    if size(agent.train_X, 1) != d || size(agent.train_X, 2) < n
+        new_cap = max(n, 2 * size(agent.train_X, 2), 16)
+        agent.train_X = Matrix{Float64}(undef, d, new_cap)
+        resize!(agent.train_q, new_cap)
+    end
+    return nothing
+end
+
 """Maximum training window: train on at most this many recent observations.
 The warm start preserves what was learned from older data."""
 const TRAIN_WINDOW = 500
 
 """Minimum GD steps per training period."""
 const ADAPTIVE_FLOOR = 50
+
+"""Small windows are cheaper to materialize directly than to route through the
+agent-owned training scratch. This preserves the hot-path win on larger windows
+without penalizing tiny seeded histories during initialization."""
+const AGENT_TRAIN_DIRECT_COPY_THRESHOLD = 8
 
 """
     train_agent_nn!(agent, params)
@@ -323,22 +338,41 @@ Train the agent's neural network on recent history with adaptive step count.
 Uses a sliding window of the most recent TRAIN_WINDOW observations to avoid
 diluting new data in a large full-batch gradient.
 """
-function train_agent_nn!(agent::Agent, params::ModelParams)
+function train_agent_nn_impl!(agent::Agent,
+                              params::ModelParams,
+                              direct_copy_small::Bool)
     n = agent.history_count
     n <= 0 && return nothing
 
-    # Sliding window: train on the most recent observations (views into history;
-    # train_nn! materializes contiguous copies for BLAS-friendly train_step!).
     n_use = min(n, TRAIN_WINDOW)
     start_idx = n - n_use + 1
-    X = view(agent.history_X, :, start_idx:n)
-    q = view(agent.history_q, start_idx:n)
 
     # Adaptive steps
     n_steps = compute_adaptive_steps(params.E_init, agent.n_new_obs, n)
     agent.n_new_obs = 0
 
-    train_nn!(agent.nn, agent.nn_grad, X, q, n_steps, params.eta_lr)
+    if direct_copy_small && n_use <= AGENT_TRAIN_DIRECT_COPY_THRESHOLD
+        X = view(agent.history_X, :, start_idx:n)
+        q = view(agent.history_q, start_idx:n)
+        train_nn!(agent.nn, agent.nn_grad, X, q, n_steps, params.eta_lr)
+    else
+        d = params.d
+        ensure_agent_train_buffers!(agent, d, n_use)
+
+        history_X = agent.history_X
+        train_X = agent.train_X
+        @inbounds for col in 1:n_use, row in 1:d
+            train_X[row, col] = history_X[row, start_idx + col - 1]
+        end
+        copyto!(agent.train_q, 1, agent.history_q, start_idx, n_use)
+        train_nn_prefix!(agent.nn, agent.nn_grad, agent.train_X, agent.train_q,
+                         n_use, n_steps, params.eta_lr)
+    end
+    return nothing
+end
+
+function train_agent_nn!(agent::Agent, params::ModelParams)
+    train_agent_nn_impl!(agent, params, false)
     return nothing
 end
 

@@ -137,6 +137,7 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
     remaining_demand .= demand_counts
     demand_failed = ws.demand_failed; resize!(demand_failed, n_demanders); fill!(demand_failed, false)
     active_positions = ws.round_active_positions; empty!(active_positions)
+    open_agents = ws.round_open_agents; empty!(open_agents)
     broker_indices = ws.round_broker_indices; empty!(broker_indices)
     broker_demanders = ws.round_broker_demanders; empty!(broker_demanders)
     pref_offsets = ws.round_pref_offsets; empty!(pref_offsets)
@@ -204,13 +205,19 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
 
     for _ in 1:max_rounds
         empty!(active_positions)
+        empty!(open_agents)
         empty!(broker_indices)
         empty!(broker_demanders)
+        @inbounds for i in 1:N
+            cap_i = current_open_capacity(agents, i, K, reserved_capacity)
+            round_capacity[i] = cap_i
+            cap_i > 0 && push!(open_agents, i)
+        end
         @inbounds for idx in eachindex(demand_agent_ids)
             if remaining_demand[idx] <= 0 || demand_failed[idx]
                 continue
             end
-            if current_open_capacity(agents, demand_agent_ids[idx], K, reserved_capacity) <= 0
+            if round_capacity[demand_agent_ids[idx]] <= 0
                 demand_failed[idx] = true
                 continue
             end
@@ -242,14 +249,14 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
             @inbounds for di in eachindex(broker_demanders)
                 did = broker_demanders[di]
                 demand_idx = broker_indices[di]
-                broker_slot_caps[di] = min(remaining_demand[demand_idx],
-                                           current_open_capacity(agents, did, K, reserved_capacity))
+                broker_slot_caps[di] = min(remaining_demand[demand_idx], round_capacity[did])
             end
             append_broker_round_preferences_from_cache!(
                 broker_pref_matches, broker_pref_counts, broker_demanders,
                 agents, params, cal.r;
                 ws=ws, demander_slots=broker_slot_caps,
-                reserved_capacity=reserved_capacity
+                reserved_capacity=reserved_capacity,
+                round_capacity=round_capacity,
             )
         else
             empty!(broker_pref_matches)
@@ -259,7 +266,7 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
         for pos in eachindex(active_positions)
             idx = active_positions[pos]
             agent_id = demand_agent_ids[idx]
-            if remaining_demand[idx] <= 0 || current_open_capacity(agents, agent_id, K, reserved_capacity) <= 0
+            if remaining_demand[idx] <= 0 || round_capacity[agent_id] <= 0
                 remaining_demand[idx] > 0 && (demand_failed[idx] = true)
                 pref_offsets[pos + 1] = length(pref_matches) + 1
                 continue
@@ -267,7 +274,8 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
             if demand_channels[idx] == :self
                 n_added = append_self_round_preferences!(pref_matches, agents[agent_id], agents, G,
                                                          broker.node_id, params, rng, cal.r;
-                                                         ws=ws, reserved_capacity=reserved_capacity)
+                                                         ws=ws, reserved_capacity=reserved_capacity,
+                                                         open_agents=open_agents)
                 for _ in 1:n_added
                     push!(pref_owner, pos)
                 end
@@ -294,9 +302,6 @@ function round_match_formation!(demand_agent_ids::Vector{Int},
         empty!(queue)
         fill!(hold_counts, 0)
 
-        @inbounds for i in 1:N
-            round_capacity[i] = current_open_capacity(agents, i, K, reserved_capacity)
-        end
         @inbounds for pos in eachindex(active_positions)
             next_pref[pos] = pref_offsets[pos]
             agent_id = demand_agent_ids[active_positions[pos]]

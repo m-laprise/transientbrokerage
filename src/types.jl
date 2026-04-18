@@ -98,6 +98,8 @@ Base.@kwdef mutable struct Agent
     nn_grad::NNGradBuffers                   # pre-allocated gradient buffers
     predict_buf::Vector{Float64}             # length h_a, for zero-alloc forward pass
     n_new_obs::Int = 0                       # observations since last training (for adaptive schedule)
+    train_X::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)  # contiguous training scratch
+    train_q::Vector{Float64} = Float64[]                     # matching q scratch
 
     # Per-partner average tracking (direct-indexed by partner agent ID)
     partner_sum::Vector{Float64}             # length N; sum of realized q for matches with partner j
@@ -546,6 +548,7 @@ Base.@kwdef mutable struct SimWorkspace
     all_proposals::Vector{ProposedMatch} = ProposedMatch[]
     accepted_matches::Vector{AcceptedMatch} = AcceptedMatch[]
     round_active_positions::Vector{Int} = Int[]
+    round_open_agents::Vector{Int} = Int[]
     round_broker_indices::Vector{Int} = Int[]
     round_broker_demanders::Vector{Int} = Int[]
     round_pref_offsets::Vector{Int} = Int[]
@@ -563,6 +566,9 @@ Base.@kwdef mutable struct SimWorkspace
     period_broker_demanders::Vector{Int} = Int[]
     period_broker_access_ids::Vector{Int} = Int[]
     period_broker_open_cols::Vector{Int} = Int[]
+    period_broker_ranked_cols::Matrix{Int} = Matrix{Int}(undef, 0, 0)
+    period_broker_open_mask::Vector{Bool} = Bool[]
+    period_broker_open_touched::Vector{Int} = Int[]
 
     # Holdout evaluation scratch (reused each period in step.jl)
     Ax_buf::Vector{Float64} = Float64[]
@@ -571,6 +577,10 @@ Base.@kwdef mutable struct SimWorkspace
     holdout_agent_preds::Vector{Float64} = Float64[]
     holdout_agent_trues::Vector{Float64} = Float64[]
     holdout_broker_preds::Vector{Float64} = Float64[]
+    holdout_pred_order::Vector{Int} = Int[]
+    holdout_true_order::Vector{Int} = Int[]
+    holdout_pred_ranks::Vector{Float64} = Float64[]
+    holdout_true_ranks::Vector{Float64} = Float64[]
 end
 
 """Complete simulation state: all agents, broker, network, environment, and accumulators."""
